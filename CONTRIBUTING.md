@@ -85,3 +85,16 @@ Open a [GitHub issue](https://github.com/trishula-dev/trishula/issues/new) with 
 flake revision (`nix flake metadata .# --rev` or the release tag), deployment
 path (compose / NixOS / QEMU), host OS, and the relevant `decisions.jsonl`
 excerpt. Security issues never go here — [SECURITY.md](SECURITY.md) instead.
+
+## Engineering standard: hypothesis-first TDD
+
+Every feature, fix and refactor follows **hypothesis → failing test → minimal implementation → refactor** (see #42 / #42 for the standing spec):
+
+1. State the hypothesis in the issue: expected behaviour, assumed mechanism, falsifying observation.
+2. **Commit the failing test first** on the feature branch; run it and paste the RED run's failure line into the PR.
+3. Implement the minimum that passes; then the suite; then refactor with tests green.
+4. Edge/error paths (overflow, malformed input, failure modes) are covered before close.
+
+Where unit tests cannot reach — kernel-attached code, live-cluster behaviour — the issue's acceptance criterion **is** the test: record the EXPECTED-FAIL run before building, re-run green after. Same discipline, different harness.
+
+Exceptions require the user's explicit go-ahead in the issue before work starts.
