@@ -1,0 +1,23 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:best-practices", ":semanticCommits"],
+  "timezone": "Australia/Melbourne",
+  "schedule": ["after 6am", "before 10am every weekday"],
+  "lockFileMaintenance": { "enabled": true, "schedule": ["before 6am on monday"] },
+  "packageRules": [
+    {
+      "description": "group go module patch/minorupdates",
+      "matchManagers": ["gomod", "go-sum"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "go module minor+patch",
+      "automerge": false
+    },
+    {
+      "description": "group github actions",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "groupName": "github actions",
+      "automerge": false
+    }
+  ]
+}
