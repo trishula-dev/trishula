@@ -4,7 +4,7 @@
 kernel shield · userspace engine · control plane
 
 [![status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)](https://github.com/orgs/trishula-dev/projects/1)
-[![license](https://img.shields.io/badge/license-Apache--2.0-green)](#license)
+[![license](https://img.shields.io/badge/license-MIT-green)](https://github.com/trishula-dev/trishula/blob/main/LICENSE)
 
 **What exists today:** a signed §19 layout skeleton and the [project site](https://trishula-dev.github.io/trishula-website/) ([source](https://github.com/trishula-dev/trishula-website)). **What does not exist yet:** the shield, engine and operator — implementation starts from the board below, nothing here should be presumed working.
 
@@ -46,4 +46,4 @@ positive security v0 → honest exit (TR-14).
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
