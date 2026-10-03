@@ -25,7 +25,7 @@ lab/              demo + DX1 scenarios (kind + NGF)
 test/             crs-differential · ban-conformance · bench
 ```
 
-## Build board
+## Roadmap board
 
 Work is tracked on the [Trishula — Roadmap board](https://github.com/orgs/trishula-dev/projects/1)
 (org project) as issues `TR-01`…`TR-36` with `target:*` (sprint window), `area:*` (component) and
