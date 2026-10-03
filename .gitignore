@@ -1,0 +1,16 @@
+# build outputs (bf2go / bpf2go)
+bpf/*.o
+bpf/*.ll
+**/bpf_bpfel*.go
+*.o.test
+
+# go
+/build/
+/dist/
+*.test
+*.out
+
+# scratch
+lab/*.out
+*.log
+.DS_Store
