@@ -3,11 +3,9 @@
 **eBPF-native, developer-first Web Application and API Firewall for Kubernetes.**
 kernel shield · userspace engine · control plane
 
-[![status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)](https://github.com/orgs/trishula-dev/projects/1)
-[![license](https://img.shields.io/badge/license-MIT-green)](https://github.com/trishula-dev/trishula/blob/main/LICENSE)
-[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/trishula-dev/trishula/badge)](https://scorecard.dev/viewer/?uri=github.com/trishula-dev/trishula) [![CII Best Practices](https://img.shields.io/badge/cii%20best%20practices-in%20progress-orange)](https://www.bestpractices.dev/projects/15183)
-[![project site](https://img.shields.io/website?down_message=offline&up_message=live&url=https%3A%2F%2Ftrishula.dev&label=site)](https://trishula.dev)
-[![go-build](https://github.com/trishula-dev/trishula/actions/workflows/go-build.yml/badge.svg)](https://github.com/trishula-dev/trishula/actions/workflows/go-build.yml) [![Dependency Review](https://github.com/trishula-dev/trishula/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/trishula-dev/trishula/actions/workflows/dependency-review.yml)
+[![status: pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange)](https://github.com/orgs/trishula-dev/projects/1) [![license](https://img.shields.io/badge/license-MIT-green)](https://github.com/trishula-dev/trishula/blob/main/LICENSE) [![project site](https://img.shields.io/website?down_message=offline&up_message=live&url=https%3A%2F%2Ftrishula.dev&label=site)](https://trishula.dev)
+
+[![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/trishula-dev/trishula?label=OpenSSF%20Scorecard&style=flat)](https://scorecard.dev/viewer/?uri=github.com/trishula-dev/trishula) [![OpenSSF Best Practices](https://img.shields.io/badge/cii%20best%20practices-in%20progress-orange)](https://www.bestpractices.dev/projects/15183) [![go-build](https://github.com/trishula-dev/trishula/actions/workflows/go-build.yml/badge.svg)](https://github.com/trishula-dev/trishula/actions/workflows/go-build.yml) [![Dependency Review](https://github.com/trishula-dev/trishula/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/trishula-dev/trishula/actions/workflows/dependency-review.yml)
 
 **What exists today:** a signed §19 layout skeleton and the [project site](https://trishula-dev.github.io/trishula-website/) ([source](https://github.com/trishula-dev/trishula-website)). **What does not exist yet:** the shield, engine and operator — implementation starts from the board below, nothing here should be presumed working.
 
