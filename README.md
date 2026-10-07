@@ -31,7 +31,7 @@ test/             crs-differential · ban-conformance · bench
 ## Roadmap board
 
 Work is tracked on the [Trishula — Roadmap board](https://github.com/orgs/trishula-dev/projects/1)
-(org project) as issues `TR-01`…`TR-36` with `target:*` (sprint window), `area:*` (component) and
+(org project) as issues `TR-01`…`TR-41` with `target:*` (sprint window), `area:*` (component) and
 `s:*` (effort) labels. The sprint sequence: shield PoC → ingest → ladder → NGF steering lab →
 CRS differential → operator/CRD round-trip → ScoredWindowBan → OTel pipeline → bot v0 →
 positive security v0 → honest exit (TR-14).
