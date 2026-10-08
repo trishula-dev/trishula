@@ -39,7 +39,8 @@ clang -O2 -g -target bpf -D__TARGET_ARCH_"$(uname -m | sed 's/aarch64/arm64/;s/x
 
 echo "== verifier load + pin =="
 "$BPFTOOL" prog loadall "$WORK/xdp_ping.o" "$WORK/pin" type xdp
-"$BPFTOOL" prog show pinned "$WORK/pin/test_xdp" | head -3
+"$BPFTOOL" prog show pinned "$WORK/pin/test_xdp" > "$WORK/prog.txt" 2>&1
+head -3 "$WORK/prog.txt"
 
 echo "== attach $IFACE =="
 ip link set dev "$IFACE" xdp pinned "$WORK/pin/test_xdp"
