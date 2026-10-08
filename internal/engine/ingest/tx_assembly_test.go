@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"testing"
+	"time"
 )
 
 // TR-04a (issue #66, child of TR-04/#4): the transaction-assembly core.
@@ -66,7 +67,13 @@ func TestExpireSweep(t *testing.T) {
 	m := NewTxManager()
 	k := FlowKey{DstPort: 80, Family: 4}
 	_ = m.NoteFlow(k)
-	m.ExpireOlderThan(0) // everything expires at t=0 (all timestamps > 0)
+	if m.ExpireOlderThan(0) != 0 {
+		t.Fatal("cutoff=0 must evict nothing (timestamps are positive)")
+	}
+	now := uint64(time.Now().UnixNano())
+	if n := m.ExpireOlderThan(now + 1); n != 1 {
+		t.Fatalf("ExpireOlderThan(now+1) evicted %d, want 1", n)
+	}
 	if got := m.LookupFlow(k); got != nil {
 		t.Fatalf("tx survived a full-expiry sweep: %+v", got)
 	}
