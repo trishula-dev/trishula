@@ -27,8 +27,8 @@ const (
 
 	// Wire sizes on little-endian arm64/amd64 targets (bpf2go targets);
 	// Go side marshals via the same fixed-size structs.
-	BanKeySize = 18 // 16-byte union + u8 family + u8 key_class
-	BanValSize = 12 // u64 until_ts + u8 tier + pad + u16 reason_code
+	BanKeySize = 20 // 16B union + u8 family + u8 key_class + 2 pad (C u64-align)
+	BanValSize = 16 // u64 until_ts + u8 tier + pad + u16 reason + 4B align
 )
 
 func TestBanEntryWireContract(t *testing.T) {

@@ -14,27 +14,25 @@ package shield
 import (
 	"fmt"
 	"net"
-	"syscall"
 	"testing"
-	"time"
-	"unsafe"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
+	"golang.org/x/sys/unix"
 )
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target native --type ban_key --type ban_val --type verdict_key --type verdict_val bpf_shield ../../bpf/shield_xdp.c -- -I../../bpf -O2 -g
 
 // Loader owns the attached program, its links and the shared maps.
 type Loader struct {
-	coll  *ebpf.Collection
-	links []link.Link
-	maps  ShieldMaps
+	coll *ebpf.Collection
+	link link.Link
+	maps ShieldMaps
 }
 
 // Attach loads the bpf2go objects and pins the XDP program on iface.
 func Attach(iface string) (*Loader, error) {
-	spec, err := loadBpfShield()
+	spec, err := loadSpec()
 	if err != nil {
 		return nil, fmt.Errorf("load objects: %w", err)
 	}
@@ -43,7 +41,7 @@ func Attach(iface string) (*Loader, error) {
 		return nil, fmt.Errorf("new collection: %w", err)
 	}
 	l, err := link.AttachXDP(link.XDPOptions{
-		Program:   coll.Program("shield_xdp"),
+		Program:   coll.Programs["shield_xdp"],
 		Interface: ifaceIndex(iface),
 		Flags:     link.XDPGenericMode,
 	})
@@ -51,15 +49,23 @@ func Attach(iface string) (*Loader, error) {
 		coll.Close()
 		return nil, fmt.Errorf("attach xdp on %s: %w", iface, err)
 	}
-	m := coll.Maps
 	return &Loader{
-		coll:  coll,
-		links: []link.Link{l},
+		link: l,
+		coll: coll,
 		maps: ShieldMaps{
-			BanTable:     m["ban_table"],
-			VerdictCache: m["verdict_cache"],
+			BanTable:     coll.Maps["ban_table"],
+			VerdictCache: coll.Maps["verdict_cache"],
 		},
 	}, nil
+}
+
+// loadSpec loads the bpf2go-generated CollectionSpec for this platform.
+func loadSpec() (*ebpf.CollectionSpec, error) {
+	spec, err := loadBpf_shield()
+	if err != nil {
+		return nil, fmt.Errorf("bpf2go objects: %w", err)
+	}
+	return spec, nil
 }
 
 // AttachVeth is the test entrypoint (netns/veth harnesses).
@@ -77,15 +83,8 @@ func (l *Loader) Maps() ShieldMaps { return l.maps }
 // Close detaches and closes everything (the pin discipline: nothing out-
 // lives the loader unless pinning is explicitly requested — v0 pins none).
 func (l *Loader) Close() error {
-	var first error
-	for _, lk := range l.links {
-		if err := lk.Close(); err != nil && first == nil {
-			first = err
-		}
-	}
-	if err := l.coll.Close(); err != nil && first == nil {
-		first = err
-	}
+	first := l.link.Close()
+	l.coll.Close()
 	return first
 }
 
@@ -94,8 +93,8 @@ func (l *Loader) Close() error {
 // in-kernel expiry comparisons. (v0: monotonic ≈ boot-time; a boot-id
 // guard lands with the operator TR-08.)
 func (l *Loader) NowNS() (uint64, error) {
-	var ts syscall.Timespec
-	if err := clockGettime(syscall.CLOCK_MONOTONIC, &ts); err != nil {
+	var ts unix.Timespec
+	if err := unix.ClockGettime(unix.CLOCK_MONOTONIC, &ts); err != nil {
 		return 0, fmt.Errorf("clock_gettime: %w", err)
 	}
 	return uint64(ts.Sec)*1e9 + uint64(ts.Nsec), nil
@@ -131,14 +130,6 @@ func ifaceIndex(name string) int {
 		return -1
 	}
 	return ifi.Index
-}
-
-func clockGettime(c int32, ts *syscall.Timespec) error {
-	_, _, e := syscall.Syscall(syscall.SYS_CLOCK_GETTIME, uintptr(c), uintptr(unsafe.Pointer(ts)), 0)
-	if e != 0 {
-		return e
-	}
-	return nil
 }
 
 // ShieldMaps carries the shared maps (aliases of coll.Maps entries).

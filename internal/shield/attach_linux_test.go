@@ -1,6 +1,6 @@
 //go:build linux
 
-package shield_test
+package shield
 
 // TR-03 acceptance E2E (issue #3): a ban-table hit MUST drop in kernel
 // with zero userspace round-trip. Runs only on Linux (the VM gate):
@@ -8,7 +8,7 @@ package shield_test
 //	sudo go test -tags attach -run TestBanDropE2E ./internal/shield/ -v
 //
 // Requires: root, BTF (/sys/kernel/btf/vmlinux), bpffs mounted, netns+veth
-// support, and bpf2go-generated objects (go generate ./bpf/).
+// support, and the bpf2go objects (bpf_shield_*.go; go generate).
 
 import (
 	"net/netip"
@@ -73,7 +73,10 @@ func TestBanDropE2E(t *testing.T) {
 	run(t, "ip", "netns", "exec", nsName, "ip", "addr", "add", nsV4, "dev", nsVeth)
 	run(t, "ip", "netns", "exec", nsName, "ip", "link", "set", nsVeth, "up")
 
-	loader := Attach(t, hostVeth)
+	loader, err := Attach(hostVeth)
+	if err != nil {
+		t.Fatalf("Attach(%s): %v", hostVeth, err)
+	}
 	defer loader.Close()
 	maps := loader.Maps()
 
@@ -87,13 +90,13 @@ func TestBanDropE2E(t *testing.T) {
 		if err := maps.SetBan(key, BanVal{UntilTS: until, Tier: 1, ReasonCode: 42}); err != nil {
 			t.Fatalf("SetBan(%s): %v", ip, err)
 		}
-		got, ok := maps.LookupBan(key)
-		if err != nil || !ok || got.ReasonCode != 42 {
-			t.Fatalf("ban %s not readable back: got=%+v ok=%v err=%v", ip, got, ok, err)
+		got, ok, lerr := maps.LookupBan(key)
+		if lerr != nil || !ok || got.ReasonCode != 42 {
+			t.Fatalf("ban %s not readable back: got=%+v ok=%v err=%v", ip, got, ok, lerr)
 		}
 	}
 	// The v4 key must not alias into the v6 slot (defect #62 regression).
-	if _, ok := maps.LookupBan(BanKeyFromIP(mustParse(t, "10.66.0.67"), KeyClassIP)); ok {
+	if _, ok, lerr := maps.LookupBan(BanKeyFromIP(mustParse(t, "10.66.0.67"), KeyClassIP)); lerr == nil && ok {
 		t.Fatal("unbanned v4 read back a ban — key aliasing")
 	}
 }

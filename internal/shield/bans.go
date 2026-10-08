@@ -36,6 +36,7 @@ type BanKey struct {
 	Addr     [16]byte
 	Family   uint8
 	KeyClass uint8
+	_        [2]byte // C u64-alignment tail (bpf_shieldBanKey parity)
 }
 
 // validateBanVal is the loader-side check (host-portable, wire-safe).
@@ -49,12 +50,14 @@ func validateBanVal(v BanVal) error {
 // BanVal's until_ts is absolute CLOCK_MONOTONIC nanoseconds
 // (what bpf_ktime_get_ns reads); the loader NEVER writes a zero/absent
 // expiry (infinite bans are a TR-10 safety property — banned means timed).
-// Marshals to 12 bytes (8 + tier + 1 pad + reason).
+// Marshals to 16 bytes (8 + tier + pad + reason + 4B struct alignment —
+// exactly bpf_shieldBanVal in the generated object).
 type BanVal struct {
 	UntilTS    uint64
 	Tier       uint8
-	_          uint8 // kernel struct pad (explicit: wire stability)
+	Pad        uint8 // struct alignment (explicit: wire stability)
 	ReasonCode uint16
+	_          [4]byte // C struct alignment tail
 }
 
 // Expired reports whether the ban is over at monotonic-read now:
