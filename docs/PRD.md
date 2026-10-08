@@ -16,33 +16,33 @@
 
 ## Table of Contents
 
-0. [Front Page — What is Trishula?](#0-front-page-what-is-trishula)
+0. [Front Page — What is Trishula?](#0-front-page--what-is-trishula)
 1. [Executive Summary](#1-executive-summary)
-2. [Positioning & Non-Negotiable Design Decisions](#2-positioning-non-negotiable-design-decisions)
+2. [Positioning & Non-Negotiable Design Decisions](#2-positioning--non-negotiable-design-decisions)
 3. [Problem Statement](#3-problem-statement)
-4. [Related Work — What We Borrow, Where We Sit](#4-related-work-what-we-borrow-where-we-sit)
+4. [Related Work — What We Borrow, Where We Sit](#4-related-work--what-we-borrow-where-we-sit)
 5. [Developer Experience Charter](#5-developer-experience-charter)
 6. [Vision, Goals, Non-Goals](#6-vision-goals-non-goals)
 7. [Teach-the-Web Curriculum](#7-teach-the-web-curriculum)
 8. [Architecture](#8-architecture)
 9. [eBPF Packet Path](#9-ebpf-packet-path)
-10. [Gateway API Integration — NGF Reference Deployment](#10-gateway-api-integration-ngf-reference-deployment)
-11. [Rule Engine & Detection](#11-rule-engine-detection)
-12. [Bot Defense & Anti-Automation](#12-bot-defense-anti-automation)
-13. [Rate Limiting, DoS Response & Temporary Bans](#13-rate-limiting-dos-response-temporary-bans)
-14. [ML & Adaptive Detection](#14-ml-adaptive-detection)
+10. [Gateway API Integration — NGF Reference Deployment](#10-gateway-api-integration--ngf-reference-deployment)
+11. [Rule Engine & Detection](#11-rule-engine--detection)
+12. [Bot Defense & Anti-Automation](#12-bot-defense--anti-automation)
+13. [Rate Limiting, DoS Response & Temporary Bans](#13-rate-limiting-dos-response--temporary-bans)
+14. [ML & Adaptive Detection](#14-ml--adaptive-detection)
 15. [OpenTelemetry Observability](#15-opentelemetry-observability)
-16. [Kubernetes Deployment Model & Operations](#16-kubernetes-deployment-model-operations)
-17. [Performance Targets & Benchmark Plan](#17-performance-targets-benchmark-plan)
+16. [Kubernetes Deployment Model & Operations](#16-kubernetes-deployment-model--operations)
+17. [Performance Targets & Benchmark Plan](#17-performance-targets--benchmark-plan)
 18. [Threat Model of Trishula Itself](#18-threat-model-of-trishula-itself)
 19. [Reference Implementation](#19-reference-implementation)
-20. [Risks, Mitigations & Phasing](#20-risks-mitigations-phasing)
-21. [Success Metrics & Adoption Gates](#21-success-metrics-adoption-gates)
+20. [Risks, Mitigations & Phasing](#20-risks-mitigations--phasing)
+21. [Success Metrics & Adoption Gates](#21-success-metrics--adoption-gates)
 - [Appendix A: Roadmap Notes](#appendix-a-roadmap-notes)
 - [Appendix B: Glossary](#appendix-b-glossary)
 - [Appendix C: Sources](#appendix-c-sources)
 - [Appendix D: Research Dossiers](#appendix-d-research-dossiers)
-- [Appendix E: Similar Projects — and Why We Did Not Build On Them](#appendix-e-similar-projects-and-why-we-did-not-build-on-them)
+- [Appendix E: Similar Projects — and Why We Did Not Build On Them](#appendix-e-similar-projects--and-why-we-did-not-build-on-them)
 
 <div class="pagebreak"></div>
 
@@ -153,11 +153,11 @@ Concretely, this thesis is enforced by five product properties:
 4. **Failure semantics you can explain in one sentence per route:** fail-open or fail-closed, chosen in the `WAFPolicy`, stated on a CRD condition, visible in the trace.
 5. **Docs that teach the wire (§7):** every rule example links to *which bytes* it inspects — the docs double as an HTTP/2, TLS, QUIC curriculum. If a developer does not understand why a rule fires, the doc has failed, not the developer.
 
-### 2.6 D5 — Honesty as a mechanism: shadow-first and differential parity
+### 2.5 D5 — Honesty as a mechanism: shadow-first and differential parity
 
 Every change (rule, schema, ML model, ban threshold) ships **shadow-first** with promotion gated on evidence (matches, FP delta). CRS compatibility is enforced by a verdict-level differential gate against the reference evaluator in CI and in production telemetry (§11.8). "Compatible" claims die quietly in every engine in this field; Trishula makes them CI failures instead. Performance targets are labeled targets until benchmarked (§17); visibility gaps per traffic shape are documented contracts, not footnotes (§9.7).
 
-### 2.7 D6 — One project, several repos: `trishula-dev` + `trishula.dev`
+### 2.6 D6 — One project, several repos: `trishula-dev` + `trishula.dev`
 
 - **Footprint, registered 2026-10:** GitHub org [`trishula-dev`](https://github.com/trishula-dev) and the domain [`trishula.dev`](https://trishula.dev) (apex parked at the registrar; site comes later). The upstream handle `trishula` is a dormant 2013 user account — not available; `trishula-dev` is the permanent org name and no aliasing layer is planned around it.
 - **Repo split, not repo sprawl:** one product repo (`trishula-dev/trishula` — code, charts, operator, engine, shield), one site repo (`trishula-dev/website` — trishula.dev itself, static), and rules that live with the code, not on a fork: `rules/cel/` and `rules/exclusions/` ship inside the product repo so every shipped rule is parity-tested and versioned with the engine that runs it. Curated community sets graduate into a separate `trishula-dev/rules` repo when external contributions justify the review surface (Phase 1+ decision, not a Day-0 split).
@@ -1249,7 +1249,7 @@ The gateway's TLS termination and steering marks; the kernel BPF verifier; the n
 
 ## 19. Reference Implementation
 
-**Repo footprint (D6 in §2.7):** GitHub org **`trishula-dev`** (github.com/trishula-dev) — repos: `trishula` (product, Apache-2.0; the tree below is its seed), `website` (trishula.dev, the docs site), `rules` (curated community CEL + exclusion sets once external contributions open, Phase 1+). The bare handle `trishula` is a dormant user account; the product repo is `trishula-dev/trishula`.
+**Repo footprint (D6 in §2.6):** GitHub org **`trishula-dev`** (github.com/trishula-dev) — repos: `trishula` (product, Apache-2.0; the tree below is its seed), `website` (trishula.dev, the docs site), `rules` (curated community CEL + exclusion sets once external contributions open, Phase 1+). The bare handle `trishula` is a dormant user account; the product repo is `trishula-dev/trishula`.
 
 Minimal-but-honest starting points; the PoC proves the ladder end-to-end (build notes in §20). Repo layout:
 
