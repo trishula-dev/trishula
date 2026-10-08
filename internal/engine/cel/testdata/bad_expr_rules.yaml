@@ -1,0 +1,9 @@
+# Pack that LOADS but does not COMPILE (TR-02: load ≠ compile contract).
+# The expression references view fields outside the v0 seed scope, so the CEL
+# environment fails at compile time; the failure must surface at Eval.
+rules:
+  - id: BAD-001
+    name: undeclared-field-rule
+    action: log
+    expression: |
+      request.totally_undeclared_field == "x"

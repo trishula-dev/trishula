@@ -1,0 +1,48 @@
+# Sample request fixture (TR-02; PRD v4 §11.3 structured request view, seed scope).
+# Fields beyond rate_windows stay out of v0: the seed rule binds
+# request.method / request.path / request.rate_windows only; future rules
+# extend this file when their fields land (§11.3 view, declared on use).
+# rate_windows keys: quoted so YAML emits string keys (CEL map[string]).
+cases:
+  - name: rate-shape-match-post-chat-boundary
+    # 40+1: boundary case above the > 40 threshold; /v1/chat/* glob.
+    request:
+      method: POST
+      path: /v1/chat/completions
+      rate_windows:
+        "5m":
+          requests: 41
+    expected:
+      match: true
+      error: false
+  - name: below-threshold-no-match
+    request:
+      method: POST
+      path: /v1/chat/completions
+      rate_windows:
+        "5m":
+          requests: 40
+    expected:
+      match: false
+      error: false
+  - name: wrong-method-no-match
+    request:
+      method: GET
+      path: /v1/chat/completions
+      rate_windows:
+        "5m":
+          requests: 41
+    expected:
+      match: false
+      error: false
+  - name: path-outside-glob-no-match
+    # sibling prefix path: /v1/chat/* does not match it
+    request:
+      method: POST
+      path: /v1/chat
+      rate_windows:
+        "5m":
+          requests: 41
+    expected:
+      match: false
+      error: false
