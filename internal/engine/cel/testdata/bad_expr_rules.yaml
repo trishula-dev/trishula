@@ -1,9 +1,11 @@
 # Pack that LOADS but does not COMPILE (TR-02: load ≠ compile contract).
-# The expression references view fields outside the v0 seed scope, so the CEL
-# environment fails at compile time; the failure must surface at Eval.
+# The expression references a top-level name outside the declared CEL
+# environment (only `request` is declared in the seed view), so the CHECKER
+# fails at compile time; the failure must surface at Eval as a fatal error
+# verdict.
 rules:
   - id: BAD-001
-    name: undeclared-field-rule
+    name: undeclared-name-rule
     action: log
     expression: |
-      request.totally_undeclared_field == "x"
+      undeclared_top_level == "x"
