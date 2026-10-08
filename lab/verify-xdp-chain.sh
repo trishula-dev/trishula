@@ -11,7 +11,7 @@ set -euo pipefail
 IFACE="${1:-eth0}"
 BPFTOOL="${BPFTOOL:-$(command -v bpftool || find /usr/lib/linux-tools -maxdepth 3 -name bpftool 2>/dev/null | head -1)}"
 WORK="$(mktemp -d)"
-trap 'ip link set dev "$IFACE" xdp off 2>/dev/null || true; rm -rf "$WORK" 2>/dev/null || true' EXIT
+trap 'ip link set dev "$IFACE" xdp off 2>/dev/null || true; umount "$WORK/pin" 2>/dev/null || true; rm -rf "$WORK" 2>/dev/null || true' EXIT
 
 "$BPFTOOL" version >/dev/null 2>&1 || { echo "FAIL: bpftool unusable (\$BPFTOOL=$BPFTOOL); set BPFTOOL=<path>" >&2; exit 2; }
 [ -f /sys/kernel/btf/vmlinux ] || { echo "FAIL: BTF missing at /sys/kernel/btf/vmlinux" >&2; exit 1; }
