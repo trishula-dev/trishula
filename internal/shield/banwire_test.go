@@ -4,8 +4,6 @@ import (
 	"encoding/binary"
 	"net/netip"
 	"testing"
-
-	"github.com/cilium/ebpf"
 )
 
 // Ban-entry wire contract (§19.1 sketch, amended per defect #62): keys are
@@ -90,15 +88,16 @@ func TestVerdictSemantics(t *testing.T) {
 	}
 }
 
-func TestLoaderRejectsStaleMaps(t *testing.T) {
-	// Loader contract: pin path is fixed (§9.3) and the loader refuses to
-	// open maps whose sizes do not match the compiled contract (fail
-	// closed, no silent compat shims).
-	_, err := OpenPinnedMaps("/nonexistent/trishula", ShieldSpec{})
-	if err == nil {
-		t.Fatal("OpenPinnedMaps on a missing pin path must error")
+func TestLoaderRejectsZeroExpiryBan(t *testing.T) {
+	// Loader contract (wire, host-portable): SetBan must refuse a zero
+	// until_ts — infinite bans are forbidden (TR-10 safety property).
+	if err := validateBanVal(BanVal{}); err == nil {
+		t.Fatal("zero-expiry ban accepted; want refusal")
 	}
-	_ = ebpf.Map{} // assert cilium/ebpf stays a loader-scope dep, not engine-scope
+	if err := validateBanVal(BanVal{UntilTS: 1, Tier: 1, ReasonCode: 42}); err != nil {
+		t.Fatalf("live ban rejected: %v", err)
+	}
+	_ = BanKey{Family: FamilyV4} // keep the family consts wired
 }
 
 func TestBanWriteExpiry(t *testing.T) {

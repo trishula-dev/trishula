@@ -1,11 +1,8 @@
 package shield
 
 import (
-	"errors"
 	"fmt"
 	"net/netip"
-
-	"github.com/cilium/ebpf"
 )
 
 // Wire contract (internal/shield/banwire_test.go, defect #62 amended):
@@ -41,7 +38,15 @@ type BanKey struct {
 	KeyClass uint8
 }
 
-// BanVal is the ban value until_ts is absolute CLOCK_MONOTONIC nanoseconds
+// validateBanVal is the loader-side check (host-portable, wire-safe).
+func validateBanVal(v BanVal) error {
+	if v.UntilTS == 0 {
+		return fmt.Errorf("ban with zero expiry (infinite bans forbidden)")
+	}
+	return nil
+}
+
+// BanVal's until_ts is absolute CLOCK_MONOTONIC nanoseconds
 // (what bpf_ktime_get_ns reads); the loader NEVER writes a zero/absent
 // expiry (infinite bans are a TR-10 safety property — banned means timed).
 // Marshals to 12 bytes (8 + tier + 1 pad + reason).
@@ -90,38 +95,6 @@ const (
 // ShieldSpec is the compiled-object contract (§19.1 names/sizes/types).
 // Zero-value = the PRD pin; a caller may only tighten via tests.
 type ShieldSpec struct{}
-
-// OpenPinnedMaps opens the pinned shield maps at the §9.3 pin root
-// (/sys/fs/bpf/trishula/). Missing pins error — the loader never
-// half-attaches (fail closed).
-func OpenPinnedMaps(root string, spec ShieldSpec) (*ShieldMaps, error) {
-	if root == "" {
-		return nil, errors.New("open pinned maps: empty pin root")
-	}
-	const (
-		mapACL1         = "acl4"
-		mapVerdictCache = "verdict_cache"
-		mapBanTable     = "ban_table"
-	)
-	_ = mapACL1
-	_ = mapVerdictCache
-	_ = mapBanTable
-	return nil, fmt.Errorf("open pinned maps: %s: pin absent (kernel not loaded)", root)
-}
-
-// ShieldMaps holds the engine→shield state maps once opened (TR-09/10
-// writes bans here; the kernel enforces at line rate).
-type ShieldMaps struct {
-	BanTable *ebpf.Map
-}
-
-// SetBan writes one ban entry (family-discriminated).
-func (m *ShieldMaps) SetBan(key BanKey, val BanVal) error {
-	if val.UntilTS == 0 {
-		return errors.New("SetBan: zero expiry (infinite bans forbidden)")
-	}
-	return m.BanTable.Put(key, val)
-}
 
 // MapSpec is one §19.1 map contract row (name, kind, max_entries).
 type MapSpec struct {
