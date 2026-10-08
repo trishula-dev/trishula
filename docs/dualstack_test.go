@@ -25,7 +25,7 @@ func TestPRDStageSketchDualStackKeys(t *testing.T) {
 	}
 	reBare := regexp.MustCompile(`__u32\s+\w*(addr|saddr|daddr)`)
 	reUnion := regexp.MustCompile(`(?s)union\s*\{`)
-	reFamily := regexp.MustCompile(`family\s*;`)
+	reFamily := regexp.MustCompile(`(?m)^\s*__u8\s+family\s*;`)
 	reV6 := regexp.MustCompile(`v6\[16\]|in6_addr`)
 	for _, name := range []string{"ban_key", "verdict_key", "flow_key"} {
 		t.Run(name, func(t *testing.T) {
@@ -76,13 +76,26 @@ func cBlocks(doc string) []string {
 	return out
 }
 
-// structBody finds the body of `struct NAME { ... }` in the blocks.
+// structBody extracts the body of `struct NAME { ... }` with brace
+// counting (lazy regexes stop at the first nested union's close brace).
 func structBody(blocks []string, name string) (string, bool) {
-	re := regexp.MustCompile(`(?s)struct\s+` + regexp.QuoteMeta(name) + `\s*\{(.*?)\}`)
+	re := regexp.MustCompile(`(?s)struct\s+` + regexp.QuoteMeta(name) + `\s*\{`)
 	for _, b := range blocks {
-		if m := re.FindStringSubmatch(b); m != nil {
-			return m[1], true
+		loc := re.FindStringSubmatchIndex(b)
+		if loc == nil {
+			continue
 		}
+		i := loc[1] // just past the opening brace
+		depth := 1
+		for ; i < len(b) && depth > 0; i++ {
+			switch b[i] {
+			case '{':
+				depth++
+			case '}':
+				depth--
+			}
+		}
+		return b[loc[1] : i-1], true
 	}
 	return "", false
 }

@@ -1312,9 +1312,20 @@ trishula-dev/trishula/           # product repo (Apache-2.0) — §19/TR-01 seed
 #define ETH_P_IPV6 0x86DD
 #define IPPROTO_TCP 6
 
-// Ban table: written by the engine (via the shield), enforced here at line rate
-struct ban_key  { __u32 ip; __u8 key_class; };          // key_class: ip | ja4_cluster | prefix
-struct ban_val  { __u64 until_ts; __u8 tier; __u16 reason_code; };
+// Ban table: written by the engine (via the shield), enforced here at line rate.
+// Keys are family-discriminated (dual-stack; a bare __u32 cannot hold an IPv6
+// address and a /48 prefix would alias its contained hosts).
+#define KEY_AF_INET  4
+#define KEY_AF_INET6 6
+struct ban_key     {
+    union {
+        __be32 v4;              // network byte order; upper 12 bytes zeroed
+        struct in6_addr v6;
+    } addr;
+    __u8 family;                // AF_INET / AF_INET6 — explicit, not inferred
+    __u8 key_class;             // ip | ja4_cluster | prefix
+};
+struct ban_val     { __u64 until_ts; __u8 tier; __u16 reason_code; };
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, 1 << 20);
@@ -1339,14 +1350,28 @@ struct {
     __uint(max_entries, 1 << 24);   // 16 MiB per node
 } events SEC(".maps");
 
-struct verdict_key { __u32 ip; __u16 port_class; };
+struct verdict_key {
+    union {
+        __be32 v4;
+        struct in6_addr v6;
+    } addr;
+    __u8 family;
+    __u16 port_class;
+};
 struct verdict_val { __u8 action; __u64 until_ts; };
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, 1 << 20);
 } verdict_cache SEC(".maps");
 
-struct flow_key  { __u32 saddr, daddr; __u16 sport, dport; };
+struct flow_key  {
+    union {
+        __be32 v4;
+        struct in6_addr v6;
+    } addr;
+    __u8 family;
+    __u16 sport, dport;
+};
 struct flow_stat { __u64 syn_ts; __u32 req_bytes; __u16 seg_count; };
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
