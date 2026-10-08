@@ -379,7 +379,7 @@ flowchart TB
 - **Every rule example cites its wire anatomy.** A CEL rule on `request.headers` links to the header explainers (Module 1); the JA4 bot rule links to Module 2's fingerprint lesson; §13's ladder links to the rate-algorithm lesson (token bucket vs sliding window vs EWMA, with interactive fixtures).
 - **Labs are runnable clusters,** not diagrams: `lab/` scenarios replay recorded adversarial traffic against live kind clusters (Module 1's smuggling corpus is exactly the differential corpus of §11.8).
 - **The product is the textbook:** when a rule fires, the verdict's trace metadata carries the module link (DX5) — learning happens at incident time, which is when developers actually read.
-- **PQC is in scope from v1 of the docs** (not the data plane): the curriculum explains Kyber/hybrid key exchange (X25519+ML-KEM, deployed in mainstream TLS stacks and browsers since 2024), where it sits on Trishula's path (termination happens at the gateway; PQ affects the gateway↔client handshake and gateway↔pool mTLS choices), and what a WAF must not assume about payload visibility under future TLS revisions.
+- **PQC is in scope from v1 of the docs** (not the data plane): the curriculum explains Kyber/hybrid key exchange (X25519+ML-KEM, the IETF-standardized hybrid group [324], default in mainstream TLS stacks and browsers since 2024–2025 [325][326]), where it sits on Trishula's path (termination happens at the gateway; PQ affects the gateway↔client handshake and gateway↔pool mTLS choices; Appendix A states the four product-side notes), what it does to ClientHello size and JA4 fingerprints [327][328], and what a WAF must not assume about payload visibility under future TLS revisions.
 
 ### 7.3 Deliverables
 
@@ -1595,7 +1595,14 @@ A PRD for a developer-first product must measure **adoption**, not just detectio
 ## Appendix A: Roadmap Notes
 
 - **HTTP/3:** QUIC ingress posture is a tracked evaluation (Phase 2), not a v1 claim — QUIC's UDP transport moves the kernel-side story (XDP sees UDP floods the same; QUIC packet framing needs userspace analysis); the academy module teaches why before the product claims.
-- **Post-quantum:** termination at the gateway keeps Trishula cipher-agnostic; the curriculum documents hybrid X25519+ML-KEM reality and what it means for fingerprinting (client PQ preferences are themselves signal). No PQ data-plane claims in v1.
+- **Post-quantum:** termination at the gateway keeps Trishula cipher-agnostic — the PQ handshake (when negotiated) is the gateway's, on the client↔gateway leg; nothing in the shield or engine changes shape. The curriculum documents hybrid X25519+ML-KEM reality and what it means for fingerprinting (client PQ preferences are themselves signal). No PQ data-plane claims in v1.
+
+  **Post-quantum readiness notes (TR-30).** PQ posture is a documentation concern with four concrete, product-side statements:
+
+  1. **Hybrid PQ key exchange is arriving client-side independently of Trishula.** X25519MLKEM768 is an IETF standard [324] (client share 1,216 bytes vs 32 for bare X25519) and is default-on in Chrome 124+ (ML-KEM variant since 131) [325], Firefox 132+, Go 1.24's `crypto/tls` [326], and OpenSSL 3.5. Any TLS stack Trishula sits behind may already be negotiating PQ key agreement. The motivation is harvest-now-decrypt-later: sessions recorded today stay secret only if their key exchange was PQ-secure. That calculus belongs to the gateway operator, not to the WAF — no product claim follows.
+  2. **Termination altitude is the product decision, and it is unchanged by PQ.** Gateway-owned termination (the default) keeps Trishula cipher-agnostic; the engine sees plaintext post-termination exactly as with classical sessions. The engine-TLS secondary mode (§6.3, TR-34) inherits the same agnosticism: the ladder inspects what the TLS termination yields, whatever group negotiated at handshake time.
+  3. **Signal effects are real and belong to the academy modules — not to product claims.** Hybrid key shares inflate the ClientHello (~1,200 bytes; multi-packet ClientHellos and middlebox compatibility effects are measured in the field [327]); client PQ preference is JA3/JA4-visible signal [328] — and therefore a spoofable one [329] (see also [330]'s authentication-side asymmetry discussion). The curriculum teaches the delta as signal-with-caveats, never as an anti-spoofing control.
+  4. **No PQ data-plane claims in v1** (§6.3 non-goal; the sibling discipline is the HTTP/3 entry above). PQ affects key agreement and signatures on hop 1 of the path, not the WAF's detection surface. PQ *authentication* (ML-DSA certificates [330]) is a separate, harder client+server migration and is likewise out of scope for v1 product surfaces — the modules teach why the asymmetry (PQ encryption broadly deployed, PQ authentication not) is the 2026-timeframe reality.
 - - **Socket-plane L7 fast path:** a tracked design study (specification §9.9) — kernel enforcement of header-class policies at the socket layer via `strparser`/kTLS with synthesized per-policy programs; no body inspection, no HTTP/3. Kernel-module dependency and verifier envelope decided before any implementation claim.
 
 - **Named-algorithm stability:** `ScoredWindowBan` is version-pinned by this document (v1); changes require a new version + conformance test, never a silent rewrite — the same discipline CRS applies to rule semantics.
@@ -1705,6 +1712,13 @@ Consolidated source list; inline numeric citations `[n]` resolve here. Carried f
 - **[316]** (canon: https://www.f5.com/company/blog/nginx/f5-nginx-modsecurity-waf-transitioning-to-eol/) — NGINX ModSecurity WAF EoL Mar 31 2024; CRS pivoting to Coraza — <https://www.nginx.com/blog/f5-nginx-modsecurity-waf-transitioning-to-eol/>
 - **[318]** Trustwave EOS Aug 2021 / EOL Jul 1 2024 stewardship transfer; release timeline — <https://en.wikipedia.org/wiki/ModSecurity>
 - **[322]** CRS tuning burden (4–8h, per-endpoint exclusions) — <https://www.systemshardening.com/articles/network/waf-rule-tuning/>
+- **[324]** RFC 10024 — PQ/T hybrid key agreement for TLS 1.3: X25519MLKEM768 / SecP256r1MLKEM768 / SecP384r1MLKEM1024, group registry (0x11EC), client share 1,216 B vs 32 B for X25519; pre-standard Kyber768 entries obsoleted — <https://www.rfc-editor.org/rfc/rfc10024>
+- **[325]** Chromium — hybrid PQ key exchange default in Chrome 124; X25519MLKEM768 (FIPS 203) from Chrome 131 — <https://blog.chromium.org/2024/05/advancing-our-amazing-bet-on-asymmetric.html> · <https://security.googleblog.com/2024/09/a-new-path-for-kyber-on-web.html>
+- **[326]** Go 1.24 release notes — `crypto/tls` enables X25519MLKEM768 by default (`tlsmlkem` GODEBUG revert) — <https://go.dev/doc/go1.24>
+- **[327]** Cloudflare — PQ keyshares to origins: ClientHello size effects, middlebox failures (~0.34% of scanned origins), HelloRetryRequest flow — <https://blog.cloudflare.com/post-quantum-to-origins/>
+- **[328]** Cloudflare Radar — post-quantum TLS adoption telemetry — <https://radar.cloudflare.com/post-quantum>
+- **[329]** JA4+ TLS client fingerprinting specification — <https://github.com/FoxIO-LLC/ja4>
+- **[330]** Cloudflare — post-quantum authentication to origins: ML-DSA certificates, the encryption-vs-authentication deployment asymmetry — <https://blog.cloudflare.com/post-quantum-authentication-to-origins/>
 - **[F-apisix]** Apache APISIX: open-source API/AI gateway — <https://apisix.apache.org/>
 - **[F-bunkerweb]** BunkerWeb: open-source WAF / reverse proxy (AGPLv3) — <https://github.com/bunkerity/bunkerweb>
 - **[F-higress]** Higress: AI-native API gateway (Envoy/Istio, Wasm plugins, GIE-conformant) — <https://github.com/higress-group/higress>
