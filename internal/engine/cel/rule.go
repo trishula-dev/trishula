@@ -226,7 +226,7 @@ func matchesGlobOption() cel.EnvOption {
 				}
 				re, err := regexp.Compile(globToRegexp(glob))
 				if err != nil {
-					return types.NewErr("matches: invalid glob: " + err.Error())
+					return types.NewErrFromString("matches: invalid glob: " + err.Error())
 				}
 				return types.Bool(re.MatchString(sub))
 			}),

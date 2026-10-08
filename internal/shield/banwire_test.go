@@ -106,11 +106,14 @@ func TestBanWriteExpiry(t *testing.T) {
 	// raw, as bpf_ktime_get_ns reads); the loader never writes 0-expiry
 	// (infinite) bans — that invariant is TR-10's safety property, pinned
 	// here so a v0 violation is caught at the loader layer.
-	v := BanVal{UntilTS: 1, Tier: 1, ReasonCode: 42}
-	if v.Expired(2) {
-		t.Fatal("ban with until_ts=1 must not be expired at t=2... inverted")
+	live := BanVal{UntilTS: 2_000_000_000, Tier: 1, ReasonCode: 42} // +2s
+	if live.Expired(1_000_000_000) {
+		t.Fatal("live ban (until now+2s) read expired at now")
 	}
-	if !v.Expired(0) {
-		t.Fatal("ban expired check fails at t=0 < 1")
+	if !live.Expired(3_000_000_000) {
+		t.Fatal("ban past until_ns never expired")
+	}
+	if !(BanVal{UntilTS: 5}).Expired(5) {
+		t.Fatal("ban at exactly until_ns must read expired (<= semantics)")
 	}
 }
