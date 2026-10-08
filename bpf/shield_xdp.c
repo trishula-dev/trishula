@@ -18,10 +18,12 @@
 #define ETH_P_IPV6 0x86DD
 
 /* Ban table: written by the ban engine (TR-09/10) via the shield loader,
- * enforced here at line rate.
+ * enforced here at line rate. Dual-stack per defect #62 (amended §19.1):
+ * keys carry a family-discriminated 16-byte address union — a bare u32
+ * cannot hold an IPv6 address and a /48 prefix would alias its hosts.
  * Wire contract pinned by internal/shield/banwire_test.go:
- *   key: {u32 ip (network order), u8 key_class} = 5 bytes
- *   val: {u64 until_ns, u8 tier, u16 reason_code} + pad = 12 bytes
+ *   key: {union {be32 v4 | u8 v6[16]} addr, u8 family, u8 key_class} = 18B
+ *   val: {u64 until_ns, u8 tier, pad, u16 reason_code}          = 12B
  */
 enum key_class {
 	KEY_CLASS_IP = 0,
@@ -29,14 +31,26 @@ enum key_class {
 	KEY_CLASS_PREFIX = 2,
 };
 
+#define KEY_AF_INET 4
+#define KEY_AF_INET6 6
+
+struct key_addr {
+	union {
+		__be32 v4;        /* network byte order; upper 12 bytes zeroed */
+		__u8 v6[16];
+	};
+};
+
 struct ban_key {
-	__be32 ip;
+	struct key_addr addr;
+	__u8 family;            /* KEY_AF_INET / KEY_AF_INET6 — explicit */
 	__u8 key_class;
 };
 
 struct ban_val {
 	__u64 until_ts;
 	__u8 tier;
+	__u8 _pad;
 	__u16 reason_code;
 };
 
@@ -49,7 +63,8 @@ struct {
 
 /* Verdict cache: engine → shield short-circuit decisions (§9.3). */
 struct verdict_key {
-	__be32 ip;
+	struct key_addr addr;
+	__u8 family;
 	__u16 port_class;
 };
 
@@ -70,7 +85,10 @@ struct {
 	__type(value, struct verdict_val);
 } verdict_cache SEC(".maps");
 
-/* L3/L4 ACL: operator-compiled prefixes (CRD → bundle → map, §8). */
+/* L3 ACL: operator-compiled prefixes (CRD → bundle → map, §8).
+ * v0 = IPv4 (acl4); the acl6 trie lands with the IPv6 slice (§9.2 later
+ * slice of TR-03) — keys here use the same #62 family discipline when
+ * that lands; LPM v4 key layout stays the kernel's u32-prefixlen form. */
 struct acl4_key {
 	__u32 prefixlen;
 	__be32 addr;
@@ -106,7 +124,8 @@ int shield_xdp(struct xdp_md *ctx)
 		return XDP_PASS; /* verifier-safe: no options parsing at v0 */
 
 	struct ban_key bk = {
-		.ip = ip->saddr,
+		.addr = {.v4 = ip->saddr},
+		.family = KEY_AF_INET,
 		.key_class = KEY_CLASS_IP,
 	};
 	struct ban_val *ban = bpf_map_lookup_elem(&ban_table, &bk);
@@ -130,7 +149,8 @@ int shield_xdp(struct xdp_md *ctx)
 
 	/* Verdict cache: engine-written (block wins with expiry). */
 	struct verdict_key vk = {
-		.ip = ip->saddr,
+		.addr = {.v4 = ip->saddr},
+		.family = KEY_AF_INET,
 		.port_class = 0, /* v0: single class; per-port classes land with §8 bundles */
 	};
 	struct verdict_val *vc = bpf_map_lookup_elem(&verdict_cache, &vk);
