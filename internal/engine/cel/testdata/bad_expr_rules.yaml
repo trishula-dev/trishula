@@ -1,0 +1,11 @@
+# Pack that LOADS but does not COMPILE (TR-02: load ≠ compile contract).
+# The expression references a top-level name outside the declared CEL
+# environment (only `request` is declared in the seed view), so the CHECKER
+# fails at compile time; the failure must surface at Eval as a fatal error
+# verdict.
+rules:
+  - id: BAD-001
+    name: undeclared-name-rule
+    action: log
+    expression: |
+      undeclared_top_level == "x"
