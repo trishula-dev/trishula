@@ -109,12 +109,13 @@ static __always_inline int is_http_method(__u8 b0, __u8 b1)
 }
 
 static __always_inline int emit_flow_event(struct __sk_buff *skb,
+					   void *data, void *data_end,
 					   __be32 s4, __u8 *s6,
 					   __be32 d4, __u8 *d6,
 					   __u16 sport, __u16 dport,
 					   __u8 tcp_flags, __u8 family,
 					   __u16 payload_len,
-					   void *payload, void *data_end)
+					   void *tcp_end)
 {
 	struct flow_event *ev = bpf_ringbuf_reserve(&events, sizeof(*ev), 0);
 	if (!ev) {
@@ -141,39 +142,41 @@ static __always_inline int emit_flow_event(struct __sk_buff *skb,
 	ev->payload_len = payload_len;
 	ev->family = family;
 
-	/* Bounded L7 probe (§9.6 advisory): plaintext HTTP method peek. */
-	if (payload + 4 <= data_end) {
-		__u8 b0 = *(__u8 *)payload;
-		__u8 b1 = *(__u8 *)(payload + 1);
-		__u8 b2 = *(__u8 *)(payload + 2);
-		if (is_http_method(b0, b1))
-			ev->http_seen = 1;
-		/* TR-04d E2E trace (removed with the e2e): payload byte evidence */
-		bpf_printk("[tr04d] pl0=%c pl1=%c pl2=%c seen=%d", b0, b1, b2,
-			   ev->http_seen);
-		if (b0 == 0x50 && b1 == 0x52) /* "PR" of the h2 preface */
-			ev->h2_preface = 1;
-		if (payload + 6 <= data_end) {
-			__u8 b3 = *(__u8 *)(payload + 3);
-			__u8 b4 = *(__u8 *)(payload + 4);
-			/* TLS record: 0x16 0x03 [0x00-0x04] size... */
-			if (b0 == 0x16 && b1 == 0x03 && b4 <= 0x04)
+	/* Bounded L7 probe (§9.6 advisory): plaintext HTTP method peek via
+	 * bpf_skb_load_bytes — reads the FULL skb (linear + paged frags),
+	 * unlike direct pointer reads limited to the linear area (GSO/TFO:
+	 * payload bytes can sit in frags — the E2E traced exactly that: the
+	 * pointer peek never fired while the payload demonstrably arrived).
+	 * Offsets are relative to skb->data (the L2 frame start). */
+	{
+		__u32 l4_off = (__u32)(long)tcp_end - (__u32)(long)data;
+		__u8 hdr[6];
+		if (!bpf_skb_load_bytes(skb, l4_off, hdr, sizeof(hdr))) {
+			if (is_http_method(hdr[0], hdr[1]))
+				ev->http_seen = 1;
+			if (hdr[0] == 0x50 && hdr[1] == 0x52) /* PR = h2 preface */
+				ev->h2_preface = 1;
+			if (hdr[0] == 0x16 && hdr[1] == 0x03 && hdr[4] <= 0x04)
 				ev->tls_seen = 1;
-			/* Path hint: after the method token + space. */
 			if (ev->http_seen) {
-				void *p = payload;
-				int off = 0;
-				/* find first SP (end of method) */
+				__u32 sp = l4_off;
 				#pragma unroll
 				for (int i = 0; i < 8; i++) {
-					if (p + i + 1 > data_end) break;
-					if (*(__u8 *)(p + i) == ' ') { off = i + 1; break; }
+					__u8 c;
+					if (bpf_skb_load_bytes(skb, sp + i, &c, 1))
+						break;
+					if (c == ' ') {
+						sp = sp + i + 1;
+						break;
+					}
 				}
 				#pragma unroll
 				for (int i = 0; i < 64; i++) {
-					if (p + off + i + 1 > data_end) break;
-					__u8 c = *(__u8 *)(p + off + i);
-					if (c == ' ' || c == '\r' || c == '\n') break;
+					__u8 c;
+					if (bpf_skb_load_bytes(skb, sp + i, &c, 1))
+						break;
+					if (c == ' ' || c == '\r' || c == '\n')
+						break;
 					ev->path_hint[i] = c;
 				}
 			}
@@ -217,9 +220,9 @@ static __always_inline int on_ip4(struct __sk_buff *skb, void *data,
 	}
 
 	__u16 payload_len = skb->len - ((__u32)(long)payload - (__u32)(long)data);
-	emit_flow_event(skb, ip->saddr, NULL, ip->daddr, NULL,
+	emit_flow_event(skb, data, data_end, ip->saddr, NULL, ip->daddr, NULL,
 			tcp->source, tcp->dest, tcp->syn ? 0x2 : 0,
-			KEY_AF_INET, (__u16)payload_len, tcp_end, data_end);
+			KEY_AF_INET, (__u16)payload_len, tcp_end);
 
 	/* Per-flow accounting (shield → shield; §9.3). */
 	struct flow_key fk = {
@@ -272,10 +275,9 @@ static __always_inline int on_ip6(struct __sk_buff *skb, void *data,
 			return TC_ACT_SHOT;
 	}
 
-	emit_flow_event(skb, 0, ip6h->saddr.in6_u.u6_addr8, 0,
-			ip6h->daddr.in6_u.u6_addr8, tcp->source, tcp->dest,
-			tcp->syn ? 0x2 : 0, KEY_AF_INET6, skb->len,
-			tcp_end6, data_end);
+	emit_flow_event(skb, data, data_end, 0, ip6h->saddr.in6_u.u6_addr8,
+			0, ip6h->daddr.in6_u.u6_addr8, tcp->source, tcp->dest,
+			tcp->syn ? 0x2 : 0, KEY_AF_INET6, skb->len, tcp_end6);
 	return TC_ACT_OK;
 }
 
