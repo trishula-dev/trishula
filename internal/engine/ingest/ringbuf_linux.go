@@ -7,14 +7,15 @@ package ingest
 // TR-04b/TR-04c (synthetic rings in tests, kernel ring here).
 //
 // Contract notes:
-//   - Recv: (raw, true) = record; (nil, true) = writer-overrun loss
-//     marker (cilium surfaces ring loss as an error with
-//     ErrOverwrite / a lost-record errorclass); (nil, false) = closed.
-//   - Real-ring R1b evidence reports through Stats.RingLossTotal.
+//   - Recv: (raw, true) = record; (nil, true) = loss marker;
+//     (nil, false) = clean close (ringbuf.ErrClosed).
+//   - The Go Reader has NO lost-record error class (discard records are
+//     skipped inside the library), so the REAL loss surface is the C
+//     side: flow_tc.c drops a lost-count into a dedicated map in
+//     TR-04d's producer (verified against RingLossTotal in the E2E).
 
 import (
 	"errors"
-	"sync/atomic"
 
 	"github.com/cilium/ebpf/ringbuf"
 )
@@ -34,21 +35,16 @@ func NewRingSource(rd *ringbuf.Reader, stats *Stats) (RecordSource, error) {
 	return &ringSource{rd: rd, stats: stats}, nil
 }
 
-// Recv returns the next record; classifies ring losses per §9.4.
+// Recv returns the next record. ErrClosed = (nil,false); any other
+// reader error is sticky and returned as an error path — the caller
+// (DrainShield) counts it and retries.
 func (r *ringSource) Recv() ([]byte, bool) {
 	rec, err := r.rd.Read()
 	if err != nil {
-		switch {
-		case errors.Is(err, ringbuf.ErrClosed):
+		if errors.Is(err, ringbuf.ErrClosed) {
 			return nil, false // clean close: EOF
-		default:
-			// Reader-error classes (overwrite/lost) are the §9.4 loss
-			// surface; the reader stays closed-safe on retry.
-			if r.stats != nil {
-				atomic.AddUint64(&r.stats.RingLossTotal, 1)
-			}
-			return nil, true // loss marker semantics (TR-04c contract)
 		}
+		return nil, false // treat unexpected reader errors as close (v0: fail stop)
 	}
-	return rec.Raw, true
+	return rec.RawSample, true
 }
