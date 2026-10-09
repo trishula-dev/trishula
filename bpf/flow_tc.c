@@ -191,7 +191,11 @@ static __always_inline int on_ip4(struct __sk_buff *skb, void *data,
 	if (ip->protocol != IPPROTO_TCP)
 		return TC_ACT_OK;
 	struct tcphdr *tcp = payload;
-	if ((void *)(tcp + 1) > data_end)
+	__u32 tcp_hlen = (__u32)tcp->doff * 4;
+	if (tcp->doff < 5 || tcp_hlen > 60 || tcp_hlen > skb->len)
+		return TC_ACT_OK;
+	void *tcp_end = payload + tcp_hlen;
+	if (tcp_end > data_end)
 		return TC_ACT_OK;
 
 	/* Ban-table probe (TR-03 authority): TC_ACT_SHOT on a live ban. */
@@ -209,7 +213,7 @@ static __always_inline int on_ip4(struct __sk_buff *skb, void *data,
 	__u16 payload_len = skb->len - ((__u32)(long)payload - (__u32)(long)data);
 	emit_flow_event(skb, ip->saddr, NULL, ip->daddr, NULL,
 			tcp->source, tcp->dest, tcp->syn ? 0x2 : 0,
-			KEY_AF_INET, (__u16)payload_len, (void *)(tcp + 1), data_end);
+			KEY_AF_INET, (__u16)payload_len, tcp_end, data_end);
 
 	/* Per-flow accounting (shield → shield; §9.3). */
 	struct flow_key fk = {
