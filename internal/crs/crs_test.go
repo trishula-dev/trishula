@@ -10,25 +10,33 @@ import (
 	"github.com/corazawaf/coraza/v3/types"
 )
 
+// fixedClock stamps the test tx scope (parity/telemetry correlation; the
+// SecLang surface carries no time-based rules this slice evaluates).
+var fixedClock = func() time.Time { return time.Unix(0, 0).UTC() }
+
 // TestCorazaLoadAndEval (TR-07 PR A watch): load a minimal SecLang
 // snippet from testdata, evaluate two crafted requests, expect the
 // Verdict structure (per-phase matches, shadow-only disruption evidence).
 func TestCorazaLoadAndEval(t *testing.T) {
-	ev, err := NewFromFile("testdata/seclang/simple.conf")
+	ev, err := NewFromFileWithOptions("testdata/seclang/simple.conf", WithClock(fixedClock))
 	if err != nil {
 		t.Fatalf("NewFromFile: %v", err)
 	}
 
-	now := time.Unix(0, 0).UTC()
+	now := fixedClock()
 	opt := func(method, uri string, ua, q string, body []byte) Options {
 		o := Options{
 			Method:  method,
 			URI:     uri,
 			Version: "1.1",
-			Headers: map[string]string{"Host": "trishula.dev", "Content-Type": "text/plain"},
-			Client:  netip.MustParseAddr("192.0.2.7"),
-			Port:    80,
-			Now:     now,
+			Headers: map[string]string{
+				"Host":         "trishula.dev",
+				"Content-Type": "text/plain",
+				"X-Raw":        ":", // id:9000 enables the RAW body processor
+			},
+			Client: netip.MustParseAddr("192.0.2.7"),
+			Port:   80,
+			Now:    now,
 		}
 		if ua != "" {
 			o.Headers["User-Agent"] = ua
@@ -47,8 +55,12 @@ func TestCorazaLoadAndEval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate(positive): %v", err)
 	}
-	if len(v.Phase1Matches) != 2 {
-		t.Fatalf("Phase1Matches ruleids = %+v, want markers 1001+1002", v.Phase1Matches)
+	if len(v.Phase1Matches) != 3 {
+		t.Fatalf("Phase1Matches ruleids = %+v, want enabler 9000 + markers 1001+1002", v.Phase1Matches)
+	}
+	if v.Phase1Matches[0].RuleID != bodyEnableRUID {
+		t.Fatalf("Phase1Matches[0] = %+v, want the body-processor enabler id:%d first",
+			v.Phase1Matches[0], bodyEnableRUID)
 	}
 	if len(v.Phase2Matches) != 0 {
 		t.Fatalf("Phase2Matches = %+v, want none (body carries no token)", v.Phase2Matches)
@@ -64,9 +76,6 @@ func TestCorazaLoadAndEval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Evaluate(disruptive): %v", err)
 	}
-	if len(v.Phase1Matches) != 0 {
-		t.Fatalf("Phase1Matches = %+v, want none", v.Phase1Matches)
-	}
 	if len(v.Phase2Matches) != 1 || v.Phase2Matches[0].RuleID != denyRuleID {
 		t.Fatalf("Phase2Matches = %+v, want exactly id:%d", v.Phase2Matches, denyRuleID)
 	}
@@ -79,9 +88,10 @@ func TestCorazaLoadAndEval(t *testing.T) {
 	}
 }
 
-// TestShadowMode asserts the wrapper's posture: verdicts are EVIDENCE, the
-// run never enforces — an interruption is reported, not returned as an
-// error, and matching stays visible per phase.
+// TestShadowMode asserts the wrapper's posture: verdicts are EVIDENCE —
+// the run never enforces. A phase-2 deny is returned as data (the
+// interruption is reported inside the Verdict, never as an error) and
+// matching stays visible per phase.
 func TestShadowMode(t *testing.T) {
 	ev, err := NewFromFile("testdata/seclang/simple.conf")
 	if err != nil {
@@ -91,10 +101,15 @@ func TestShadowMode(t *testing.T) {
 		Method:  "GET",
 		URI:     "/index.html?q=%3Cscript%3E",
 		Version: "1.1",
-		Headers: map[string]string{"User-Agent": "trishula-shadow/0.0"},
-		Client:  netip.MustParseAddr("192.0.2.7"),
-		Port:    80,
-		Now:     time.Unix(0, 0).UTC(),
+		Headers: map[string]string{
+			"User-Agent":   "trishula-shadow/0.0",
+			"X-Raw":        ":", // RAW body processor (REQUEST_BODY addressable)
+			"Content-Type": "text/plain",
+		},
+		Body:   []byte("body with badtoken inside"),
+		Client: netip.MustParseAddr("192.0.2.7"),
+		Port:   80,
+		Now:    fixedClock(),
 	})
 	if err != nil {
 		t.Fatalf("shadow run must surface matches as data, not enforcement errors: %v", err)
@@ -102,17 +117,19 @@ func TestShadowMode(t *testing.T) {
 	found := map[int]bool{}
 	for _, m := range v.Phase1Matches {
 		found[m.RuleID] = true
-		if m.Disruptive {
-			t.Fatalf("shadow phase-1 match carries disruption: %+v", m)
-		}
 	}
 	for _, id := range []int{uaRuleID, probeRuleID} {
 		if !found[id] {
 			t.Fatalf("shadow phase-1 matches = %+v, want marker id:%d present", v.Phase1Matches, id)
 		}
 	}
-	if len(v.Phase2Matches) != 0 {
-		t.Fatalf("Phase2Matches = %+v, want none", v.Phase2Matches)
+	if !v.Interrupted || v.InterruptRule != bodyDenyRuleID {
+		t.Fatalf("shadow disruption evidence = (%v, rule %d), want the phase-2 deny as DATA (id:%d)",
+			v.Interrupted, v.InterruptRule, bodyDenyRuleID)
+	}
+	if len(v.Phase2Matches) != 1 || v.Phase2Matches[0].RuleID != bodyDenyRuleID {
+		t.Fatalf("Phase2Matches = %+v, want the phase-2 deny projected (id:%d)",
+			v.Phase2Matches, bodyDenyRuleID)
 	}
 }
 
@@ -133,7 +150,11 @@ var (
 
 // denyRuleID / probeRuleID / uaRuleID are the seed snippet's rule ids.
 const (
-	denyRuleID  = 1003
-	uaRuleID    = 1001
-	probeRuleID = 1002
+	denyRuleID     = 1003
+	uaRuleID       = 1001
+	probeRuleID    = 1002
+	bodyEnableRUID = 9000
 )
+
+// bodyDenyRuleID is the phase-2 deny (alias kept for assertions).
+const bodyDenyRuleID = denyRuleID
