@@ -150,13 +150,15 @@ static __always_inline int emit_flow_event(struct __sk_buff *skb,
 	 * Offsets are relative to skb->data (the L2 frame start). */
 	{
 			__u32 l4_off = (__u32)(long)tcp_end - (__u32)(long)data;
-		__u8 hdr[5];
+		__u8 hdr[4]; /* 4-byte granularity: method probe + h2 peek */
 		if (!bpf_skb_load_bytes(skb, l4_off, hdr, sizeof(hdr))) {
 			if (is_http_method(hdr[0], hdr[1]))
 				ev->http_seen = 1;
 			if (hdr[0] == 0x50 && hdr[1] == 0x52) /* PR = h2 preface */
 				ev->h2_preface = 1;
-			if (hdr[0] == 0x16 && hdr[1] == 0x03 && hdr[4] <= 0x04)
+			__u8 b4;
+			if (!bpf_skb_load_bytes(skb, l4_off + 4, &b4, 1) &&
+			    hdr[0] == 0x16 && hdr[1] == 0x03 && b4 <= 0x04)
 				ev->tls_seen = 1;
 			if (ev->http_seen) {
 				__u32 sp = l4_off;
