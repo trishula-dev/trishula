@@ -78,6 +78,7 @@ func Parse(wire []byte) (*Request, error) {
 	r.Method, r.Path, r.Version = method, target, version
 
 	// --- header lines ---------------------------------------------------
+	headerLines := 0
 	for {
 		line, rest, err = nextLine(rest, total)
 		if err != nil {
@@ -90,8 +91,9 @@ func Parse(wire []byte) (*Request, error) {
 		if strings.ContainsAny(line.text[:1], " 	") {
 			return nil, ErrHeaderFold // obs-fold: a continuation line starts with SP/HTAB
 		}
-		if len(r.Headers) >= MaxHeaderLines {
-			return nil, ErrTooManyHeaders
+		headerLines++
+		if headerLines > MaxHeaderLines {
+			return nil, ErrTooManyHeaders // line count, NOT distinct keys: duplicates still cost parse
 		}
 		name, value, err := parseHeaderField(line.text)
 		if err != nil {
@@ -169,6 +171,12 @@ func parseRequestLine(line string) (method, target, version string, err error) {
 	maj, min := version[5], version[7]
 	if version[6] != '.' || maj < '0' || maj > '9' || min < '0' || min > '9' {
 		return "", "", "", ErrBadVersion
+	}
+	// v0 slice pin: HTTP/1.0 and HTTP/1.1 only. HTTP/2 arrives over an
+	// HTTP/1.1 Upgrade (TR-15); 0.9 is version-less by construction;
+	// everything else does not exist on an HTTP/1 wire.
+	if maj != '1' || (min != '0' && min != '1') {
+		return "", "", "", fmt.Errorf("%w: %s not in the v0 slice {HTTP/1.0, HTTP/1.1}", ErrBadVersion, version)
 	}
 	return method, target, version, nil
 }

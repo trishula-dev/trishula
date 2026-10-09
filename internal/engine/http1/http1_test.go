@@ -95,7 +95,7 @@ func TestMalformedShapes(t *testing.T) {
 		{"header-space-in-name", "GET /x HTTP/1.1\r\nBad Name: v\r\n\r\n", ErrBadHeader},
 		{"header-name-empty", "GET /x HTTP/1.1\r\n: v\r\n\r\n", ErrBadHeader},
 		{"too-many-headers", "GET /x HTTP/1.1\r\n" + manyHeaders(101) + "\r\n", ErrTooManyHeaders},
-		{"header-block-too-big", "GET /x HTTP/1.1\r\n" + bigHeader(17*1024) + "\r\n", ErrHeaderTooBig},
+		{"header-block-too-big", "GET /x HTTP/1.1\r\n" + manyBigHeaders(18*1024) + "\r\n", ErrHeaderTooBig},
 	}
 	for _, tc := range cases {
 		r, err := Parse([]byte(tc.wire))
@@ -123,9 +123,15 @@ func manyHeaders(n int) string {
 	return b.String()
 }
 
-func bigHeader(total int) string {
-	v := strings.Repeat("a", total-8)
-	return "X-B: " + v + "\r\n"
+func manyBigHeaders(total int) string {
+	// many lines, each well under the per-line budget, so the TOTAL block
+	// budget (not any single line) is the first violated bound
+	var b strings.Builder
+	one := strings.Repeat("a", 3000)
+	for b.Len() < total {
+		b.WriteString("X-B: " + one + "\r\n")
+	}
+	return b.String()
 }
 
 // TestParseNeverPanicsFuzzSeeds hammers structurally evil inputs: any
