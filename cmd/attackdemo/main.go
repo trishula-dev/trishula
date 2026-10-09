@@ -25,8 +25,10 @@ import (
 	"fmt"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	coraza "github.com/corazawaf/coraza/v3"
 	types0 "github.com/corazawaf/coraza/v3/types"
@@ -49,7 +51,7 @@ SecResponseBodyAccess Off
 SecDefaultAction "phase:1,log,pass"
 SecRule REQUEST_URI "@contains /etc/passwd" "id:930120,phase:1,log,msg:'OS File Access Attempt',severity:CRITICAL"
 SecRule REQUEST_URI "@rx \.\./" "id:930100,phase:1,log,msg:'Path Traversal Attack (/../)',severity:CRITICAL"
-SecRule REQUEST_URI "@contains union%20select" "id:942140,phase:1,log,msg:'SQL Injection Attack',severity:CRITICAL"
+SecRule REQUEST_URI "@rx (?i)(union[+ %]*(all[+ %]*select|select)|select.+from.+users|%20union|%20select)" "id:942140,phase:1,log,msg:'SQL Injection Attack',severity:CRITICAL"
 `
 
 func runCRS(reqFile string) error {
@@ -124,8 +126,15 @@ func bolaSub(objectID, owner, subject string) {
 		map[bool]string{true: "allow", false: "block"}[match], match, owner, subject)
 }
 
+func seedPath() string {
+	if r := os.Getenv("TRISHULA_ROOT"); r != "" {
+		return filepath.Join(r, "rules/cel/seed.yaml")
+	}
+	return "rules/cel/seed.yaml"
+}
+
 func celRate(method, path string, rate int) error {
-	pack, err := tricel.LoadRulePack("rules/cel/seed.yaml")
+	pack, err := tricel.LoadRulePack(seedPath())
 	if err != nil {
 		return err
 	}
@@ -150,7 +159,18 @@ func runRing(pin string, n int) error {
 		return err
 	}
 	defer rd.Close()
+	// Reader has no deadline: poll AvailableBytes instead of blocking
+	// forever when the demo emits fewer events than requested.
+	deadline := time.Now().Add(1 * time.Second)
 	for i := 0; i < n; i++ {
+		if rd.AvailableBytes() == 0 {
+			if time.Now().After(deadline) {
+				return nil
+			}
+			time.Sleep(20 * time.Millisecond)
+			i--
+			continue
+		}
 		rec, err := rd.Read()
 		if err != nil {
 			return nil
@@ -165,12 +185,14 @@ func runRing(pin string, n int) error {
 	return nil
 }
 
-// runBan seeds one source ban via the TR-03 loader ABI (cilium Put with
-// the wire structs pinned in shield contract tests).
+// runBan seeds one source ban via the TR-03 loader ABI. The demo harness
+// pins the merged flow_tc object (which carries the same ban_table
+// contract); we open the pinned map and Put through the wire structs
+// from internal/shield (contract-pinned in banwire_test.go).
 func runBan(pin, ipStr string, seconds int) error {
-	m, err := ebpf.LoadPinnedMap(pin, nil)
+	m, err := ebpf.LoadPinnedMap(pin, &ebpf.LoadPinOptions{})
 	if err != nil {
-		return err
+		return fmt.Errorf("open pinned ban_table: %w", err)
 	}
 	defer m.Close()
 	ip, err := netip.ParseAddr(ipStr)
@@ -178,12 +200,19 @@ func runBan(pin, ipStr string, seconds int) error {
 		return err
 	}
 	key := trishield.BanKeyFromIP(ip, trishield.KeyClassIP)
-	until := nowMonoNS() + uint64(seconds)*1e9
-	val := trishield.BanVal{UntilTS: until, Tier: 1, ReasonCode: 4211}
-	if err := m.Put(&key, &val); err != nil {
+	var ts unix.Timespec
+	if err := unix.ClockGettime(unix.CLOCK_MONOTONIC, &ts); err != nil {
 		return err
 	}
-	fmt.Printf("ban:      src=%s tier=1 reason=4211 until=mono+%ds → kernel drops on next packet (TC_ACT_SHOT)\n", ipStr, seconds)
+	until := uint64(ts.Sec)*1e9 + uint64(ts.Nsec) + uint64(seconds)*1e9
+	val := trishield.BanVal{UntilTS: until, Tier: 1, ReasonCode: 4211}
+	if err := m.Put(&key, &val); err != nil {
+		return fmt.Errorf("ban_table put: %w (wire=%T/%T)", err,
+			key, val)
+	}
+	fmt.Printf("ban:      [%s] family=%d class=%d tier=1 reason=4211 until=mono+%ds\n",
+		ipStr, key.Family, key.KeyClass, seconds)
+	fmt.Printf("ban:      kernel drops this source on its next packet (ban probe → TC_ACT_SHOT)\n")
 	return nil
 }
 
