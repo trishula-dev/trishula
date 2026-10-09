@@ -2,31 +2,43 @@ package banconformance
 
 import (
 	"encoding/json"
-	"fmt"
 	"math"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"strings"
 	"testing"
-	"time"
+	"testing/fstest"
 
 	"sigs.k8s.io/yaml"
 
 	rateban "github.com/trishula-dev/trishula/internal/engine/rateban"
 )
 
+// testFS serves the fixtures file to the runner from the package dir
+// (plain os.ReadFile at init; fstest.MapFS keeps the read pkg-relative
+// and hermetic for go test ./... from any working directory).
+var testFS fstest.MapFS
+
+func init() {
+	raw, err := os.ReadFile("ban_conformance_fixtures.yaml")
+	if err != nil {
+		panic("ban-conformance: " + err.Error())
+	}
+	testFS = fstest.MapFS{
+		"ban_conformance_fixtures.yaml": &fstest.MapFile{Data: raw},
+	}
+}
+
 // ---- §13.3 constants: the byte-mirror of the BanPolicy CRD sketch (§19.1).
 // The fixtures YAML's policy block is asserted EQUAL to this table; both are
 // asserted equal to the PRD sketch by testdata/recompute.py (independent
 // implementation, run in CI next to this suite).
 const (
-	findtimeSec   = 600 // 10m — evidence window
-	threshold     = 10  // maxretry analog (score, not raw count)
-	bantimeSec    = 600 // 10m — base duration
-	backoff       = 2   // κ — recidivism exponential multiplier
-	maxBantimeSec = 86400 // 24h — human-scale cap
-	halfLifePct   = 20  // decayHalfLifePct: % of findtime
+	findtimeSec   int64 = 600   // 10m — evidence window
+	threshold           = 10.0  // maxretry analog (score, not raw count)
+	bantimeSec    int64 = 600   // 10m — base duration
+	backoff             = 2.0   // κ — recidivism exponential multiplier
+	maxBantimeSec int64 = 86400 // 24h — human-scale cap
+	halfLifePct         = 20.0  // decayHalfLifePct: % of findtime
 )
 
 // weightsDefault mirrors the §19.1 weights table (names verbatim).
@@ -41,39 +53,40 @@ var weightsDefault = map[string]float64{
 	"kernelBurstFlag": 3,
 }
 
-// lambda derives λ from the decayHalfLifePct: half-life = pct·findtime,
-// λ = ln2 / half-life. §13.3 "score decay: exponential, half-life 20% of W".
-var lambdaPerSec = math.Log(2) / (halfLifePct / 100.0 * findtimeSec)
+// lambdaPerSec derives λ from the decayHalfLifePct: half-life = pct·findtime,
+// λ = ln2 / half-life. §13.3: "score decay: exponential, half-life 20% of W".
+var lambdaPerSec = math.Log(2) / (halfLifePct / 100.0 * float64(findtimeSec))
 
-func decayed(w float64, ageSec int) float64 {
+func decayed(w float64, ageSec int64) float64 {
 	return w * math.Exp(-lambdaPerSec*float64(ageSec))
 }
 
 // untilFor: §13.3 until = t_now + min(B·κ^recid, Bmax).
-func untilFor(recid int) int64 {
-	b := float64(bantimeSec) * math.Pow(backoff, float64(recid))
+func untilFor(recid int64) int64 {
+	b := bantimeSec * int64(math.Pow(backoff, float64(recid)))
 	if b > maxBantimeSec {
 		b = maxBantimeSec
 	}
-	return int64(b)
+	return b
 }
 
 // ---- fixture document shapes (only what the runner consumes).
 
 type fxPolicy struct {
-	Constants         map[string]any    `yaml:"constants"`
-	Weights           map[string]float64 `yaml:"weights"`
-	DecayHalfLifePct  int               `yaml:"decayHalfLifePct"`
-	PrefixEscalation  map[string]any    `yaml:"prefixEscalation"`
-	Mode              string            `yaml:"mode"`
+	Constants        map[string]any     `yaml:"constants"`
+	Weights          map[string]float64 `yaml:"weights"`
+	DecayHalfLifePct int                `yaml:"decayHalfLifePct"`
+	PrefixEscalation map[string]any     `yaml:"prefixEscalation"`
+	Mode             string             `yaml:"mode"`
 }
 
 type fxStep struct {
-	At                  any             `yaml:"at"` // int seconds; absent on expectNoEnforcement
-	Ingest              *fxIngest       `yaml:"ingest"`
-	Evaluate            *fxEvaluate     `yaml:"evaluate"`
-	BanAt               *fxBanAt        `yaml:"banAt"`
-	ExpectNoEnforcement any             `yaml:"expectNoEnforcement"`
+	At       int64       `yaml:"at"`
+	Ingest   *fxIngest   `yaml:"ingest"`
+	Evaluate *fxEvaluate `yaml:"evaluate"`
+	BanAt    *fxBanAt    `yaml:"banAt"`
+
+	ExpectNoEnforcement any `yaml:"expectNoEnforcement"`
 }
 type fxIngest struct {
 	Key  string `yaml:"key"`
@@ -93,13 +106,13 @@ type fxBanAt struct {
 }
 
 type fxFixture struct {
-	ID             string   `yaml:"id"`
-	Name           string   `yaml:"name"`
-	DataOnly       bool     `yaml:"dataOnly"`
-	Reserved       bool     `yaml:"reserved"`
+	ID              string         `yaml:"id"`
+	Name            string         `yaml:"name"`
+	DataOnly        bool           `yaml:"dataOnly"`
+	Reserved        bool           `yaml:"reserved"`
 	BackoffSchedule map[string]any `yaml:"backoffSchedule"`
-	Steps          []fxStep `yaml:"steps"`
-	EvidenceChecks []string `yaml:"evidenceChecks"`
+	Steps           []fxStep       `yaml:"steps"`
+	EvidenceChecks  []string       `yaml:"evidenceChecks"`
 }
 
 type fxDoc struct {
@@ -110,8 +123,12 @@ type fxDoc struct {
 
 func loadFixtures(t *testing.T) fxDoc {
 	t.Helper()
+	raw, err := testFS.ReadFile("ban_conformance_fixtures.yaml")
+	if err != nil {
+		t.Fatalf("fixtures YAML read: %v", err)
+	}
 	var doc fxDoc
-	if err := yaml.Unmarshal(fixturesYAML, &doc); err != nil {
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("fixtures YAML parse: %v", err)
 	}
 	if doc.Schema != "trishula.ban-conformance.v1" {
@@ -119,8 +136,8 @@ func loadFixtures(t *testing.T) fxDoc {
 	}
 	// Byte-mirror assertions: the YAML policy block == the §13.3 sketch.
 	c := doc.Policy.Constants
-	if c["findtime"] != "10m" || c["threshold"] != float64(threshold) ||
-		c["bantime"] != "10m" || c["backoff"] != float64(backoff) || c["maxBantime"] != "24h" {
+	if c["findtime"] != "10m" || asF(c["threshold"]) != threshold ||
+		c["bantime"] != "10m" || asF(c["backoff"]) != backoff || c["maxBantime"] != "24h" {
 		t.Fatalf("policy constants drift from §19.1 sketch: %v", c)
 	}
 	for k, w := range weightsDefault {
@@ -128,7 +145,7 @@ func loadFixtures(t *testing.T) fxDoc {
 			t.Fatalf("weights drift: %s = %v, sketch says %v", k, doc.Policy.Weights[k], w)
 		}
 	}
-	if doc.Policy.DecayHalfLifePct != halfLifePct {
+	if doc.Policy.DecayHalfLifePct != int(halfLifePct) {
 		t.Fatalf("decayHalfLifePct drift: %d", doc.Policy.DecayHalfLifePct)
 	}
 	if doc.Policy.Mode != "shadow" {
@@ -137,13 +154,23 @@ func loadFixtures(t *testing.T) fxDoc {
 	return doc
 }
 
+func asF(v any) float64 {
+	switch x := v.(type) {
+	case int:
+		return float64(x)
+	case float64:
+		return x
+	}
+	return 0
+}
+
 // ---- oracle: §13.3 recomputed independently of the package under test.
 
-// oracleScore recomputesΣ w·e^(−λ·age) over the events (age ≤ findtime).
+// oracleScore recomputes Σ w·e^(−λ·age) over the events (age ≤ findtime).
 func oracleScore(events []rateban.ScoredEvent, at int64) (float64, error) {
 	total := 0.0
 	for _, ev := range events {
-		w, err := rateban.KindWeight(ev.Kind)
+		w, err := rateban.KindWeight(string(ev.Kind))
 		if err != nil {
 			return 0, err
 		}
@@ -151,16 +178,16 @@ func oracleScore(events []rateban.ScoredEvent, at int64) (float64, error) {
 		if age < 0 || age > findtimeSec {
 			continue // sliding window keyed by findtime
 		}
-		total += decayed(w, int(age))
+		total += decayed(w, age)
 	}
 	return total, nil
 }
 
 // ---- the conformance test ----------------------------------------------
 
-// TestScoredWindowBanConformance walks every fixture mechanically. This is
-// the RED-phase test: at the RED sha the rateban package does not exist, and
-// the failure is the package-resolution error quoted in the PR body.
+// TestScoredWindowBanConformance walks every fixture mechanically. RED
+// phase (RED sha 5f44831): the rateban package did not exist and the
+// failure was the package-resolution error quoted in the PR body.
 func TestScoredWindowBanConformance(t *testing.T) {
 	doc := loadFixtures(t)
 
@@ -171,7 +198,7 @@ func TestScoredWindowBanConformance(t *testing.T) {
 				t.Skip("reserved slot (TR-10 kernel hand-off)")
 			}
 			if fx.DataOnly {
-				t.Skip("data-only row: consumed by the schedule assertion below")
+				t.Skip("data-only row: consumed by F11-backoff-schedule")
 			}
 			runFixture(t, fx)
 		})
@@ -191,9 +218,9 @@ func TestScoredWindowBanConformance(t *testing.T) {
 				t.Fatalf("F11 backoffSchedule.bantime missing")
 			}
 			for i := range recids {
-				r, _ := recids[i].(int)
-				want, _ := wants[i].(int)
-				if got := untilFor(r); int(got) != want {
+				r := int64(asF(recids[i]))
+				want := int64(asF(wants[i]))
+				if got := untilFor(r); got != want {
 					t.Fatalf("κ^%d bantime: fixture says %d, §13.3 formula says %d", r, want, got)
 				}
 			}
@@ -203,8 +230,11 @@ func TestScoredWindowBanConformance(t *testing.T) {
 	t.Run("policy-matches-PRD-sketch", func(t *testing.T) {
 		// testdata/recompute.py is the independent oracle: fail if it
 		// disagrees with this suite's recomputation of the same YAML.
+		// The test binary's cwd IS the package dir — run it there.
+		if _, err := exec.LookPath("python3"); err != nil {
+			t.Skip("python3 unavailable; CI runs the oracle directly")
+		}
 		py := exec.Command("python3", "testdata/recompute.py")
-		py.Dir = "test/ban-conformance"
 		out, err := py.CombinedOutput()
 		if err != nil {
 			t.Fatalf("oracle disagrees:\n%s", out)
@@ -215,7 +245,7 @@ func TestScoredWindowBanConformance(t *testing.T) {
 // runFixture walks one fixture's steps against a fresh rateban engine.
 func runFixture(t *testing.T, fx fxFixture) {
 	t.Helper()
-	clock := int64(0)
+	var clock int64
 	nowFn := func() int64 { return clock } // injected monotonic seconds
 
 	var evidence []rateban.BanEvidence
@@ -227,44 +257,67 @@ func runFixture(t *testing.T, fx fxFixture) {
 	eng := rateban.New(nowFn, sink)
 	var events []rateban.ScoredEvent
 	prevScore := math.NaN()
-	nBanTransitions := 0
+	wantRecords := 0
 
 	for i, step := range fx.Steps {
 		switch {
 		case step.Ingest != nil:
-			clock = int64(step.At)
-			w, err := rateban.KindWeight(step.Ingest.Kind)
-			if err != nil {
+			clock = step.At
+			if _, err := rateban.KindWeight(step.Ingest.Kind); err != nil {
 				t.Fatalf("step %d: %v", i, err)
 			}
-			_ = w
-			if err := eng.Ingest(step.Ingest.Key, step.Ingest.Kind, step.At, ""); err != nil {
+			if err := eng.Ingest(step.Ingest.Key, rateban.EventKind(step.Ingest.Kind), step.At, ""); err != nil {
 				t.Fatalf("step %d: Ingest: %v", i, err)
 			}
+			w, _ := rateban.KindWeight(step.Ingest.Kind)
 			events = append(events, rateban.ScoredEvent{
 				Key:    step.Ingest.Key,
 				Kind:   rateban.EventKind(step.Ingest.Kind),
-				AtSec:  int64(step.At),
-				Weight: rateban.DefaultWeights()[step.Ingest.Kind],
+				AtSec:  step.At,
+				Weight: w,
 			})
 		case step.Evaluate != nil:
 			ev := step.Evaluate
-			clock = int64(step.At)
+			clock = step.At
 			got := eng.Observe(ev.Key)
-			score, err := oracleScore(events, int64(step.At))
+			if got.ActiveBan {
+				// §13.3 step 2: active ban → no re-scoring; the engine
+				// reports score 0 by convention. Assert state + the
+				// no-reban rule, not a decayed score.
+				if !got.WouldBan == false {
+					t.Fatalf("step %d: live ban reported wouldBan", i)
+				}
+				if ev.WantWouldBan != nil && *ev.WantWouldBan {
+					t.Fatalf("step %d: wantWouldBan true but engine reports a live ban", i)
+				}
+				active := eng.Active(ev.Key, step.At)
+				if ev.State == "ACTIVE_BAN" && !active {
+					t.Fatalf("step %d: want ACTIVE_BAN, engine says clear", i)
+				}
+				if ev.State == "CLEAR" && active {
+					t.Fatalf("step %d: want CLEAR, engine reports an active ban", i)
+				}
+				prevScore = 0
+				continue
+			}
+			score, err := oracleScore(events, step.At)
 			if err != nil {
 				t.Fatalf("step %d: oracle score: %v", i, err)
 			}
-			if math.Abs(float64(got.Score)-score) > 1e-6 {
+			if math.Abs(got.Score-score) > 1e-6 {
 				t.Fatalf("step %d: score: engine %v, oracle %v", i, got.Score, score)
 			}
-			if ev.StrictDecay && !math.IsNaN(prevScore) && float64(got.Score) >= prevScore {
-				t.Fatalf("step %d: strictDecay asserted but %v >= previous %v", i, got.Score, prevScore)
-			}
-			if ev.WantWouldBan != nil && got.WouldBan != *ev.WantWouldBan {
+			// wouldBan must equal the oracle crossing whenever no ban is live.
+			if !got.ActiveBan && ev.WantWouldBan != nil && got.WouldBan != *ev.WantWouldBan {
 				t.Fatalf("step %d: wouldBan: engine %v, want %v", i, got.WouldBan, *ev.WantWouldBan)
 			}
-			active := eng.Active(ev.Key, int64(step.At))
+			if got.ActiveBan && ev.WantWouldBan != nil && *ev.WantWouldBan {
+				t.Fatalf("step %d: wantWouldBan true but engine reports a live ban", i)
+			}
+			if ev.StrictDecay && !math.IsNaN(prevScore) && got.Score >= prevScore {
+				t.Fatalf("step %d: strictDecay asserted but %v >= previous %v", i, got.Score, prevScore)
+			}
+			active := eng.Active(ev.Key, step.At)
 			switch ev.State {
 			case "ACTIVE_BAN":
 				if !active {
@@ -276,23 +329,33 @@ func runFixture(t *testing.T, fx fxFixture) {
 				}
 			}
 			if ev.BanTransition {
-				nBanTransitions++
+				// The transition is driven through the shadow would-ban
+				// path: Assess records the R11 evidence at this instant.
+				recs := eng.Assess(ev.Key, step.At)
+				if len(recs) != 1 {
+					t.Fatalf("step %d: banTransition: Assess produced %d records, want 1", i, len(recs))
+				}
+				wantRecords++
+				if ev.WantUntil != nil && recs[0].UntilSec != *ev.WantUntil {
+					t.Fatalf("step %d: until: record %d, §13.3 formula %d", i, recs[0].UntilSec, *ev.WantUntil)
+				}
 			}
-			prevScore = float64(got.Score)
+			prevScore = got.Score
 		case step.BanAt != nil:
-			clock = int64(step.At)
-			rec := assess(t, eng, step.BanAt.Key, int64(step.At))
-			if rec == nil {
+			clock = step.At
+			recs := eng.Assess(step.BanAt.Key, step.At)
+			if len(recs) == 0 {
 				t.Fatalf("step %d: Assess did not record a would-ban (shadow)", i)
 			}
-			score, err := oracleScore(events, int64(step.At))
+			wantRecords++
+			score, err := oracleScore(events, step.At)
 			if err != nil {
 				t.Fatalf("step %d: oracle score: %v", i, err)
 			}
 			if score < threshold {
 				t.Fatalf("step %d: Assess crossed below oracle threshold (score %v)", i, score)
 			}
-			nBanTransitions++
+			rec := recs[len(recs)-1]
 			if step.BanAt.WantUntil != nil && rec.UntilSec != *step.BanAt.WantUntil {
 				t.Fatalf("step %d: until: record %d, §13.3 formula %d", i, rec.UntilSec, *step.BanAt.WantUntil)
 			}
@@ -310,18 +373,7 @@ func runFixture(t *testing.T, fx fxFixture) {
 	for _, c := range fx.EvidenceChecks {
 		want[c] = true
 	}
-	checkEvidence(t, fx.ID, evidence, nBanTransitions, want)
-}
-
-// assess runs the shadow would-ban path and returns the newest evidence
-// record (nil = none).
-func assess(t *testing.T, eng *rateban.Engine, key string, at int64) *rateban.BanEvidence {
-	t.Helper()
-	rec := eng.Assess(key, at)
-	if rec == nil {
-		return nil
-	}
-	return &rec[0] // most recent record for the key
+	checkEvidence(t, fx.ID, evidence, wantRecords, want)
 }
 
 // checkEvidence pins the R11/§13.5 evidence contracts.
@@ -334,10 +386,12 @@ func checkEvidence(t *testing.T, id string, evs []rateban.BanEvidence, wantRecor
 		if want["hasKey"] && r.Key == "" {
 			t.Fatalf("%s: evidence record without offender key", id)
 		}
+		if want["hasEventsWithWeights"] && len(r.Events) == 0 {
+			t.Fatalf("%s: evidence record without contributing events", id)
+		}
 		if want["scoreTrajectoryHasWeights"] {
-			// the full §13.5 trajectory: every contributing event with its weight
 			if len(r.Events) == 0 {
-				t.Fatalf("%s: evidence record without contributing events", id)
+				t.Fatalf("%s: evidence record without score trajectory", id)
 			}
 			for _, ev := range r.Events {
 				if ev.Weight <= 0 {
@@ -354,32 +408,32 @@ func checkEvidence(t *testing.T, id string, evs []rateban.BanEvidence, wantRecor
 		if want["hasReasonCodes"] && len(r.ReasonCodes) == 0 {
 			t.Fatalf("%s: evidence record without reason codes", id)
 		}
+		if want["modeIsShadow"] && r.Mode != "shadow" {
+			t.Fatalf("%s: evidence record mode %q, want shadow", id, r.Mode)
+		}
 		if want["jsonSerializable"] {
 			b, err := json.Marshal(r)
 			if err != nil {
 				t.Fatalf("%s: evidence record is not JSON-serializable: %v", id, err)
 			}
-			if !json.Valid(b) {
-				t.Fatalf("%s: evidence record marshaled invalid JSON", id)
+			var round map[string]any
+			if err := json.Unmarshal(b, &round); err != nil {
+				t.Fatalf("%s: evidence record JSON does not round-trip: %v", id, err)
 			}
-		}
-		if want["modeIsShadow"] && r.Mode != "shadow" {
-			t.Fatalf("%s: evidence record mode %q, want shadow", id, r.Mode)
+			if round["key"] != r.Key {
+				t.Fatalf("%s: evidence JSON key round-trip mismatch", id)
+			}
 		}
 	}
 }
 
 // TestBanRateAboveBudgetExported pins the TR-11 wiring point: the plain
-// counter exists, is exported, and is a plain int64 (no prometheus/otel
-// dependency in this leaf).
+// counter is exported from this leaf and behaves as an int64 counter (no
+// prometheus/otel dependency in the leaf).
 func TestBanRateAboveBudgetExported(t *testing.T) {
-	if rateban.BanRateAboveBudget == nil {
-		t.Fatal("BanRateAboveBudget not exported from internal/engine/rateban")
+	before := rateban.BanRateAboveBudgetValue()
+	rateban.BanRateAboveBudgetTick()
+	if got := rateban.BanRateAboveBudgetValue(); got != before+1 {
+		t.Fatalf("BanRateAboveBudget did not tick: %d -> %d", before, got)
 	}
-	before := *rateban.BanRateAboveBudget
-	*rateban.BanRateAboveBudget++
-	if *rateban.BanRateAboveBudget != before+1 {
-		t.Fatal("BanRateAboveBudget is not a mutable plain counter")
-	}
-	*rateban.BanRateAboveBudget-- // leave it as found
 }

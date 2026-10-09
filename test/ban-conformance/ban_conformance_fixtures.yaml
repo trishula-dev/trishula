@@ -63,6 +63,7 @@ fixtures:
           key: 203.0.113.50
           state: CLEAR
           wantWouldBan: false    # runner asserts score strictly decreased here
+          strictDecay: true
     evidenceChecks: []
   # --- unlike kinds carry unlike weights ----------------------------------
   - id: F02
