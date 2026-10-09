@@ -25,8 +25,12 @@ import (
 //	    char path_hint[128];
 //	};
 const (
-	EventHdrSize = 8 + 4 + 16 + 4 + 16 + 2 + 2 + 1 + 4 + 2 + 3 + 1 // 63: ts + addrs + ports + flags + mark + len + probes + family
-	MaxEventSize = EventHdrSize + 128                              // + path hint
+	// Wire layout mirrors the C struct INCLUDING natural alignment: 3 pad
+	// bytes before mark (u32 align) and 6 tail pad bytes (struct rounds to
+	// align-8 for the leading u64) — total 200 bytes. Verified live in-VM:
+	// the E2E fails loudly if any side drifts.
+	EventHdrSize = 200 // pads included; path hint at offset 66
+	MaxEventSize = EventHdrSize
 	PathHintLen  = 128
 )
 
@@ -92,6 +96,7 @@ func DecodeFlowEvent(raw []byte) (*FlowEvent, error) {
 		SrcPort    uint16
 		DstPort    uint16
 		TCPFlags   uint8
+		PadA       [3]byte // C natural alignment before the u32 mark
 		Mark       uint32
 		PayloadLen uint16
 		HTTPSeen   uint8
@@ -102,11 +107,20 @@ func DecodeFlowEvent(raw []byte) (*FlowEvent, error) {
 	if err := binary.Read(r, nativeEndian, &tail); err != nil {
 		return nil, err
 	}
-	e.SrcPort, e.DstPort, e.TCPFlags = tail.SrcPort, tail.DstPort, tail.TCPFlags
+	// C emits the 5-tuple ports in NETWORK byte order (be16); decode via
+	// BigEndian into host order (the E2E caught LE-native reading: SYN
+	// showed dport 41030 = 18080 byte-reversed).
+	e.SrcPort = byteOrderSwap16(tail.SrcPort)
+	e.DstPort = byteOrderSwap16(tail.DstPort)
+	e.TCPFlags = tail.TCPFlags
 	e.Mark, e.PayloadLen = tail.Mark, tail.PayloadLen
 	e.HTTPSeen, e.H2Preface, e.TLSSeen, e.Family =
 		tail.HTTPSeen, tail.H2Preface, tail.TLSSeen, tail.Family
 	if _, err := r.Read(e.PathHint[:]); err != nil {
+		return nil, err
+	}
+	var tailPad [6]byte // C struct tail pad (align-8 rounding)
+	if _, err := r.Read(tailPad[:]); err != nil {
 		return nil, err
 	}
 	return &e, nil
@@ -124,4 +138,8 @@ func (e *FlowEvent) Key() FlowKey {
 		Family:  e.Family,
 	}
 	return k
+}
+
+func byteOrderSwap16(v uint16) uint16 {
+	return v<<8 | v>>8
 }
