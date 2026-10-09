@@ -160,9 +160,29 @@ func TestFlowTCRingE2E(t *testing.T) {
 	// payload-bearing segments of established conns never re-ingress).
 	// TCP Fast Open carries the GET payload INSIDE the SYN → the first
 	// packet IS the request → the event has full L7 fields.
+	// Trace the peek bytes during the traffic (kernel tracing must be on).
+	if tb, _ := os.ReadFile("/sys/kernel/tracing/tracing_on"); strings.TrimSpace(string(tb)) != "1" {
+		_ = exec.Command("/bin/sh", "-c", "echo on > /sys/kernel/tracing/tracing_on").Run()
+	}
+	tpDone := make(chan struct{})
+	go func() {
+		defer close(tpDone)
+		_ = exec.Command("/bin/sh", "-c",
+			"cat /sys/kernel/tracing/trace_pipe | grep --line-buffered tr04d > /tmp/tp.out").Run()
+	}()
 	curlOut, curlErr := enter("curl", "--tcp-fastopen", "-s", "-m", "5",
 		"http://10.88.0.1:18080/", "-o", "/dev/null", "-w", "%{http_code}").CombinedOutput()
 	t.Logf("curl: err=%v out=%q", curlErr, strings.TrimSpace(string(curlOut)))
+	time.Sleep(600 * time.Millisecond)
+	if tp, terr := os.ReadFile("/tmp/tp.out"); terr == nil {
+		lines := strings.Split(strings.TrimSpace(string(tp)), "\n")
+		if len(lines) > 6 {
+			lines = lines[:6]
+		}
+		t.Logf("trace (%d): %q", len(lines), lines)
+	} else {
+		t.Logf("trace file: %v", terr)
+	}
 
 	ch := make(chan *FlowEvent, 4)
 	errch := make(chan error, 8)
@@ -259,4 +279,11 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
