@@ -10,8 +10,8 @@ import (
 // tracer proves the skeleton end-to-end: seed rule pack in, §11.3 fixture
 // cases evaluated, verdicts on stdout, exit code reflects the outcome.
 const (
-	seedPack     = "../../rules/cel/seed.yaml"
-	sampleCases  = "../../internal/engine/cel/testdata/sample_request.yaml"
+	seedPack    = "../../rules/cel/seed.yaml"
+	sampleCases = "../../internal/engine/cel/testdata/sample_request.yaml"
 )
 
 func TestSelftestHappyPath(t *testing.T) {
