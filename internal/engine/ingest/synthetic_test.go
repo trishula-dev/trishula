@@ -45,6 +45,8 @@ func syntheticEvent(e synEvent) []byte {
 	_ = binary.Write(&b, nativeEndian, e.SrcPort)
 	_ = binary.Write(&b, nativeEndian, e.DstPort)
 	b.WriteByte(e.TCPFlags)
+	var padA [3]byte // C align before the u32 mark
+	b.Write(padA[:])
 	_ = binary.Write(&b, nativeEndian, e.Mark)
 	_ = binary.Write(&b, nativeEndian, e.Payload)
 	b.WriteByte(e.HTTPSeen)
@@ -53,9 +55,11 @@ func syntheticEvent(e synEvent) []byte {
 	b.WriteByte(e.Family)
 
 	// path hint: fixed 128B NUL-padded
-	var p [128]byte
-	copy(p[:], e.Path)
-	b.Write(p[:])
+	var ph [128]byte
+	copy(ph[:], e.Path)
+	b.Write(ph[:])
+	var tailPad [6]byte // C struct tail pad (align-8)
+	b.Write(tailPad[:])
 	return b.Bytes()
 }
 

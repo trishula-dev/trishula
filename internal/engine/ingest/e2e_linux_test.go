@@ -13,9 +13,11 @@ package ingest
 // Root + BTF + clsact + veth + netns on a Linux host.
 
 import (
+	"fmt"
 	"net/netip"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,20 +81,19 @@ func TestFlowTCRingE2E(t *testing.T) {
 		t.Fatal("no tc_ingress_waf in the object")
 	}
 	run4d(t, "tc", "qdisc", "add", "dev", "tr04h", "clsact")
+	// Pin FIRST (ebpf API) so both attach paths use the pinned handle.
+	if mkerr := os.MkdirAll("/sys/fs/bpf/tr04d", 0o700); mkerr != nil {
+		t.Skipf("pin dir: %v", mkerr)
+	}
+	pin := "/sys/fs/bpf/tr04d/tc_ingress_waf"
+	if perr := prog.Pin(pin); perr != nil {
+		t.Skipf("prog pin: %v", perr)
+	}
+	defer os.Remove(pin)
 	out, err := exec.Command("tc", "filter", "add", "dev", "tr04h", "ingress", "bpf", "da",
-		"pinned", "/sys/fs/bpf/tr04d/tc_ingress_waf").CombinedOutput()
-	// pin first for the tc filter path: pin the program ourselves.
+		"pinned", pin).CombinedOutput()
 	if err != nil {
-		// Fall back to direct pinned attach via link.AttachTC? v0: use
-		// tc pinned path after pinning the program.
-		if err2 := prog.Pin("/sys/fs/bpf/tr04d/tc_ingress_waf"); err2 == nil {
-			defer os.Remove("/sys/fs/bpf/tr04d/tc_ingress_waf")
-			out, err = exec.Command("tc", "filter", "add", "dev", "tr04h", "ingress", "bpf", "da",
-				"pinned", "/sys/fs/bpf/tr04d/tc_ingress_waf").CombinedOutput()
-		}
-		if err != nil {
-			t.Skipf("tc filter attach: %v\n%s", err, out)
-		}
+		t.Skipf("tc filter attach (pinned): %v\n%s", err, out)
 	}
 
 	// Open the real ring through OUR adapter (the pinned contract).
@@ -110,48 +111,56 @@ func TestFlowTCRingE2E(t *testing.T) {
 		t.Fatalf("ring source: %v", err)
 	}
 
-	// Synthetic HTTP/1 GET from the ns → the host veth (ingress on
-	// tr04h): /dev/tcp from the netns; TC sees it at tr04h ingress
-	// regardless of whether anything listens on :8080.
+	// Dual-attach: tr04h ingress (host side) AND tr04n egress (ns side)
+	// — OrbStack's veth ingress fast path bypasses clsact (defect: the
+	// ns-ping worked, filter jited+bound, zero flow rows; eth0 worked).
+	// The event decodes from whichever hook fires; the wire is identical.
+	nsAttach, err1 := exec.Command("ip", "netns", "exec", "tr04d", "tc", "qdisc", "add", "dev",
+		"tr04n", "clsact").CombinedOutput()
+	objPath := "/root/trishula/internal/engine/ingest/ingest_flow_arm64_bpfel.o"
+	nsAttach2, err2 := exec.Command("ip", "netns", "exec", "tr04d", "tc", "filter", "add", "dev",
+		"tr04n", "egress", "bpf", "da", "obj", objPath, "sec", "tc").CombinedOutput()
+	t.Logf("ns-attach: qdisc=%v filter=%v (out1=%q out2=%q)",
+		err1, err2, strings.TrimSpace(string(nsAttach)), strings.TrimSpace(string(nsAttach2)))
+	nsShow, _ := exec.Command("ip", "netns", "exec", "tr04d", "tc", "-s", "filter", "show",
+		"dev", "tr04n", "egress").CombinedOutput()
+	t.Logf("ns-side filter: %q", strings.TrimSpace(string(nsShow)))
+	t.Logf("NOTE: ns-side `tc obj` load creates ITS OWN map instances — its ringbuf is NOT the one our reader holds; only the host-side pinned attach shares our maps.")
+
+	// Synthetic HTTP/1 GET from the ns → the host veth:
+	// ns-side tr04n egress hook (fires first on OrbStack).
 
 	// Read the ring for a decoded event with full fields (the parent
 	// acceptance). Bounded by a shell deadline; the reader is sync.
-	type evOut struct {
-		ev  *FlowEvent
-		err error
-	}
-	ch := make(chan evOut, 4)
+	ch := make(chan *FlowEvent, 4)
+	errch := make(chan error, 8)
 	go func() {
 		for {
 			raw, ok := src.Recv()
 			if !ok {
-				ch <- evOut{nil, nil}
+				ch <- nil
 				return
 			}
 			ev, err := DecodeFlowEvent(raw)
 			if err != nil {
-				continue // malformed: skip (the pinned contract)
+				select {
+				case errch <- err:
+				default:
+				}
+				continue
 			}
-			ch <- evOut{ev, nil}
+			ch <- ev
 			return
 		}
 	}()
+	_ = errch
 	run4d(t, "ip", "netns", "exec", "tr04d", "bash", "-c",
 		"exec 3<>/dev/tcp/10.88.0.1/8080; "+
 			"printf 'GET /v1/chat/completions HTTP/1.1\\r\\nHost: t\\r\\n\\r\\n' >&3; sleep 0.5; exec 3<&-; true")
 
-	var got *FlowEvent
-	select {
-	case o := <-ch:
-		if o.err != nil {
-			t.Fatalf("ring source: %v", o.err)
-		}
-		got = o.ev
-	case <-time.After(15 * time.Second):
-		t.Skip("no ring event in 15s (ring wake latency on this host)")
-	}
-	if got == nil {
-		t.Fatal("no event decoded")
+	got, err := waitHTTPEvent(ch, errch, 20*time.Second)
+	if err != nil {
+		t.Fatalf("http event: %v", err)
 	}
 	// FULL-FIELD assertions (the parent acceptance: "decoded event in the
 	// log with full header fields").
@@ -185,4 +194,27 @@ func TestFlowTCRingE2E(t *testing.T) {
 	}
 	t.Logf("E2E: decoded full-field event; lost=%d (parity with RingLossTotal=%d)",
 		lost, 0) // engine stats asserted via the same counters in unit tests
+}
+
+// waitHTTPEvent drains the ring until an event with http_seen=1 arrives
+// (the GET segment), bounding the wait. Non-HTTP events (SYN/ACK) are
+// counted but skipped.
+func waitHTTPEvent(ch <-chan *FlowEvent, errch <-chan error, max time.Duration) (*FlowEvent, error) {
+	deadline := time.After(max)
+	for {
+		select {
+		case err := <-errch:
+			return nil, fmt.Errorf("decode failed (wire mismatch!): %w", err)
+		case ev := <-ch:
+			if ev == nil {
+				return nil, fmt.Errorf("ring closed without an http event")
+			}
+			if ev.HTTPSeen == 1 {
+				return ev, nil
+			}
+			// SYN/ACK/etc: keep waiting for the GET segment
+		case <-deadline:
+			return nil, fmt.Errorf("no http_seen event within %s", max)
+		}
+	}
 }
