@@ -10,6 +10,7 @@ import (
 	"os"
 
 	tricel "github.com/trishula-dev/trishula/internal/engine/cel"
+	"github.com/trishula-dev/trishula/internal/engine/ladder"
 )
 
 const usage = `trishula — eBPF-native WAF/API firewall (skeleton)
@@ -17,6 +18,8 @@ const usage = `trishula — eBPF-native WAF/API firewall (skeleton)
 Modes (TR-02):
   --selftest            evaluate the seed CEL rule pack against a sample
                         request fixture and print per-case verdicts
+  --parity              walk the S0+S3 ladder slice over the parity fixture
+                        matrix and print the verdict log per case (TR-05d)
 Flags:
   --rules <path>        rule-pack YAML (default: rules/cel/seed.yaml)
   --requests <path>     sample-request fixture YAML
@@ -35,21 +38,26 @@ func run(args []string, stdout io.Writer) int {
 	// to stderr on its own.
 	fs := flag.NewFlagSet("trishula", flag.ContinueOnError)
 	selftest := fs.Bool("selftest", false, "evaluate the seed rule pack against the sample fixture")
+	parity := fs.Bool("parity", false, "walk the S0+S3 parity matrix and print the verdict log")
 	rules := fs.String("rules", "rules/cel/seed.yaml", "rule-pack YAML path")
 	requests := fs.String("requests", "internal/engine/cel/testdata/sample_request.yaml", "sample-request fixture path")
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprint(os.Stderr, usage)
 		return 2
 	}
-	if !*selftest {
+	switch {
+	case *parity:
+		return parityRun(*rules, stdout)
+	case *selftest:
+		if code := selftestRun(*rules, *requests, stdout); code != 0 {
+			return code
+		}
+		fmt.Fprintln(stdout, "selftest OK")
+		return 0
+	default:
 		fmt.Fprint(os.Stderr, usage)
 		return 2
 	}
-	if code := selftestRun(*rules, *requests, stdout); code != 0 {
-		return code
-	}
-	fmt.Fprintln(stdout, "selftest OK")
-	return 0
 }
 
 // selftestRun loads the pack + fixture and evaluates every case, printing
@@ -104,4 +112,19 @@ func selftestRun(rulesPath, requestsPath string, stdout io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// parityRun walks the S0+S3 fixture matrix (TR-05d) and prints the verdict
+// log — the same matrix the ladder package's TestParityWalk asserts, so
+// the CLI surfaces the parity evidence an operator can run by hand. Exit
+// 0 iff every case resolved as the matrix documents.
+func parityRun(rulesPath string, stdout io.Writer) int {
+	pack, err := tricel.LoadRulePack(rulesPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "parity: load %s: %v\n", rulesPath, err)
+		return 1
+	}
+	out, code := ladder.ParityMatrixRender(pack)
+	fmt.Fprint(stdout, out)
+	return code
 }
