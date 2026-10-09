@@ -195,8 +195,10 @@ static __always_inline int on_ip4(struct __sk_buff *skb, void *data,
 	if (ip->protocol != IPPROTO_TCP)
 		return TC_ACT_OK;
 	struct tcphdr *tcp = payload;
+	if ((void *)(tcp + 1) > data_end)
+		return TC_ACT_OK;
 	__u32 tcp_hlen = (__u32)tcp->doff * 4;
-	if (tcp->doff < 5 || tcp_hlen > 60 || tcp_hlen > skb->len)
+	if (tcp->doff < 5 || tcp_hlen > 60)
 		return TC_ACT_OK;
 	void *tcp_end = payload + tcp_hlen;
 	if (tcp_end > data_end)
@@ -252,6 +254,11 @@ static __always_inline int on_ip6(struct __sk_buff *skb, void *data,
 	struct tcphdr *tcp = payload;
 	if ((void *)(tcp + 1) > data_end)
 		return TC_ACT_OK;
+	if (tcp->doff < 5)
+		return TC_ACT_OK;
+	void *tcp_end6 = payload + (__u32)tcp->doff * 4;
+	if (tcp_end6 > data_end)
+		return TC_ACT_OK;
 
 	struct ban_key bk = {
 		.addr = {.addr = {.v6 = {0}}},
@@ -268,7 +275,7 @@ static __always_inline int on_ip6(struct __sk_buff *skb, void *data,
 	emit_flow_event(skb, 0, ip6h->saddr.in6_u.u6_addr8, 0,
 			ip6h->daddr.in6_u.u6_addr8, tcp->source, tcp->dest,
 			tcp->syn ? 0x2 : 0, KEY_AF_INET6, skb->len,
-			(void *)(tcp + 1), data_end);
+			tcp_end6, data_end);
 	return TC_ACT_OK;
 }
 
