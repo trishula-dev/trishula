@@ -13,6 +13,7 @@ package ingest
 // Root + BTF + clsact + veth + netns on a Linux host.
 
 import (
+	"bytes"
 	"fmt"
 	"net/netip"
 	"os"
@@ -56,6 +57,7 @@ func TestFlowTCRingE2E(t *testing.T) {
 	mustRoot4d(t)
 
 	// veth pair; ns side sends the synthetic HTTP request.
+	var srvErrBuf bytes.Buffer
 	run4d(t, "ip", "netns", "add", "tr04d")
 	defer run4d(t, "ip", "netns", "del", "tr04d")
 	run4d(t, "ip", "link", "add", "tr04h", "type", "veth", "peer", "name", "tr04n")
@@ -145,14 +147,24 @@ func TestFlowTCRingE2E(t *testing.T) {
 	// acceptance). Bounded by a shell deadline; the reader is sync.
 	// Listener FIRST (SYN must complete; without an ACK the GET never
 	// leaves the ns and only SYNs flood the ring).
-	srv := exec.Command("python3", "-m", "http.server", "18080",
-		"--bind", "10.88.0.1")
-	srv.Dir = "/tmp"
-	if serr := srv.Start(); serr != nil {
-		t.Skipf("host listener: %v", serr)
+	if _, sterr := os.Stat("/tmp/tfo"); sterr != nil {
+		t.Skipf("tfo server binary missing: %v", sterr)
 	}
-	defer srv.Process.Kill()
+	srv := exec.Command("/tmp/tfo", "10.88.0.1:18080")
+	srv.Stderr = &srvErrBuf
+	if serr := srv.Start(); serr != nil {
+		t.Skipf("host tfo listener: %v (stat ok)", serr)
+	}
+	defer func() {
+		srv.Process.Kill()
+		if srvErrBuf.Len() > 0 {
+			t.Logf("tfo listener stderr: %q", srvErrBuf.String())
+		}
+	}()
 	time.Sleep(300 * time.Millisecond)
+	if ping := enter("bash", "-c", "echo > /dev/tcp/10.88.0.1/18080").Run(); ping != nil {
+		t.Logf("plain conn (no tfo): %v", ping)
+	}
 	// Fire the flow FIRST; the ring holds the records; the post-fire
 	// drain sees everything without depending on mid-flight poll wakes.
 	// OrbStack veth quirk: TC sees only the FIRST packet per connection
@@ -170,9 +182,17 @@ func TestFlowTCRingE2E(t *testing.T) {
 		_ = exec.Command("/bin/sh", "-c",
 			"cat /sys/kernel/tracing/trace_pipe | grep --line-buffered tr04d > /tmp/tp.out").Run()
 	}()
-	curlOut, curlErr := enter("curl", "--tcp-fastopen", "-s", "-m", "5",
-		"http://10.88.0.1:18080/", "-o", "/dev/null", "-w", "%{http_code}").CombinedOutput()
-	t.Logf("curl: err=%v out=%q", curlErr, strings.TrimSpace(string(curlOut)))
+	// TFO: client bit (1) default; server side needs bit 2. FIRST TFO
+	// connection exchanges the cookie only; the SECOND carries
+	// data-in-SYN. OrbStack veth bypasses TC for established flows
+	// (defect), so the request must ride packet #1.
+	_ = exec.Command("/bin/sh", "-c", "sysctl -w net.ipv4.tcp_fastopen=3").Run()
+	_ = enter("sysctl", "-w", "net.ipv4.tcp_fastopen=3").Run()
+	for i := 0; i < 2; i++ {
+		curlOut, curlErr := enter("curl", "--tcp-fastopen", "-s", "-m", "5",
+			"http://10.88.0.1:18080/", "-o", "/dev/null", "-w", "%{http_code}").CombinedOutput()
+		t.Logf("curl[%d]: err=%v out=%q", i, curlErr, strings.TrimSpace(string(curlOut)))
+	}
 	time.Sleep(600 * time.Millisecond)
 	if tp, terr := os.ReadFile("/tmp/tp.out"); terr == nil {
 		lines := strings.Split(strings.TrimSpace(string(tp)), "\n")
