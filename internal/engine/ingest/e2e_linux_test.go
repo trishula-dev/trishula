@@ -143,22 +143,28 @@ func TestFlowTCRingE2E(t *testing.T) {
 			}
 			ev, err := DecodeFlowEvent(raw)
 			if err != nil {
-				select {
-				case errch <- err:
-				default:
-				}
-				continue
+				errch <- err // delivered: main selects over errch; wire drift must be fatal
+				return
 			}
 			ch <- ev
 			return
 		}
 	}()
 	_ = errch
-	run4d(t, "ip", "netns", "exec", "tr04d", "bash", "-c",
-		"exec 3<>/dev/tcp/10.88.0.1/8080; "+
-			"printf 'GET /v1/chat/completions HTTP/1.1\\r\\nHost: t\\r\\n\\r\\n' >&3; sleep 0.5; exec 3<&-; true")
+	// Listener FIRST (SYN must complete; without an ACK the GET never
+	// leaves the ns and only SYNs flood the ring).
+	srv := exec.Command("python3", "-m", "http.server", "18080",
+		"--bind", "10.88.0.1")
+	srv.Dir = "/tmp"
+	if serr := srv.Start(); serr != nil {
+		t.Skipf("host listener: %v", serr)
+	}
+	defer srv.Process.Kill()
+	time.Sleep(300 * time.Millisecond)
+	run4d(t, "ip", "netns", "exec", "tr04d", "curl", "-s", "-m", "5",
+		"http://10.88.0.1:18080/", "-o", "/dev/null")
 
-	got, err := waitHTTPEvent(ch, errch, 20*time.Second)
+	got, err := waitHTTPEvent(t, ch, errch, 20*time.Second)
 	if err != nil {
 		t.Fatalf("http event: %v", err)
 	}
@@ -199,7 +205,7 @@ func TestFlowTCRingE2E(t *testing.T) {
 // waitHTTPEvent drains the ring until an event with http_seen=1 arrives
 // (the GET segment), bounding the wait. Non-HTTP events (SYN/ACK) are
 // counted but skipped.
-func waitHTTPEvent(ch <-chan *FlowEvent, errch <-chan error, max time.Duration) (*FlowEvent, error) {
+func waitHTTPEvent(t *testing.T, ch <-chan *FlowEvent, errch <-chan error, max time.Duration) (*FlowEvent, error) {
 	deadline := time.After(max)
 	for {
 		select {
@@ -210,9 +216,12 @@ func waitHTTPEvent(ch <-chan *FlowEvent, errch <-chan error, max time.Duration) 
 				return nil, fmt.Errorf("ring closed without an http event")
 			}
 			if ev.HTTPSeen == 1 {
+				t.Logf("http event: path=%q sport=%d dport=%d len=%d",
+					ev.PathString(), ev.SrcPort, ev.DstPort, ev.PayloadLen)
 				return ev, nil
 			}
-			// SYN/ACK/etc: keep waiting for the GET segment
+			t.Logf("skip non-http: sport=%d dport=%d flags=%02x len=%d",
+				ev.SrcPort, ev.DstPort, ev.TCPFlags, ev.PayloadLen)
 		case <-deadline:
 			return nil, fmt.Errorf("no http_seen event within %s", max)
 		}

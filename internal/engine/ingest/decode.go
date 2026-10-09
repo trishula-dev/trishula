@@ -107,7 +107,12 @@ func DecodeFlowEvent(raw []byte) (*FlowEvent, error) {
 	if err := binary.Read(r, nativeEndian, &tail); err != nil {
 		return nil, err
 	}
-	e.SrcPort, e.DstPort, e.TCPFlags = tail.SrcPort, tail.DstPort, tail.TCPFlags
+	// C emits the 5-tuple ports in NETWORK byte order (be16); decode via
+	// BigEndian into host order (the E2E caught LE-native reading: SYN
+	// showed dport 41030 = 18080 byte-reversed).
+	e.SrcPort = byteOrderSwap16(tail.SrcPort)
+	e.DstPort = byteOrderSwap16(tail.DstPort)
+	e.TCPFlags = tail.TCPFlags
 	e.Mark, e.PayloadLen = tail.Mark, tail.PayloadLen
 	e.HTTPSeen, e.H2Preface, e.TLSSeen, e.Family =
 		tail.HTTPSeen, tail.H2Preface, tail.TLSSeen, tail.Family
@@ -133,4 +138,8 @@ func (e *FlowEvent) Key() FlowKey {
 		Family:  e.Family,
 	}
 	return k
+}
+
+func byteOrderSwap16(v uint16) uint16 {
+	return v<<8 | v>>8
 }

@@ -42,8 +42,9 @@ func syntheticEvent(e synEvent) []byte {
 	b.Write(e.SrcIP6[:])
 	b.Write(e.DstIP4[:])
 	b.Write(e.DstIP6[:])
-	_ = binary.Write(&b, nativeEndian, e.SrcPort)
-	_ = binary.Write(&b, nativeEndian, e.DstPort)
+	// C emits be16 ports (network order) — encode BE to mirror.
+	_ = binary.Write(&b, binary.BigEndian, e.SrcPort)
+	_ = binary.Write(&b, binary.BigEndian, e.DstPort)
 	b.WriteByte(e.TCPFlags)
 	var padA [3]byte // C align before the u32 mark
 	b.Write(padA[:])
