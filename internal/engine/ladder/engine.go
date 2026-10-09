@@ -65,5 +65,25 @@ func (e *Engine) EvaluateTx(tx *ingest.TxContext) *Verdict {
 // (pass accumulates nothing — ban-score inputs must not absorb pass
 // evidence). A nil fragment is a no-op and never stops the walk.
 func Resolve(acc *Verdict, frag *Verdict) bool {
-	return false // TR-05a GREEN: decisive short-circuit + log accumulation pending (watched RED below)
+	if acc == nil || frag == nil {
+		return false
+	}
+	if frag.Action.Decisive() {
+		acc.Action = frag.Action
+		acc.Rules = append(acc.Rules, frag.Rules...)
+		acc.Score += frag.Score
+		if frag.Phase != "" {
+			acc.Phase = frag.Phase
+		}
+		return true
+	}
+	if frag.Action == ActionLog {
+		acc.Action = ActionLog // log outranks pass; evidence accumulates below
+		acc.Rules = append(acc.Rules, frag.Rules...)
+		acc.Score += frag.Score
+		if frag.Phase != "" {
+			acc.Phase = frag.Phase
+		}
+	}
+	return false // allow fragments (and unwired opinions) pass through
 }
