@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	validation "k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -161,7 +162,10 @@ func TestWAFPolicyCRDGenerationDeterministic(t *testing.T) {
 // defaultAction outside the enum is rejected, naming the offending field.
 func TestWAFPolicySchemaValidationApplyParse(t *testing.T) {
 	crd := loadCommittedCRD(t)
-	schemaValidator, _, err := validation.NewSchemaValidator(crd.Spec.Versions[0].Schema.OpenAPIV3Schema)
+	if crd.Spec.Validation == nil || crd.Spec.Validation.OpenAPIV3Schema == nil {
+		t.Fatalf("internal CRD lost the structural schema through conversion")
+	}
+	schemaValidator, _, err := validation.NewSchemaValidator(crd.Spec.Validation.OpenAPIV3Schema)
 	if err != nil {
 		t.Fatalf("build schema validator: %v", err)
 	}
@@ -201,24 +205,38 @@ func unstructured(t *testing.T, manifestYAML string) map[string]interface{} {
 	return obj
 }
 
-// loadCommittedCRD reads and type-decodes the generated CRD manifest.
-func loadCommittedCRD(t *testing.T) *apiextensionsv1.CustomResourceDefinition {
+// loadCommittedCRD reads the generated CRD manifest and returns it in the
+// internal form the validation package consumes (the v1 manifest converts
+// through a scheme carrying both apiextensions forms — the conversion path
+// the apiserver applies to served CRDs).
+func loadCommittedCRD(t *testing.T) *apiextensions.CustomResourceDefinition {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(moduleRoot(t), filepath.FromSlash(generatedCRDPath)))
 	if err != nil {
 		t.Fatalf("read committed %s: %v", generatedCRDPath, err)
 	}
-	var crd apiextensionsv1.CustomResourceDefinition
-	if err := yaml.Unmarshal(raw, &crd); err != nil {
+	var crdv1 apiextensionsv1.CustomResourceDefinition
+	if err := yaml.Unmarshal(raw, &crdv1); err != nil {
 		t.Fatalf("unmarshal CRD manifest: %v", err)
 	}
-	if crd.Spec.Group != GroupName {
-		t.Fatalf("CRD group: got %q, want %q", crd.Spec.Group, GroupName)
+	if crdv1.Spec.Group != GroupName {
+		t.Fatalf("CRD group: got %q, want %q", crdv1.Spec.Group, GroupName)
 	}
-	if len(crd.Spec.Versions) == 0 || crd.Spec.Versions[0].Schema == nil || crd.Spec.Versions[0].Schema.OpenAPIV3Schema == nil {
+	if len(crdv1.Spec.Versions) == 0 || crdv1.Spec.Versions[0].Schema == nil || crdv1.Spec.Versions[0].Schema.OpenAPIV3Schema == nil {
 		t.Fatalf("CRD carries no v1alpha1 schema")
 	}
-	return &crd
+	scheme := runtime.NewScheme()
+	if err := apiextensions.AddToScheme(scheme); err != nil {
+		t.Fatalf("register internal apiextensions: %v", err)
+	}
+	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("register v1 apiextensions: %v", err)
+	}
+	crd := &apiextensions.CustomResourceDefinition{}
+	if err := scheme.Convert(&crdv1, crd, nil); err != nil {
+		t.Fatalf("convert CRD v1 to internal: %v", err)
+	}
+	return crd
 }
 
 // generateCRD runs the pinned controller-gen into scratch and returns the
