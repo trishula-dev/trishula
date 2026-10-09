@@ -76,11 +76,31 @@ func NewKernelHits(kernelHitChecker func(src netip.Addr, nowNS uint64) (khit, er
 // Stage pins S0 (ladder position 0: the µs cache consult — §19.1).
 func (k *KernelHits) Stage() Stage { return StageKernel }
 
-// Evaluate probes kernel state once per tx. S0 slice RED: body lands in
-// the GREEN commit (watched RED below — TestS0BannedTxReturnsDecisiveBan
-// and the slice-walk assertions fail against this stub).
+// Evaluate probes kernel state once per tx. The tx's source address
+// decides the key; a tx without a parseable source yields NO fragment
+// (S0 cannot invent a key — and a fabricated "clean" would fail open,
+// the direction this stage must never take).
 func (k *KernelHits) Evaluate(tx *ingest.TxContext) *Verdict {
-	return nil
+	src, ok := txSourceIP(tx)
+	if !ok {
+		return nil
+	}
+	h, err := k.kernelHitChecker(src, clockOrZero(tx))
+	if err != nil {
+		// Probe failure: no fragment, never a fabricated verdict — the
+		// walk continues and downstream stages own the tx (S0 is an
+		// acceleration, not the only wall).
+		return nil
+	}
+	if !h.banned {
+		return nil
+	}
+	return &Verdict{
+		Action: ActionBan,
+		Rules:  []RuleID{kernelBanRuleID(h)},
+		Score:  int64(h.tier), // kernel tier seeds the ban engine's score input
+		Phase:  PhaseRequestHeaders,
+	}
 }
 
 // kernelBanRuleID renders the rule id for a kernel ban hit (traceable to
@@ -142,11 +162,50 @@ func (c *CELEval) SetPack(p *cel.RulePack) error {
 // Stage pins S3.
 func (c *CELEval) Stage() Stage { return StageCEL }
 
-// Evaluate runs every rule over the tx's view. S3 slice RED: body lands in
-// the GREEN commit (watched RED below — TestCELEvalMatchLogsPinsLogOnly
-// fails against this stub).
+// Evaluate runs every rule over the tx's view, folding rule verdicts into
+// one fragment: match=false rules contribute nothing; match=true rules
+// become a LOG action (regardless of declared action — log-only slice)
+// with the rule ids in pack order; error verdicts record the rule id as
+// <id>:error and keep walking (fail-safe: an uncompilable/over-budget rule
+// is evidence, never a match and never a silent skip).
 func (c *CELEval) Evaluate(tx *ingest.TxContext) *Verdict {
-	return nil
+	view := txView(tx)
+	if view == nil {
+		return nil // no parsed request on the tx: no opinion (parse stages own it)
+	}
+	c.mu.RLock()
+	pack := c.pack
+	c.mu.RUnlock()
+	if pack == nil {
+		return nil
+	}
+	var (
+		rules []RuleID
+		score int64
+	)
+	for i := range pack.Rules {
+		r := &pack.Rules[i]
+		v, err := r.Eval(*view)
+		if err != nil {
+			// Error verdicts are recorded evidence, never matches (#5
+			// log-only slice; TR-09 scores them later).
+			rules = append(rules, RuleID(r.ID+":error"))
+			continue
+		}
+		if v.Match {
+			rules = append(rules, RuleID(r.ID))
+			score++
+		}
+	}
+	if len(rules) == 0 {
+		return nil
+	}
+	return &Verdict{
+		Action: ActionLog, // LOG-ONLY slice: declared actions stay log (pinned by test)
+		Rules:  rules,
+		Score:  score,
+		Phase:  PhaseRequestHeaders,
+	}
 }
 
 // shieldAdapterState is the in-memory kernel-state stand-in (tests + the
