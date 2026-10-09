@@ -16,6 +16,8 @@ package ingest
 
 import (
 	"errors"
+	"os"
+	"time"
 
 	"github.com/cilium/ebpf/ringbuf"
 )
@@ -32,6 +34,8 @@ func NewRingSource(rd *ringbuf.Reader, stats *Stats) (RecordSource, error) {
 	if rd == nil {
 		return nil, errors.New("nil ringbuf reader")
 	}
+	// A fresh 1s deadline is set per Recv (keeps the poller wake honest
+	// on VM kernels: deadline-exceeded retries are NOT EOF).
 	return &ringSource{rd: rd, stats: stats}, nil
 }
 
@@ -39,12 +43,19 @@ func NewRingSource(rd *ringbuf.Reader, stats *Stats) (RecordSource, error) {
 // reader error is sticky and returned as an error path — the caller
 // (DrainShield) counts it and retries.
 func (r *ringSource) Recv() ([]byte, bool) {
-	rec, err := r.rd.Read()
-	if err != nil {
-		if errors.Is(err, ringbuf.ErrClosed) {
-			return nil, false // clean close: EOF
+	r.rd.SetDeadline(time.Now().Add(time.Second)) // fresh 1s window per read
+	for {
+		rec, err := r.rd.Read()
+		if err == nil {
+			return rec.RawSample, true
 		}
-		return nil, false // treat unexpected reader errors as close (v0: fail stop)
+		switch {
+		case errors.Is(err, os.ErrDeadlineExceeded):
+			continue // poller rewake retry (NOT EOF)
+		case errors.Is(err, ringbuf.ErrClosed):
+			return nil, false // clean close
+		default:
+			return nil, false // fail stop (v0)
+		}
 	}
-	return rec.RawSample, true
 }
