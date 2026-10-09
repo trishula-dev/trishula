@@ -1,0 +1,298 @@
+# ScoredWindowBan v1 spec-reproduction fixtures (PRD §13.3: "implementations
+# must reproduce it from this spec alone (a conformance test does exactly
+# that)").
+#
+# The YAML carries fixture STRUCTURE only — integer times, event kinds,
+# booleans. Every numeric expectation (score windows, would-ban, until,
+# backoff schedule) is recomputed from the §13.3 formulas by the runner
+# and cross-checked by testdata/recompute.py; nothing here is hand-tuned.
+#
+# Clock convention: monotonic integer seconds t = 0, 1, 2 ... injected via
+# the engine's nowFn.
+#
+# Step vocabulary (mechanical):
+#   ingest {at, key, kind}            feed ScoredEvent (weight from policy)
+#   evaluate {at, key, want*}         run Observe/Assess; assertions:
+#     wantWouldBan  bool              shadow decision at this instant
+#     state         CLEAR | ACTIVE_BAN
+#     wantScoreSum  implicit          observed score must equal the §13.3
+#                                   formula Σ w·e^(−λ·age) over this key's
+#                                   ingests at `at` (runner-computed)
+#   banAt {at, key, wantUntil}        run Assess at `at` and assert the
+#                                   shadow would-ban record's until
+#   expectNoEnforcement (fixture)     fail if anything but the evidence sink
+#                                   was touched (shadow §13.3)
+#
+# `wantUntil` semantics: Assess at time a with recidivism r returns
+# until = a + min(bantime·backoff^r, maxBantime). The r for each banAt is
+# the count of PRIOR ban transitions for the key.
+schema: trishula.ban-conformance.v1
+policy:
+  # §19.1 BanPolicy CRD sketch — constants + weight names verbatim.
+  constants: { findtime: 10m, threshold: 10, bantime: 10m, backoff: 2, maxBantime: 24h }
+  weights:
+    crsCritical: 5
+    crsWarning: 2
+    botConsensus: 4
+    botSingle: 1
+    rateBreach: 3
+    schemaViolation: 2
+    authFailure: 2
+    kernelBurstFlag: 3
+  decayHalfLifePct: 20        # % of findtime -> half-life 120 s, λ = ln2/120
+  prefixEscalation: { enabled: false, minKeys: 8, window: 10m }
+  mode: shadow                # shadow-first (§13.3); the whole suite asserts shadow
+fixtures:
+  # --- score accumulation from weighted events ----------------------------
+  - id: F01
+    name: mixed kinds accumulate below threshold (decay visible across evals)
+    steps:
+      - at: 10
+        ingest: { key: 203.0.113.50, kind: crsCritical }   # +5, age 10 at eval
+      - at: 15
+        ingest: { key: 203.0.113.50, kind: crsWarning }    # +2, age 5
+      - at: 20
+        ingest: { key: 203.0.113.50, kind: botSingle }     # +1, age 0
+      - at: 20
+        evaluate:
+          key: 203.0.113.50
+          state: CLEAR
+          wantWouldBan: false    # runner recomputes: sum < 10
+      - at: 21
+        evaluate:
+          key: 203.0.113.50
+          state: CLEAR
+          wantWouldBan: false    # runner asserts score strictly decreased here
+    evidenceChecks: []
+  # --- unlike kinds carry unlike weights ----------------------------------
+  - id: F02
+    name: same instants as F01, bot-consensus-dominant mix scores differently
+    steps:
+      - at: 10
+        ingest: { key: 203.0.113.50, kind: botConsensus }  # +4, age 10
+      - at: 15
+        ingest: { key: 203.0.113.50, kind: botConsensus }  # +4, age 5
+      - at: 20
+        ingest: { key: 203.0.113.50, kind: botSingle }     # +1, age 0
+      - at: 20
+        evaluate:
+          key: 203.0.113.50
+          state: CLEAR
+          wantWouldBan: false    # heavier raw mass than F01, same instants: 9 raw
+    evidenceChecks: []
+  # --- threshold crossing -> would-ban ------------------------------------
+  - id: F03
+    name: crsCritical + botConsensus stays under, third event crosses
+    steps:
+      - at: 0
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 1
+        ingest: { key: 203.0.113.50, kind: botConsensus }
+      - at: 2
+        evaluate:
+          key: 203.0.113.50
+          state: CLEAR
+          wantWouldBan: false
+      - at: 3
+        ingest: { key: 203.0.113.50, kind: botConsensus }
+      - at: 3
+        evaluate:
+          key: 203.0.113.50
+          wantWouldBan: true
+          banTransition: true    # the fixture's one ban transition; until recomputed
+    evidenceChecks: [hasKey, hasEventsWithWeights, scoreTrajectoryHasWeights, hasUntil, hasTier, hasReasonCodes, jsonSerializable]
+  # --- shadow: ban decided, never enforced --------------------------------
+  - id: F04
+    name: would-ban under shadow records evidence, touches nothing else
+    steps:
+      - at: 0
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 1
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 2
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 3
+        ingest: { key: 203.0.113.50, kind: rateBreach }
+      - at: 3
+        evaluate:
+          key: 203.0.113.50
+          wantWouldBan: true
+          banTransition: true
+      - expectNoEnforcement: true
+    evidenceChecks: [modeIsShadow, hasKey, hasEventsWithWeights, scoreTrajectoryHasWeights, hasUntil, hasTier, hasReasonCodes, jsonSerializable]
+  # --- ban expiry semantics: now >= until (shield loader parity) ----------
+  - id: F05
+    name: ACTIVE_BAN one second before until, CLEAR at until
+    steps:
+      - at: 0
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 1
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 2
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 3
+        ingest: { key: 203.0.113.50, kind: rateBreach }
+      - at: 5
+        banAt:
+          key: 203.0.113.50
+          wantUntil: 605          # 5 + bantime(600)·κ^0 — recomputed
+      - at: 599
+        evaluate:
+          key: 203.0.113.50
+          state: ACTIVE_BAN
+          wantWouldBan: false
+      - at: 600
+        evaluate:
+          key: 203.0.113.50
+          state: ACTIVE_BAN
+          wantWouldBan: false
+      - at: 605
+        evaluate:
+          key: 203.0.113.50
+          state: CLEAR
+          wantWouldBan: false
+    evidenceChecks: [hasUntil, hasTier]
+  # --- no re-ban within bantime --------------------------------------------
+  - id: F06
+    name: mid-ban evaluate never re-bans and never re-arms
+    steps:
+      - at: 0
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 1
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 2
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 3
+        ingest: { key: 203.0.113.50, kind: rateBreach }
+      - at: 4
+        ingest: { key: 203.0.113.50, kind: botConsensus }
+      - at: 5
+        banAt:
+          key: 203.0.113.50
+          wantUntil: 605
+      - at: 300
+        evaluate:
+          key: 203.0.113.50
+          state: ACTIVE_BAN
+          wantWouldBan: false
+      - at: 604
+        evaluate:
+          key: 203.0.113.50
+          state: ACTIVE_BAN
+          wantWouldBan: false
+    evidenceChecks: [hasUntil]
+  # --- sliding-window retention keyed by findtime -------------------------
+  - id: F07
+    name: events older than findtime drop out entirely
+    steps:
+      - at: 0
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 1
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 2
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 3
+        evaluate:
+          key: 203.0.113.50
+          wantWouldBan: true    # 3 fresh crsCritical ≈ 14.93 ≥ T (crosses mid-fixture)
+          banTransition: true
+      - at: 608
+        evaluate:
+          key: 203.0.113.50
+          state: CLEAR
+          wantWouldBan: false   # every ingest is > findtime old; window is empty
+    evidenceChecks: [hasUntil]
+  # --- decay at decayHalfLifePct: stale mass shrinks below threshold ------
+  - id: F08
+    name: decayed window under threshold despite raw weight over it
+    steps:
+      - at: 4
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 11
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 18
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 120
+        evaluate:
+          key: 203.0.113.50
+          state: CLEAR
+          wantWouldBan: false   # raw 15, decayed ≈ 8.0 — half-life 20% of findtime
+    evidenceChecks: []
+  # --- stale remainder + fresh singular event cannot re-cross alone -------
+  - id: F09
+    name: after expiry, one fresh event plus stale remainder stays clear
+    steps:
+      - at: 0
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 1
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 2
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 2
+        banAt:
+          key: 203.0.113.50
+          wantUntil: 602
+      - at: 602
+        evaluate:
+          key: 203.0.113.50
+          state: CLEAR
+          wantWouldBan: false   # now >= until (shield parity)
+      - at: 603
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 603
+        evaluate:
+          key: 203.0.113.50
+          state: CLEAR
+          wantWouldBan: false   # remainder (5·e^-λ602 ≈ 0.154) + 5 < 10
+    evidenceChecks: [hasUntil]
+  # --- recross after expiry is a LEGAL re-ban with κ backoff --------------
+  - id: F10
+    name: second ban after expiry doubles bantime (recidivism 1)
+    steps:
+      - at: 0
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 1
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 2
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 2
+        banAt:
+          key: 203.0.113.50
+          wantUntil: 602        # 2 + 600·κ^0
+      - at: 700
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 701
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 702
+        ingest: { key: 203.0.113.50, kind: crsCritical }
+      - at: 702
+        banAt:
+          key: 203.0.113.50
+          wantUntil: 1902       # 702 + 600·κ^1 = 702+1200 — recomputed
+      - at: 1901
+        evaluate:
+          key: 203.0.113.50
+          state: ACTIVE_BAN
+          wantWouldBan: false   # still inside the doubled bantime
+      - at: 1902
+        evaluate:
+          key: 203.0.113.50
+          state: CLEAR
+          wantWouldBan: false   # now >= until (shield parity)
+    evidenceChecks: [hasUntil, hasTier]
+  # --- recidivism backoff schedule (data row; Go unit test consumes) ------
+  - id: F11
+    name: κ=2 walk caps at maxBantime (recidivism 0..8)
+    dataOnly: true
+    backoffSchedule:
+      recidivism: [0, 1, 2, 3, 4, 5, 6, 7, 8]
+      bantime: [600, 1200, 2400, 4800, 9600, 19200, 38400, 76800, 86400]  # min(600·2^k, 86400) — recomputed by the oracle
+    steps: []
+    evidenceChecks: []
+  # --- reserved: TR-10 kernel hand-off (score parity with §8) -------------
+  - id: TR10-15
+    name: reserved slot for TR-10's kernel-side score parity walk
+    reserved: true
+    dataOnly: true
+    steps: []
+    evidenceChecks: []
