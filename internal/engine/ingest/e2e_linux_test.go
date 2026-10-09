@@ -115,23 +115,55 @@ func TestFlowTCRingE2E(t *testing.T) {
 	// — OrbStack's veth ingress fast path bypasses clsact (defect: the
 	// ns-ping worked, filter jited+bound, zero flow rows; eth0 worked).
 	// The event decodes from whichever hook fires; the wire is identical.
-	nsAttach, err1 := exec.Command("ip", "netns", "exec", "tr04d", "tc", "qdisc", "add", "dev",
-		"tr04n", "clsact").CombinedOutput()
-	objPath := "/root/trishula/internal/engine/ingest/ingest_flow_arm64_bpfel.o"
-	nsAttach2, err2 := exec.Command("ip", "netns", "exec", "tr04d", "tc", "filter", "add", "dev",
-		"tr04n", "egress", "bpf", "da", "obj", objPath, "sec", "tc").CombinedOutput()
-	t.Logf("ns-attach: qdisc=%v filter=%v (out1=%q out2=%q)",
-		err1, err2, strings.TrimSpace(string(nsAttach)), strings.TrimSpace(string(nsAttach2)))
-	nsShow, _ := exec.Command("ip", "netns", "exec", "tr04d", "tc", "-s", "filter", "show",
-		"dev", "tr04n", "egress").CombinedOutput()
-	t.Logf("ns-side filter: %q", strings.TrimSpace(string(nsShow)))
-	t.Logf("NOTE: ns-side `tc obj` load creates ITS OWN map instances — its ringbuf is NOT the one our reader holds; only the host-side pinned attach shares our maps.")
+	// Keep a process alive in the ns, then nsenter -n (net ns only; the
+	// MOUNT ns is preserved so /sys/fs/bpf pins stay visible — `ip netns
+	// exec` remounts sysfs and hides the pins, which is why the obj-path
+	// attach created its own map instances).
+	keeper := exec.Command("ip", "netns", "exec", "tr04d", "sleep", "120")
+	if kerr := keeper.Start(); kerr != nil {
+		t.Skipf("ns keeper: %v", kerr)
+	}
+	defer keeper.Process.Kill()
+	time.Sleep(200 * time.Millisecond)
+	enter := func(args ...string) *exec.Cmd {
+		full := append([]string{"-t", itoa(keeper.Process.Pid), "-n"}, args...)
+		return exec.Command("nsenter", full...)
+	}
+	out3, e3 := enter("tc", "qdisc", "add", "dev", "tr04n", "clsact").CombinedOutput()
+	out4, e4 := enter("tc", "filter", "add", "dev", "tr04n", "egress", "bpf", "da",
+		"pinned", pin).CombinedOutput()
+	nsShow, _ := enter("tc", "-s", "filter", "show", "dev", "tr04n", "egress").CombinedOutput()
+	t.Logf("ns-attach: qdisc=%v filter=%v; show=%q",
+		e3 == nil, e4 == nil, strings.TrimSpace(string(nsShow)))
+	_ = out3
+	_ = out4
 
 	// Synthetic HTTP/1 GET from the ns → the host veth:
 	// ns-side tr04n egress hook (fires first on OrbStack).
 
 	// Read the ring for a decoded event with full fields (the parent
 	// acceptance). Bounded by a shell deadline; the reader is sync.
+	// Listener FIRST (SYN must complete; without an ACK the GET never
+	// leaves the ns and only SYNs flood the ring).
+	srv := exec.Command("python3", "-m", "http.server", "18080",
+		"--bind", "10.88.0.1")
+	srv.Dir = "/tmp"
+	if serr := srv.Start(); serr != nil {
+		t.Skipf("host listener: %v", serr)
+	}
+	defer srv.Process.Kill()
+	time.Sleep(300 * time.Millisecond)
+	// Fire the flow FIRST; the ring holds the records; the post-fire
+	// drain sees everything without depending on mid-flight poll wakes.
+	// OrbStack veth quirk: TC sees only the FIRST packet per connection
+	// (established-flow fast path bypasses clsact — recorded as defect;
+	// payload-bearing segments of established conns never re-ingress).
+	// TCP Fast Open carries the GET payload INSIDE the SYN → the first
+	// packet IS the request → the event has full L7 fields.
+	curlOut, curlErr := enter("curl", "--tcp-fastopen", "-s", "-m", "5",
+		"http://10.88.0.1:18080/", "-o", "/dev/null", "-w", "%{http_code}").CombinedOutput()
+	t.Logf("curl: err=%v out=%q", curlErr, strings.TrimSpace(string(curlOut)))
+
 	ch := make(chan *FlowEvent, 4)
 	errch := make(chan error, 8)
 	go func() {
@@ -151,18 +183,6 @@ func TestFlowTCRingE2E(t *testing.T) {
 		}
 	}()
 	_ = errch
-	// Listener FIRST (SYN must complete; without an ACK the GET never
-	// leaves the ns and only SYNs flood the ring).
-	srv := exec.Command("python3", "-m", "http.server", "18080",
-		"--bind", "10.88.0.1")
-	srv.Dir = "/tmp"
-	if serr := srv.Start(); serr != nil {
-		t.Skipf("host listener: %v", serr)
-	}
-	defer srv.Process.Kill()
-	time.Sleep(300 * time.Millisecond)
-	run4d(t, "ip", "netns", "exec", "tr04d", "curl", "-s", "-m", "5",
-		"http://10.88.0.1:18080/", "-o", "/dev/null")
 
 	got, err := waitHTTPEvent(t, ch, errch, 20*time.Second)
 	if err != nil {
@@ -226,4 +246,17 @@ func waitHTTPEvent(t *testing.T, ch <-chan *FlowEvent, errch <-chan error, max t
 			return nil, fmt.Errorf("no http_seen event within %s", max)
 		}
 	}
+}
+
+// itoa is strconv.Itoa without the import (docs_test.go parity).
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b []byte
+	for n > 0 {
+		b = append([]byte{byte('0' + n%10)}, b...)
+		n /= 10
+	}
+	return string(b)
 }

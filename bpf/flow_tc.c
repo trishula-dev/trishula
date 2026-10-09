@@ -145,8 +145,12 @@ static __always_inline int emit_flow_event(struct __sk_buff *skb,
 	if (payload + 4 <= data_end) {
 		__u8 b0 = *(__u8 *)payload;
 		__u8 b1 = *(__u8 *)(payload + 1);
+		__u8 b2 = *(__u8 *)(payload + 2);
 		if (is_http_method(b0, b1))
 			ev->http_seen = 1;
+		/* TR-04d E2E trace (removed with the e2e): payload byte evidence */
+		bpf_printk("[tr04d] pl0=%c pl1=%c pl2=%c seen=%d", b0, b1, b2,
+			   ev->http_seen);
 		if (b0 == 0x50 && b1 == 0x52) /* "PR" of the h2 preface */
 			ev->h2_preface = 1;
 		if (payload + 6 <= data_end) {
