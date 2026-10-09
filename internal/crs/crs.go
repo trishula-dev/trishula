@@ -171,9 +171,18 @@ func (e *fileEvaluator) walk(o Options) (matched []types.MatchedRule, interrupte
 	if it := tw.ProcessRequestHeaders(); it != nil {
 		interrupted, intRule, intStat = true, it.RuleID, it.Status
 	}
-	if o.Body != nil && !interrupted && tw.IsRequestBodyAccessible() {
-		if _, _, werr := tw.WriteRequestBody(o.Body); werr != nil {
-			return matched, interrupted, intRule, intStat, fmt.Errorf("crs: write request body: %w", werr)
+	// Phase 2 runs UNCONDITIONALLY (unless phase 1 disrupted): the CRS
+	// reference semantics evaluate 920230/921xxx/941xxx/942xxx phase-2
+	// rules and the 949110 blocking evaluation for every request —
+	// including body-less ones — so a body-less attack must still deny.
+	// Without this, phase-2 rules silently no-op whenever no body was
+	// written (ProcessRequestBody early-returns only inside the body
+	// branch, never for body-less requests).
+	if !interrupted && tw.IsRequestBodyAccessible() {
+		if o.Body != nil {
+			if _, _, werr := tw.WriteRequestBody(o.Body); werr != nil {
+				return matched, interrupted, intRule, intStat, fmt.Errorf("crs: write request body: %w", werr)
+			}
 		}
 		if it, berr := tw.ProcessRequestBody(); berr != nil {
 			return matched, interrupted, intRule, intStat, fmt.Errorf("crs: process request body: %w", berr)
