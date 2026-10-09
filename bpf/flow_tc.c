@@ -149,8 +149,8 @@ static __always_inline int emit_flow_event(struct __sk_buff *skb,
 	 * pointer peek never fired while the payload demonstrably arrived).
 	 * Offsets are relative to skb->data (the L2 frame start). */
 	{
-		__u32 l4_off = (__u32)(long)tcp_end - (__u32)(long)data;
-		__u8 hdr[6];
+			__u32 l4_off = (__u32)(long)tcp_end - (__u32)(long)data;
+		__u8 hdr[5];
 		if (!bpf_skb_load_bytes(skb, l4_off, hdr, sizeof(hdr))) {
 			if (is_http_method(hdr[0], hdr[1]))
 				ev->http_seen = 1;
@@ -219,7 +219,7 @@ static __always_inline int on_ip4(struct __sk_buff *skb, void *data,
 			return TC_ACT_SHOT; /* §19.1: enforcement, no userspace hop */
 	}
 
-	__u16 payload_len = skb->len - ((__u32)(long)payload - (__u32)(long)data);
+	__u16 payload_len = (__u32)skb->len - ((__u32)(long)tcp_end - (__u32)(long)data);
 	emit_flow_event(skb, data, data_end, ip->saddr, NULL, ip->daddr, NULL,
 			tcp->source, tcp->dest, tcp->syn ? 0x2 : 0,
 			KEY_AF_INET, (__u16)payload_len, tcp_end);
