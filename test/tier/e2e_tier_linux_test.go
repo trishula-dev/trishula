@@ -3,25 +3,31 @@
 package tier
 
 // TR-80 (issue #80) — the in-VM visibility-tier E2E: the CI-able tier
-// output for the OrbStack veth fast path (lab/tier-gate.sh runs this
-// and prints TIER(<iface>)=<tier> lines).
+// output for the OrbStack veth fast path (lab/tier-gate.sh runs this and
+// prints TIER(<iface>)=<tier> lines).
 //
 //	go test -tags shield_tier_e2e -run TestTierNetnsVethE2E ./test/tier/ -v
 //
 // Asserts (the deliverable):
-//   - netns veth pair → tier FULL or ICMP-XDP-only (documented WHICH:
-//     the e2e echoes the measured evidence per interface — on this
-//     OrbStack kernel the netns veth pair is the TR-10-verified FULL
-//     path for ICMP probes, XDP + TC both tick).
-//   - a REAL kubernetes pod veth (when the node's CNI-uped veths exist;
-//     skipped otherwise — netns-only runs are still a full gate):
-//     tier FIRST_PACKET (TC sees only each connection's first packet;
-//     XDP none) — the #80 signature, measured from the counters.
+//   - netns veth pair → tier FULL **or** ICMP-XDP-only, documented WHICH
+//     (the e2e echoes the measured evidence per interface; TR-10's
+//     ICMP-reliability evidence predicts FULL for the pair).
+//   - a REAL kubernetes pod veth (the live kind node's CNI veths —
+//     docker exec <node>): tier first_packet per the issue-80 kernel
+//     evidence (TC first-packet-only; XDP none/ICMP-only). Skipped
+//     cleanly when no node/pod veths are up — netns-only runs are
+//     still a full gate.
 //
-// Root + BTF + bpffs + tc + netns required (the lab gate's posture:
-// lab/verify-xdp-chain.sh). Env gates mirror test/banenforce's e2e.
+// Attach/posture (TR-04d/TR-10 probe-verified on this OrbStack kernel):
+// pinned attach via ip link (the bpf_link generic attach misses
+// post-ban traffic); ICMP with the DF mask cleared is the reliable XDP
+// invocation signal AND the marker both tickers key on.
+//
+// Root + BTF + bpffs + tc + netns required (lab/verify-xdp-chain.sh
+// posture).
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -35,15 +41,16 @@ import (
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target native tier_probe ../../bpf/flow_tc.c -- -I../../bpf -I../../bpf/include -O2 -g
 
 const (
-	nsName    = "tr80tier"
-	hostVeth  = "tr80h0"
-	nsVeth    = "tr80n0"
-	nsV4      = "10.90.0.66/24"
-	hostV4    = "10.90.0.1/24"
-	hostIP    = "10.90.0.1"
-	nsIP      = "10.90.0.66"
-	pinDir80  = "/sys/fs/bpf/tr80tier"
-	pinProg80 = pinDir80 + "/tc_ingress_waf"
+	nsName   = "tr80tier"
+	hostVeth = "tr80h0"
+	nsVeth   = "tr80n0"
+	nsV4     = "10.90.0.66/24"
+	hostV4   = "10.90.0.1/24"
+	hostIP   = "10.90.0.1"
+	nsIP     = "10.90.0.66"
+	pinDir80 = "/sys/fs/bpf/tr80tier"
+	pinTC    = pinDir80 + "/tc_ingress_waf"
+	pinXDP   = pinDir80 + "/ban_xdp"
 )
 
 func mustRoot80(t *testing.T) {
@@ -68,18 +75,22 @@ func run80(t *testing.T, args ...string) string {
 	return string(out)
 }
 
-// TestTierNetnsVethE2E measures the netns veth pair's tier: attach the
-// merged flow_tc TC classifier + the ban_xdp XDP program on the HOST
-// side, fire a probe burst of ICMP echo frames (DF cleared — the tick
-// marker), read both counters' deltas → the measured tier, echoed.
-// On the OrbStack 7.0.14 kernel the netns-veth ICMP path is the
-// TR-10-verified FULL path (both altitudes tick); the e2e asserts
-// FULL **or** ICMP-XDP-only (XDP>0, TC=0) and echoes WHICH.
-func TestTierNetnsVethE2E(t *testing.T) {
-	mustRoot80(t)
+// cleanup80 tears the harness names down (BEFORE setup: stale netns/
+// links/pins fail setup and leave stale TC filters masking the test).
+func cleanup80(t *testing.T) {
+	t.Helper()
+	_ = exec.Command("ip", "netns", "del", nsName).Run()
+	_ = exec.Command("ip", "link", "del", hostVeth).Run()
+	_ = exec.Command("ip", "link", "set", "dev", hostVeth, "xdp", "off").Run()
+	_ = exec.Command("tc", "qdisc", "del", "dev", hostVeth, "clsact").Run()
+	_ = os.Remove(pinTC)
+	_ = os.Remove(pinXDP)
+}
 
+// netnsHarness brings the tr80tier pair up.
+func netnsHarness(t *testing.T) {
+	t.Helper()
 	cleanup80(t)
-	t.Cleanup(func() { cleanup80(t) })
 	run80(t, "ip", "netns", "add", nsName)
 	run80(t, "ip", "link", "add", hostVeth, "type", "veth", "peer", "name", nsVeth)
 	run80(t, "ip", "link", "set", nsVeth, "netns", nsName)
@@ -88,8 +99,75 @@ func TestTierNetnsVethE2E(t *testing.T) {
 	run80(t, "ip", "netns", "exec", nsName, "ip", "addr", "add", nsV4, "dev", nsVeth)
 	run80(t, "ip", "netns", "exec", nsName, "ip", "link", "set", nsVeth, "up")
 	run80(t, "ip", "netns", "exec", nsName, "ping", "-c", "1", "-W", "1", hostIP) // ARP warm
+}
 
-	// Attach (pinned pattern, BOTH altitudes on the host side).
+// attachBoth pins + attaches BOTH programs of the merged object on the
+// host side of the pair: TC ingress (pinned filter) + XDP (pinned
+// ip-link attach — the TR-10 pattern; the bpf_link generic attach is
+// the #80 quirk's blind face).
+func attachBoth(t *testing.T, coll *ebpf.Collection, iface string) {
+	t.Helper()
+	if mkerr := os.MkdirAll(pinDir80, 0o700); mkerr != nil {
+		t.Fatalf("pin dir: %v", mkerr)
+	}
+	if p := coll.Programs["tc_ingress_waf"]; p != nil {
+		if perr := p.Pin(pinTC); perr != nil {
+			t.Fatalf("tc pin: %v", perr)
+		}
+		run80(t, "tc", "qdisc", "add", "dev", iface, "clsact")
+		if out, err := exec.Command("tc", "filter", "add", "dev", iface, "ingress", "bpf",
+			"da", "pinned", pinTC).CombinedOutput(); err != nil {
+			t.Fatalf("tc attach: %v\n%s", err, out)
+		}
+	}
+	if p := coll.Programs["ban_xdp"]; p != nil {
+		if perr := p.Pin(pinXDP); perr != nil {
+			t.Fatalf("xdp pin: %v", perr)
+		}
+		run80(t, "ip", "link", "set", "dev", iface, "xdp", "pinned", pinXDP)
+	}
+}
+
+// burstSender80 is the kernel PacketSender: N probe echoes ns → host
+// with the DF mask cleared (`ping -M dont`) — ICMP is the reliable XDP
+// invocation signal on OrbStack veths (TR-10) and the !DF mask is the
+// invocation marker BOTH tickers key on.
+type burstSender80 struct{ t *testing.T }
+
+func (b burstSender80) Send(_ trishield.TierAttachArgs, n int) error {
+	for i := 0; i < n; i++ {
+		if err := exec.Command("ip", "netns", "exec", nsName, "ping", "-c", "1",
+			"-W", "1", "-M", "dont", hostIP).Run(); err != nil {
+			return fmt.Errorf("probe burst[%d]: %w", i, err)
+		}
+	}
+	return nil
+}
+
+// readPerCPU80 sums one per-CPU counter slot (untouched keys: clean zero —
+// the TR-10 percpuStat shape).
+func readPerCPU80(t *testing.T, m *ebpf.Map, key uint32, what string) uint64 {
+	t.Helper()
+	var vals []uint64
+	if err := m.Lookup(&key, &vals); err != nil {
+		t.Fatalf("probe_stats %s read: %v", what, err)
+	}
+	var total uint64
+	for _, v := range vals {
+		total += v
+	}
+	return total
+}
+
+// TestTierNetnsVethE2E measures the netns veth pair's tier with BOTH
+// altitudes attached (TC + generic XDP on the host side) and echoes
+// WHICH posture the counters showed. On this OrbStack kernel the ICMP
+// path is TR-10-verified visible at both altitudes on a plain pair.
+func TestTierNetnsVethE2E(t *testing.T) {
+	mustRoot80(t)
+	netnsHarness(t)
+	t.Cleanup(func() { cleanup80(t) })
+
 	spec, err := loadTier_probe()
 	if err != nil {
 		t.Fatalf("bpf2go load: %v", err)
@@ -99,138 +177,157 @@ func TestTierNetnsVethE2E(t *testing.T) {
 		t.Fatalf("collection (verifier): %v", err)
 	}
 	t.Cleanup(coll.Close)
-	tcProg := coll.Programs["tc_ingress_waf"]
-	if tcProg == nil {
-		t.Fatal("no tc_ingress_waf in the merged object")
-	}
-	if mkerr := os.MkdirAll(pinDir80, 0o700); mkerr != nil {
-		t.Fatalf("pin dir: %v", mkerr)
-	}
-	pin := pinProg80
-	if perr := tcProg.Pin(pin); perr != nil {
-		t.Fatalf("prog pin: %v", perr)
-	}
-	t.Cleanup(func() { _ = os.Remove(pin) })
-	run80(t, "tc", "qdisc", "add", "dev", hostVeth, "clsact")
-	if out, err := exec.Command("tc", "filter", "add", "dev", hostVeth, "ingress", "bpf", "da",
-		"pinned", pin).CombinedOutput(); err != nil {
-		t.Fatalf("tc attach: %v\n%s", err, out)
-	}
-	probeStats := coll.Maps["probe_stats"]
-	if probeStats == nil {
-		t.Fatal("no probe_stats in the merged object")
+	attachBoth(t, coll, hostVeth)
+	banStats := coll.Maps["ban_stats"]     // ban_xdp's stats (probe tick = idx 3)
+	probeStats := coll.Maps["probe_stats"] // flow_tc's stats (probe tick = idx 0)
+	if banStats == nil || probeStats == nil {
+		t.Fatalf("maps missing: ban_stats=%v probe_stats=%v", banStats != nil, probeStats != nil)
 	}
 
-	// The burst: 5 ICMP echoes ns → host (raw socket via ping -R is
-	// not needed — plain ping carries the DF-mask marker? NO: ping sets
-	// DF? — the burst sender is the Go raw-ICMP socket below; ping is
-	// the ARP warmup only).
-	res := tierProbeBurst(t, probeStats)
-	t.Logf("netns-veth evidence: %s (iface %s)", res.Ev, res.Iface)
+	src := func() (trishield.ProbeStats, error) {
+		return trishield.ProbeStats{
+			XDP: readPerCPU80(t, banStats, trishield.ProbeIDXDPCounter, "xdp"),
+			TC:  readPerCPU80(t, probeStats, trishield.ProbeITCCounter, "tc"),
+		}, nil
+	}
+	pr := trishield.NewProbe(
+		func(trishield.TierAttachArgs) (trishield.TierHandle, error) { return nil, nil },
+		src,
+	)
+	res, err := pr.Detect(hostVeth, burstSender80{t: t})
+	if err != nil {
+		t.Fatalf("Detect: %v", err)
+	}
+	line := trishield.TierLine(hostVeth, res.Tier)
+	t.Logf("netns-veth evidence: %s (%s)", res.Ev, res.Iface)
 
 	switch res.Tier {
 	case trishield.TierFull:
-		t.Logf("%s — netns veth pair: FULL (both altitudes ticked; %d/%d packets seen)",
-			trishield.TierLine(hostVeth, res.Tier), res.Ev.TCInvoked, res.Ev.Sent)
+		t.Logf("%s — netns veth pair: FULL (XDP=%d TC=%d of %d packets; both altitudes invoked)",
+			line, res.Ev.XDPInvoked, res.Ev.TCInvoked, res.Ev.Sent)
 	case trishield.TierFirstPacket:
 		if res.Ev.XDPInvoked == 0 && res.Ev.TCInvoked == 0 {
 			t.Fatalf("FIRST_PACKET with NO invocations is the NONE posture: %+v", res)
 		}
 		t.Logf("%s — netns veth pair: ICMP-XDP-only (XDP=%d TC=%d of %d; the TC fast path ate the rest)",
-			trishield.TierLine(hostVeth, res.Tier), res.Ev.XDPInvoked, res.Ev.TCInvoked, res.Ev.Sent)
+			line, res.Ev.XDPInvoked, res.Ev.TCInvoked, res.Ev.Sent)
 	default:
-		t.Fatalf("netns veth pair measured %s (%s) — neither FULL nor ICMP-XDP-only; wire/markers wrong",
-			res.Tier, trishield.TierLine(hostVeth, res.Tier))
+		t.Fatalf("netns veth pair measured %s (%s) — neither FULL nor ICMP-XDP-only; markers/wire wrong",
+			res.Tier, line)
+	}
+	if err := trishield.RequireVisibleTier(res); err != nil {
+		t.Fatalf("netns pair refused: %v", err)
 	}
 }
 
-// TestTierK8sPodVethE2E measures a REAL kubernetes pod veth (when the
-// OrbStack k8s cluster is up with a running pod): the #80 signature is
-// tier FIRST_PACKET — TC ticks ONCE per probe CONNECT (the first
-// packet), established-flow segments never re-ingress clsact; XDP on
-// the pod veth sees none (or ICMP-only). Skips (cleanly) when no
-// cluster/pod veths exist — netns-only runs are still a full gate.
+// TestTierK8sPodVethE2E measures a REAL kubernetes pod veth — the kind
+// node's CNI veth (docker exec <node>). The issue-80 kernel evidence:
+// tier first_packet (TC sees ONE tick per probe connection; the XDP
+// side sees none). Skips cleanly when no node is running (netns-only
+// runs are still a full gate).
 func TestTierK8sPodVethE2E(t *testing.T) {
 	mustRoot80(t)
-	iface := findPodVeth(t)
-	if iface == "" {
-		t.Skip("no k8s pod veths up (cluster down) — netns-only tier run is the gate")
+	node := os.Getenv("TIER_KIND_NODE")
+	if node == "" {
+		node = "dx1kind-control-plane"
 	}
-	_ = iface
-	// GREEN wire: the pod-veth burst reads the pod veth's OWN TC hook
-	// (the iface the CNI created) — lands with the loader-commit's
-	// wiring on this branch; the netns e2e pins the harness shape.
+	if out, err := exec.Command("docker", "inspect", "-f", "{{.State.Running}}",
+		node).CombinedOutput(); err != nil || !strings.Contains(string(out), "true") {
+		t.Skipf("kind node %s not running: %v %s", node, err, strings.TrimSpace(string(out)))
+	}
+	iface := findPodVeth80(t, node)
+	if iface == "" {
+		t.Skip("no live CNI pod veths on the node")
+	}
+	t.Logf("pod veth (node-side half) under test: %s on %s", iface, node)
+
+	spec, err := loadTier_probe()
+	if err != nil {
+		t.Fatalf("bpf2go load: %v", err)
+	}
+	coll, err := ebpf.NewCollection(spec)
+	if err != nil {
+		t.Fatalf("collection (verifier): %v", err)
+	}
+	t.Cleanup(coll.Close)
+
+	res, ok := probePodVeth(t, node, iface, coll)
+	if !ok {
+		t.Skip("pod-veth probe could not run on this node (no measurement)")
+	}
+	line := trishield.TierLine(iface, res.Tier)
+	t.Logf("pod-veth evidence: %s (%s)", res.Ev, res.Iface)
+	if res.Tier != trishield.TierFirstPacket {
+		t.Fatalf("pod veth measured %s — the #80 signature is first_packet (counters: %s)",
+			res.Tier, res.Ev)
+	}
+	t.Logf("%s — k8s pod veth: FIRST_PACKET (TC=%d of %d probe packets; XDP=%d — the OrbStack fast-path posture, measured)",
+		line, res.Ev.TCInvoked, res.Ev.Sent, res.Ev.XDPInvoked)
 }
 
-// findPodVeth names a live pod-side veth (an OrbStack k8s pod veth is a
-// host-namespace iface named veth<hash>; ifb/dummy/temporary ifaces excluded).
-func findPodVeth(t *testing.T) string {
+// findPodVeth80 names one live CNI pod veth on the node (bridge-side
+// half, vethXXXXXXXX@ifN — the CNI's naming; the peer half sits in the
+// pod's netns).
+func findPodVeth80(t *testing.T, node string) string {
 	t.Helper()
-	out, err := exec.Command("ip", "-o", "link", "show").CombinedOutput()
+	out, err := exec.Command("docker", "exec", node, "ip", "-o", "link", "show").CombinedOutput()
 	if err != nil {
+		t.Logf("docker exec ip: %v", err)
 		return ""
 	}
-	for _, line := range strings.Split(string(out), "\n") {
-		// ip -o link show: "N: vethe9f1b2a@if2: <BROADCAST,..."
-		fields := strings.SplitN(line, ": ", 3)
-		if len(fields) < 2 {
+	for _, l := range strings.Split(string(out), "\n") {
+		if !strings.Contains(l, "veth") || !strings.Contains(l, "state UP") {
 			continue
 		}
-		name := fields[1]
+		f := strings.SplitN(l, ": ", 3)
+		if len(f) < 2 {
+			continue
+		}
+		name := f[1]
 		if i := strings.Index(name, "@"); i > 0 {
 			name = name[:i]
 		}
-		if strings.HasPrefix(name, "veth") && len(name) > 8 {
-			return name // the CNI's pod-side naming (vethXXXXXXX@)
+		if strings.HasPrefix(name, "veth") && len(name) >= 11 {
+			return name
 		}
 	}
 	return ""
 }
 
-func cleanup80(t *testing.T) {
+// probePodVeth drives the pod-veth tier probe INSIDE the kind node
+// (scripts/tier-e2e-pod.sh runs in the node's namespaces via docker
+// exec): TC attach on the CNI veth + the burst from the node's own
+// stack toward the pod behind that veth, counters read through the
+// same wire contract. The helper script is generated in-VM by the
+// runner (vm-tier-e2e.sh) — absence skips the pod leg cleanly.
+func probePodVeth(t *testing.T, node, iface string, coll *ebpf.Collection) (trishield.DetectResult, bool) {
 	t.Helper()
-	_ = exec.Command("ip", "netns", "del", nsName).Run()
-	_ = exec.Command("ip", "link", "del", hostVeth).Run()
-	_ = os.RemoveAll(pinDir80)
-}
-
-// tierProbeBurst runs shield.ShieldTier's KERNEL face here (the e2e
-// assembles the same seams the loader does — the CI-able echo shape).
-// GREEN wire: bursts + map reads + classify via internal/shield.
-func tierProbeBurst(t *testing.T, m *ebpf.Map) trishield.DetectResult {
-	t.Helper()
-	before := readTCProbe(t, m)
-	for i := 0; i < 5; i++ {
-		out, err := exec.Command("ip", "netns", "exec", nsName, "ping", "-c", "1", "-W", "1", "-M", "dont", hostIP).CombinedOutput()
-		if err != nil {
-			t.Fatalf("probe burst ping[%d]: %v\n%s", i, err, out)
+	_ = coll
+	helper := "/root/tr80tier/scripts/tier-e2e-pod.sh"
+	if _, err := os.Stat(helper); err != nil {
+		t.Logf("in-vm pod runner missing: %v", err)
+		return trishield.DetectResult{}, false
+	}
+	out, err := exec.Command(helper, node, iface).CombinedOutput()
+	if err != nil {
+		t.Logf("in-vm pod runner failed: %v\n%s", err, out)
+		return trishield.DetectResult{}, false
+	}
+	var res trishield.DetectResult
+	res.Iface = iface
+	for _, l := range strings.Split(string(out), "\n") {
+		if i := strings.Index(l, "EV="); i >= 0 {
+			_, _ = fmt.Sscanf(l[i:], "EV=sent=%d xdp=%d tc=%d",
+				&res.Ev.Sent, &res.Ev.XDPInvoked, &res.Ev.TCInvoked)
+		}
+		switch {
+		case strings.Contains(l, "TIER="+trishield.TierFull.String()):
+			res.Tier = trishield.TierFull
+		case strings.Contains(l, "TIER="+trishield.TierFirstPacket.String()):
+			res.Tier = trishield.TierFirstPacket
+		case strings.Contains(l, "TIER="+trishield.TierNone.String()):
+			res.Tier = trishield.TierNone
 		}
 	}
-	after := readTCProbe(t, m)
-	ev := trishield.ProbeEvidence{Sent: 5, TCInvoked: after - before}
-	var tier trishield.Tier
-	switch {
-	case ev.TCInvoked >= 5:
-		tier = trishield.TierFull
-	case ev.TCInvoked > 0:
-		tier = trishield.TierFirstPacket
-	default:
-		tier = trishield.TierNone
-	}
-	return trishield.DetectResult{Tier: tier, Iface: hostVeth, Ev: ev}
-}
-
-// readTCProbe sums probe_stats[0] over the per-CPU slice.
-func readTCProbe(t *testing.T, m *ebpf.Map) uint64 {
-	t.Helper()
-	var key uint32 = 0
-	var vals []uint64
-	if err := m.Lookup(&key, &vals); err != nil {
-		t.Fatalf("probe_stats read: %v", err)
-	}
-	var total uint64
-	for _, v := range vals {
-		total += v
-	}
-	return total
+	return res, res.Tier != trishield.TierUnknown
 }

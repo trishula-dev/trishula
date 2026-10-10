@@ -105,10 +105,14 @@ type StatsSource func() (ProbeStats, error)
 // AttachFunc performs (or fakes) the loader's attach on the interface.
 type AttachFunc func(tierAttachArgs) (TierHandle, error)
 
-// tierAttachArgs carries the attach hook's context (iface name).
+// tierAttachArgs carries the attach hook's context (iface name) —
+// EXPORTED as TierAttachArgs for the linux consumers (the e2e).
 type tierAttachArgs struct {
 	iface string
 }
+
+// TierAttachArgs is the exported name of tierAttachArgs.
+type TierAttachArgs = tierAttachArgs
 
 // TierHandle is the attached stack (real loader in prod; test fakes).
 type TierHandle interface {
