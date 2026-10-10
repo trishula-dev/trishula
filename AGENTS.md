@@ -205,20 +205,24 @@ Release tags are signed tags; `git tag -v` is part of the release checklist.
 
 ## Architecture Decision Records
 
-Structural changes (a new subsystem, a public API change, a performance-characteristic
-change) carry an ADR in the same PR, following the
-[Coraza ADR standard](https://github.com/corazawaf/coraza/blob/main/docs/adr/README.md)
-format (template: `docs/adr/0000-template.md`, next number, short slug). For this
-repo the bar is smaller than Coraza's: most slices are leaf-sized, so the
-issue's PRD reference IS the design record — write an ADR only when
-**the change introduces a new persistent artifact** (a wire format, a map schema,
-a CRD field, a gate script) or **removes/changes one**.
+Structural changes (a new subsystem, a public API change, a
+performance-characteristic change) carry an ADR in the same PR. Most
+slices are leaf-sized — the issue's PRD reference IS the design record,
+no ADR needed — write one only when **the change introduces a new
+persistent artifact** (a wire format, a kernel map layout, a CRD field,
+a gate script) or **removes/changes one**.
 
-Agent rules (borrowed from Coraza, same teeth):
+The record lives in [`docs/adr/`](docs/adr/):
+[`0000-architecture-decision-records.md`](docs/adr/0000-architecture-decision-records.md)
+explains the process and
+[`0001-record-format.md`](docs/adr/0001-record-format.md) fixes the
+format (NNNN-short-slug.md, numbered sequentially, one decision per
+file). Rules with teeth:
 
-- **Never invent discussion, deciders or quotes.** Cite commit/issue permalinks
-  or write "No substantive technical discussion recorded".
-- **Never rewrite an accepted ADR** to match a new change — supersede it.
+- **Accepted ADRs are immutable.** A change that contradicts an accepted
+  ADR supersedes it with a new one; never rewrite the accepted record.
+- **Never invent discussion, deciders or quotes.** Cite commit/issue
+  permalinks, or write "No substantive technical discussion recorded".
 - Bug fixes, docs, CI and dependency bumps don't need ADRs.
 
 ## Pull requests
@@ -276,7 +280,7 @@ never invent new `area:*`/`type:*` names (the label catalog is the vocabulary).
 **Never open a public issue or PR describing an exploitable bug.** Report
 through the GitHub security advisory link
 (<https://github.com/trishula-dev/trishula/security/advisories/new>); see
-[`SECURITY.md`](SECURITY.md). The Coraza rule set for coding agents applies
+[`SECURITY.md`](SECURITY.md). The embedded-CRS reporting rules apply
 verbatim: a valid report carries a working reproducer; CVSS preconditions get
 verified, not copied; AI involvement is disclosed in the advisory itself.
 
