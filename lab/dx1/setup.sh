@@ -40,6 +40,7 @@ NGF_RELEASE="${NGF_RELEASE:-dx1}"
 NGF_NS="${NGF_NS:-nginx-gateway}"
 GATEWAY_NAME="${GATEWAY_NAME:-edge-gateway}"
 NODE_HTTP_PORT="${NODE_HTTP_PORT:-31437}"
+NGF_INSTALLED_NEW="0"   # 1 once this run helm-installs NGF (the rollout-status gates)
 MANIFESTS_DIR="${DX1_DIR}/manifests"
 OUT_IMG="${OUT_IMG:-trishula-engine:dx1}"   # local tag for the engine image
 BIN="${BIN:-/tmp/engine-linux-arm64}"       # linux/$LOCALARCH build of cmd/engine (TR-06a)
@@ -202,6 +203,7 @@ fetch_chart_dir() {
 }
 
 if ! helm status "${NGF_RELEASE}" -n "${NGF_NS}" >/dev/null 2>&1; then
+  NGF_INSTALLED_NEW="1"
   readarray -t HELM_SETS < <(helm_sets)
   if ! helm install "${NGF_RELEASE}" "oci://ghcr.io/nginx/charts/nginx-gateway-fabric" \
         --version "${NGF_CHART_VERSION}" -n "${NGF_NS}" --create-namespace \
@@ -277,8 +279,10 @@ if ! docker image inspect "ghcr.io/mendhak/http-https-echo:42" >/dev/null 2>&1; 
 fi
 load_into_node "ghcr.io/mendhak/http-https-echo:42"
 
-kubectl rollout status --timeout=5m -n "${NGF_NS}" "deployment/${NGF_RELEASE}-nginx-gateway-fabric"
-kubectl rollout status --timeout=5m -n "${NGF_NS}" "deployment/${NGF_RELEASE}-nginx"
+if [ "${NGF_INSTALLED_NEW}" = "1" ]; then
+  kubectl rollout status --timeout=5m -n "${NGF_NS}" "deployment/${NGF_RELEASE}-nginx-gateway-fabric"
+  kubectl rollout status --timeout=5m -n "${NGF_NS}" "deployment/${NGF_RELEASE}-nginx"
+fi
 
 # --- 6. lab manifests: engine + echo + Gateway/HTTPRoute --------------------
 log "applying lab manifests (${MANIFESTS_DIR})"

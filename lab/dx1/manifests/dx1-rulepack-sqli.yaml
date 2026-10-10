@@ -1,0 +1,27 @@
+---
+# TR-08c (issue #76, M9) — the v0 rule-pack content source: the ConfigMap
+# the lab policy's ruleSets[0].name (dx1-sqli) resolves to, in the policy's
+# namespace with data key pack.yaml (cmd/operator's cmSource). The rule is
+# the lab's enforced SQLi gate: POST /v1/chat/* with a UNION probe in the
+# query string. (The seed rule TR02-001 is rate-shape/log — the TR-09
+# engine owns rate enforcement; this pack is the M9 blocking leg.)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dx1-sqli
+  namespace: dx1
+  labels:
+    app.kubernetes.io/part-of: trishula-dx1-lab
+data:
+  pack.yaml: |
+    rules:
+      - id: DX-LAB-001
+        name: sqli-in-chat-query
+        description: >-
+          Blocks SQLi UNION probes in query strings on the chat-completions
+          route (the M9 lab rule; enforced = the decision is block).
+        action: enforce
+        expression: |
+          request.method == "POST" &&
+          path.matches("/v1/chat/*") &&
+          request.query.contains("UNION")

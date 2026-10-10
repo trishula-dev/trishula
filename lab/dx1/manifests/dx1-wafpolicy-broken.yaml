@@ -1,0 +1,26 @@
+---
+# TR-08c (issue #76, M9) — the FAILURE-path fixture: an UNCOMPILABLE CEL
+# rule. The expression parses as YAML but does not compile in the engine's
+# CEL env (undefined identifier `request.body.messages` — the seed view
+# carries method/path/query/rate_windows only). The operator's compile must
+# REJECT it: the log line `COMPILE FAILED dx1/…` is the evidence, no bundle
+# is published, and traffic keeps its previous shape (fail closed = the
+# policy is not loaded, never a crash, never silent under-enforcement).
+apiVersion: trishula.security/v1alpha1
+kind: WAFPolicy
+metadata:
+  name: broken-rule-gate
+  namespace: dx1
+  labels:
+    app.kubernetes.io/part-of: trishula-dx1-lab
+    app.kubernetes.io/trishula-fixture: uncompilable
+spec:
+  defaultAction: pass
+  modeFlags:
+    inline: true
+    shadow: true
+  ruleSets:
+    - name: dx1-broken
+      source:
+        crsVersion: "4.x"
+        profile: PL1

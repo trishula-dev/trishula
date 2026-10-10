@@ -1,0 +1,16 @@
+---
+# TR-08c (issue #76, M9) — the operator Service (readiness endpoint).
+apiVersion: v1
+kind: Service
+metadata:
+  name: dx1-operator
+  namespace: dx1
+  labels:
+    app.kubernetes.io/name: trishula-operator
+spec:
+  selector:
+    app.kubernetes.io/name: trishula-operator
+  ports:
+    - name: probe
+      port: 1936
+      targetPort: probe
