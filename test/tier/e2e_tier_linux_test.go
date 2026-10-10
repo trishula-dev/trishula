@@ -39,6 +39,7 @@ import (
 )
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target native tier_probe ../../bpf/flow_tc.c -- -I../../bpf -I../../bpf/include -O2 -g
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target native tier_xdp ../../bpf/ban_xdp.c -- -I../../bpf -I../../bpf/include -O2 -g
 
 const (
 	nsName   = "tr80tier"
@@ -101,11 +102,14 @@ func netnsHarness(t *testing.T) {
 	run80(t, "ip", "netns", "exec", nsName, "ping", "-c", "1", "-W", "1", hostIP) // ARP warm
 }
 
-// attachBoth pins + attaches BOTH programs of the merged object on the
-// host side of the pair: TC ingress (pinned filter) + XDP (pinned
-// ip-link attach — the TR-10 pattern; the bpf_link generic attach is
-// the #80 quirk's blind face).
-func attachBoth(t *testing.T, coll *ebpf.Collection, iface string) {
+// attachBoth pins + attaches BOTH collections on the host side of the
+// pair: the TC classifier from the flow_tc collection (pinned filter) +
+// the XDP program from the tier_xdp collection (pinned ip-link attach —
+// the TR-10 pattern; the bpf_link generic attach is the #80 quirk's
+// blind face). Two bpf2go objects ⇒ two collections: the programs do
+// NOT share maps (ban_stats lives only in the xdp collection,
+// probe_stats only in the tc collection).
+func attachBoth(t *testing.T, coll, xcoll *ebpf.Collection, iface string) {
 	t.Helper()
 	if mkerr := os.MkdirAll(pinDir80, 0o700); mkerr != nil {
 		t.Fatalf("pin dir: %v", mkerr)
@@ -120,7 +124,7 @@ func attachBoth(t *testing.T, coll *ebpf.Collection, iface string) {
 			t.Fatalf("tc attach: %v\n%s", err, out)
 		}
 	}
-	if p := coll.Programs["ban_xdp"]; p != nil {
+	if p := xcoll.Programs["ban_xdp"]; p != nil {
 		if perr := p.Pin(pinXDP); perr != nil {
 			t.Fatalf("xdp pin: %v", perr)
 		}
@@ -170,15 +174,24 @@ func TestTierNetnsVethE2E(t *testing.T) {
 
 	spec, err := loadTier_probe()
 	if err != nil {
-		t.Fatalf("bpf2go load: %v", err)
+		t.Fatalf("bpf2go load (flow_tc): %v", err)
+	}
+	xspec, err := loadTier_xdp()
+	if err != nil {
+		t.Fatalf("bpf2go load (ban_xdp): %v", err)
 	}
 	coll, err := ebpf.NewCollection(spec)
 	if err != nil {
 		t.Fatalf("collection (verifier): %v", err)
 	}
 	t.Cleanup(coll.Close)
-	attachBoth(t, coll, hostVeth)
-	banStats := coll.Maps["ban_stats"]     // ban_xdp's stats (probe tick = idx 3)
+	xcoll, err := ebpf.NewCollection(xspec)
+	if err != nil {
+		t.Fatalf("collection xdp (verifier): %v", err)
+	}
+	t.Cleanup(xcoll.Close)
+	attachBoth(t, coll, xcoll, hostVeth)
+	banStats := xcoll.Maps["ban_stats"]    // ban_xdp's stats (probe tick = idx 3)
 	probeStats := coll.Maps["probe_stats"] // flow_tc's stats (probe tick = idx 0)
 	if banStats == nil || probeStats == nil {
 		t.Fatalf("maps missing: ban_stats=%v probe_stats=%v", banStats != nil, probeStats != nil)
