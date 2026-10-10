@@ -24,7 +24,7 @@ internal/         engine (ingest, ladder, cel, rateban), operator, shield loader
 manifests/        install manifests
 docs/academy/     teach-the-web labs
 lab/              demo + DX1 scenarios (kind + NGF)
-test/             crs-differential · ban-conformance · bench
+test/             crs-differential · ban-conformance · bench · tier
 ```
 
 ## Roadmap board
@@ -45,6 +45,26 @@ positive security v0 → honest exit (TR-14).
 | CRD apply → compile → load round-trip ≤ 5 s | ☐ |
 | NGF steers to engine as plain backend in kind | ☐ |
 | Verdict telemetry correlates span + metric + log | ☐ |
+
+## Shield visibility tiers (issue #80)
+
+The shield's guarantees depend on what the kernel hook actually SEES —
+and on OrbStack-family veth fast paths the attach altitude is not the
+effective altitude (established-flow segments skip clsact ingress; generic
+XDP misses netns-sourced UDP; ICMP invokes XDP reliably). The loader
+therefore **measures** the visibility tier at boot
+(`internal/shield.ShieldTier`: a 5-packet probe burst, classified from
+the programs' per-CPU probe counters) and emits
+`trishula.shield.visibility_tier` once per interface (tier literal; the
+shield startup attribute on the OTel pipeline — internal/shield/tier_otel.go).
+Measured in CI by `lab/tier-gate.sh` (`TIER(<iface>)=<tier>` lines; the
+tagged E2E lives in `test/tier/`).
+
+| Tier | Meaning | Enforcement posture |
+|---|---|---|
+| `full` | every packet observed at both altitudes (XDP + TC) | full payload visibility at TC |
+| `first_packet` | only the first packet of a connection reaches TC; XDP none (or ICMP-only) — OrbStack pod-veth posture | ban/ACL on first packet ONLY — enforcement correct for NEW connections (the first packet carries the verdict); payload deep-inspection degraded to sampled flows |
+| `none` | no packets visible at any altitude | loader must refuse + fail loudly (`TierRefusal`) — an invisible shield is a false sense of security |
 
 ## License
 
