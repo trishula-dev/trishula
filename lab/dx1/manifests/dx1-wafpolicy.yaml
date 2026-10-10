@@ -1,0 +1,32 @@
+---
+# TR-08c (issue #76, M9) — the WAFPolicy CR the lab compiles and enforces,
+# on the dx1-engine-route route class (PRD §16.2 v0 surface; the CRD is
+# manifests/crd/wafpolicy-crd.yaml, TR-08a).
+#
+# Effects in the lab (verified by lab/dx1/apply-effect.sh):
+#   - the enforced CEL rule DX-LAB-001 (configmap dx1-sqli, data pack.yaml)
+#     matches SQLi probes in the query string of POST /v1/chat/* → the
+#     request is BLOCKED (403, X-Trishula-Decision: block, the rule id in
+#     X-Trishula-Rule);
+#   - undecided requests (no rule fired) take defaultAction: pass → the
+#     transparent forward is preserved (TR-06's contract on the same hop).
+# The seed rule pack (TR-02's TR02-001 rate-shape, action=log, never
+# enforces alone) embeds in every compiled bundle.
+apiVersion: trishula.security/v1alpha1
+kind: WAFPolicy
+metadata:
+  name: chat-completions-gate
+  namespace: dx1
+  labels:
+    app.kubernetes.io/part-of: trishula-dx1-lab
+spec:
+  defaultAction: pass
+  modeFlags:
+    inline: true
+    shield: false
+    shadow: true
+  ruleSets:
+    - name: dx1-sqli
+      source:
+        crsVersion: "4.x"
+        profile: PL1

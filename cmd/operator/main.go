@@ -26,6 +26,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -50,6 +51,22 @@ import (
 // bundleCMName is the ConfigMap the compiled bundle lands in (data key
 // bundle.json); the engine's --bundle pickup reads it.
 const bundleCMName = "dx1-wafpolicy-bundle"
+
+// serveHealthz answers engine-local readiness on 127.0.0.1:1936 (the pod's
+// probe port; the process never serves anything else on it). Runs for the
+// process lifetime; the reconcile loop's health is the pod being Ready.
+func serveHealthz() {
+	go func() {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = w.Write([]byte("ok"))
+		})
+		if err := http.ListenAndServe("127.0.0.1:1936", mux); err != nil {
+			log.Printf("operator: healthz endpoint: %v", err)
+		}
+	}()
+}
 
 // gvr is the WAFPolicy REST mapping (v1alpha1); configmapsGVR the
 // ConfigMap one (the v0 transports).
@@ -166,6 +183,7 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	serveHealthz()
 
 	reconcileOnce := func() {
 		policies, err := listPolicies(ctx, dc, *watchNS)

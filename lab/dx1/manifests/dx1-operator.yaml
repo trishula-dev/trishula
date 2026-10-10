@@ -1,0 +1,46 @@
+---
+# TR-08c (issue #76, M9) — the operator: one pod running cmd/operator
+# (trishula-operator:dx1, built by lab/dx1/apply-effect.sh from the repo),
+# watching WAFPolicy CRs in dx1 and publishing the compiled bundle to the
+# dx1-wafpolicy-bundle configmap (same namespace).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dx1-operator
+  namespace: dx1
+  labels:
+    app.kubernetes.io/name: trishula-operator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: trishula-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: trishula-operator
+    spec:
+      containers:
+        - name: operator
+          image: trishula-operator:dx1
+          imagePullPolicy: IfNotPresent
+          args:
+            - --namespace
+            - dx1
+            - --publish-namespace
+            - dx1
+          ports:
+            - name: probe
+              containerPort: 1936
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: probe
+            initialDelaySeconds: 1
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: probe
+            initialDelaySeconds: 2
+            periodSeconds: 10

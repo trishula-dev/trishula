@@ -1,0 +1,45 @@
+---
+# TR-08c (issue #76, M9) — the RBAC the thin operator needs: watch/list/get
+# WAFPolicies (its reconcile input) and get/create/patch the bundle
+# ConfigMap (its output). Namespaced to dx1.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dx1-operator
+  namespace: dx1
+  labels:
+    app.kubernetes.io/part-of: trishula-dx1-lab
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dx1-operator
+  namespace: dx1
+  labels:
+    app.kubernetes.io/part-of: trishula-dx1-lab
+rules:
+  - apiGroups: ["trishula.security"]
+    resources: ["wafpolicies"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["trishula.security"]
+    resources: ["wafpolicies/status"]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: dx1-operator
+  namespace: dx1
+  labels:
+    app.kubernetes.io/part-of: trishula-dx1-lab
+subjects:
+  - kind: ServiceAccount
+    name: dx1-operator
+    namespace: dx1
+roleRef:
+  kind: Role
+  name: dx1-operator
+  apiGroup: rbac.authorization.k8s.io
