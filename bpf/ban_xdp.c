@@ -27,18 +27,31 @@
 #define KEY_AF_INET 4
 #define KEY_CLASS_IP 0
 
+#define IP_DF 0x4000 /* TR-80 visibility-probe marker bit (host order) */
+
 /* Wire reason codes (internal/shield/banenforce.go pins the enum). */
 #define REASON_UNSPECIFIED 0
 #define REASON_SCORED_WINDOW 1300
 
-/* Enforcement stats: per-CPU counters (verdict observability for the
- * e2e and the loader's pollers). STAT_PASS ticks for every IPv4 packet
- * that exits clean (either direction — generic XDP on a veth sees host
- * egress too); STAT_LIFT ticks ONLY on the expired-lift branch: a pass
- * that happened BECAUSE its ban expired (the auto-lift evidence). */
+/* Verdict/traffic stats (TR-10): per-CPU counters (verdict observability
+ * for the e2e and the loader's pollers). STAT_PASS ticks for every IPv4
+ * packet that exits clean (either direction — generic XDP on a veth sees
+ * host egress too); STAT_LIFT ticks ONLY on the expired-lift branch: a
+ * pass that happened BECAUSE its ban expired (the auto-lift evidence). */
 #define STAT_DROP 0
 #define STAT_PASS 1
 #define STAT_LIFT 2
+
+/* TR-80 visibility probe (issue #80): PROBE_SEEN ticks ONCE per program
+ * invocation on a probe-marked packet — the marker is a zero IP id with
+ * a zero 16-bit checksum complement marker that no ordinary stack emits
+ * (the tier probe sender sets it; ICMP probes carry it and ICMP is the
+ * reliable invocation signal on OrbStack veths). The loader reads the
+ * delta around the burst → the visibility tier (internal/shield/tier.go
+ * — full / first_packet / none). ban_stats keeps its verdict keys
+ * (STAT_*); the probe counter shares the same map at the reserved index
+ * below — one map per program, no new object on the wire. */
+#define PROBE_SEEN 3 /* ban_stats[3]: probe invocations (STAT_* < 3) */
 
 struct BansV4Key {
 	__be32 saddr;    /* network byte order */
@@ -63,7 +76,7 @@ struct {
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-	__uint(max_entries, 3);
+	__uint(max_entries, 4);
 	__type(key, __u32);
 	__type(value, __u64);
 } ban_stats SEC(".maps");
@@ -115,8 +128,19 @@ int ban_xdp(struct xdp_md *ctx)
 		 * correctness path the Go reconciler matches.) */
 		bpf_map_delete_elem(&bans_v4, &bk);
 		stat_tick(STAT_LIFT);
+		/* TR-80: a probe packet from a JUST-EXPIRED source still
+		 * counts (the loader needs the invocation, not the verdict). */
+		if (!(ip->frag_off & bpf_htons(IP_DF)))
+			stat_tick(PROBE_SEEN);
 		return XDP_PASS;
 	}
+
+	/* TR-80 visibility probe: the DF-mask marker (a NEVER-DF stack:
+	 * every ordinary stack sets DF today; the tier probe sender clears
+	 * it on every burst packet — the only !DF frames on a normal wire
+	 * are ≤64B non-TCP remnants, not this traffic). */
+	if (!(ip->frag_off & bpf_htons(IP_DF)))
+		stat_tick(PROBE_SEEN);
 
 	stat_tick(STAT_PASS);
 	return XDP_PASS;
