@@ -23,18 +23,8 @@
 #define IPPROTO_TCP 6
 #define IP_DF 0x4000 /* TR-80 visibility-probe marker bit (host order) */
 
-/* TR-80 visibility probe: the DF-mask marker tick (probe_stats[0]); the
- * ipv4 path calls it for every non-fragmented IPv4 datagram (offset 0 =
- * non-frag; a stacked mask can never carry DF). */
-static __always_inline void tc_probe_tick(struct iphdr *ip)
-{
-	if (!(ip->frag_off & bpf_htons(IP_DF))) {
-		__u32 z = PROBE_SEEN;
-		__u64 *c = bpf_map_lookup_elem(&probe_stats, &z);
-		if (c)
-			*c += 1; /* per-CPU: no atomic needed */
-	}
-}
+/* probe_stats[0] is the PROBE_SEEN index (the map below; the tick uses
+ * the literal — one per-CPU entry). */
 
 /* Shared verdict authority (TR-03's maps; §9.3): engine → kernel. */
 #define KEY_AF_INET 4
@@ -129,7 +119,18 @@ struct {
 	__type(value, __u64);
 } probe_stats SEC(".maps");
 
-#define PROBE_SEEN 0 /* probe_stats[0]: TC probe invocations */
+/* TR-80 visibility probe: the DF-mask marker tick (probe_stats[0]); the
+ * ipv4 path calls it for every non-fragmented IPv4 datagram (offset 0 =
+ * non-frag; a stacked mask can never carry DF). */
+static __always_inline void tc_probe_tick(struct iphdr *ip)
+{
+	if (!(ip->frag_off & bpf_htons(IP_DF))) {
+		__u32 z = 0; /* PROBE_SEEN */
+		__u64 *c = bpf_map_lookup_elem(&probe_stats, &z);
+		if (c)
+			*c += 1; /* per-CPU: no atomic needed */
+	}
+}
 
 static __always_inline int is_http_method(__u8 b0, __u8 b1)
 {
