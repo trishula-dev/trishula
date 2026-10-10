@@ -1,0 +1,7 @@
+{
+  "note": "TR-12 acceptance surface: one curl-vs-browser pair through the wired S5 detector renders two lab-log verdict lines with distinct ja4= and hf= values (curl t13d4907h2 \u2014 the captured real curl hello; browser t13d1517h2 \u2014 the published Chrome-141 fingerprint). Rendered by LabLogLine; pinned byte-for-byte by TestLabLogGolden.",
+  "lines": [
+    "verdict src=192.0.2.23:4411 dst=10.10.0.10:443 action=log stage=s5 detectors=ja4+headers ja4=t13d4907h2_0d8feac7bc37_7395dae3b2f3 hf=4bd6ed51a8976941 class=tool rules=bot:ja4,bot:headers score=9",
+    "verdict src=192.0.2.31:52000 dst=10.10.0.10:443 action=log stage=s5 detectors=ja4+headers ja4=t13d1517h2_8daaf6152771_dcad5a053991 hf=97365ca26d5b1915 class=browser rules=bot:ja4 score=2"
+  ]
+}
