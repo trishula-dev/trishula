@@ -71,43 +71,10 @@ func (t Tier) Enforcement() string {
 	}
 }
 
-// ProbeStats is one probe-counter snapshot: the two programs' probe_stats
-// totals summed over all CPUs. (The exported evidence types + StatsSource
-// live in probe.go/evidence.go — this is the classify-side wire value.)
-type ProbeStats struct {
-	XDP uint64
-	TC  uint64
-}
-
-// ProbeDelta carries one burst's invocation accounting (internal to the
-// classifier; the exported evidence shape is DetectResult in probe.go).
-type ProbeDelta struct {
-	sent int
-	xdp  int
-	tc   int
-}
-
-// deltaOf computes the deltas from the counter snapshots.
-func deltaOf(before, after ProbeStats, sent int) ProbeDelta {
-	return ProbeDelta{
-		sent: sent,
-		xdp:  int(after.XDP - before.XDP),
-		tc:   int(after.TC - before.TC),
-	}
-}
-
-// classify is the tier decision over the deltas (vocabulary pinned in
-// tier_test.go; the same shapes the VM e2e measures through probe_stats).
-//
-// TOTAL invocations >= N ⇒ FULL (every packet observed); anything above
-// zero but short of N ⇒ FIRST_PACKET (a subset of packets is visible —
-// the OrbStack signature: 1 TC hit for the conn's first packet, or
-// ICMP-only XDP hits); zero everywhere ⇒ NONE (refuse + fail loudly).
-func classify(d ProbeDelta) Tier {
-	// GREEN pending (the RED commit's watched work): classification
-	// lands with the loader C (probe_stats tick + read path).
-	panic("shield: classify — GREEN pending (TR-80)")
-}
+// The classification lives in probe.go (classify + deltaOf + the
+// ProbeStats/ProbeDelta snapshot types) — this file is the VOCABULARY
+// only: the type, its literals, its attribute form, its enforcement
+// semantics, and the refusal the loader surfaces on NONE.
 
 // TierRefusal is the error a NONE classification must surface (the
 // loader fails the boot loudly rather than run an invisible shield).

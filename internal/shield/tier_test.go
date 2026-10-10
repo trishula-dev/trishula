@@ -64,14 +64,16 @@ func TestTierStringContract(t *testing.T) {
 }
 
 // Detect() through synthetic seams (NO root): a burst of 5 with only the
-// first packet reaching TC classifies FIRST_PACKET, evidence intact.
+// first packet reaching TC classifies FIRST_PACKET, evidence intact. The
+// synthetic source models the kernel's MONOTONIC per-CPU counters: the
+// sender bumps them; Detect reads the delta around the burst (pre+post
+// snapshots — a constant source would show a zero delta, which is the
+// NONE case, not a classification bug).
 func TestProbeDetectSyntheticFirstPacket(t *testing.T) {
-	stats := ProbeStats{XDP: 0, TC: 1}
-	pr := NewProbe(
-		func(tierAttachArgs) (TierHandle, error) { return fakeHandle{}, nil },
-		func() (ProbeStats, error) { return stats, nil },
-	)
-	res, err := pr.Detect("k8s-pod-veth", fakeSender{})
+	var sim burstSim // sender bumps TC by 1 per burst (first-packet fast path)
+	sim.tcPerBurst = 1
+	pr := NewProbe(fakeAttach, sim.source)
+	res, err := pr.Detect("k8s-pod-veth", &sim)
 	if err != nil {
 		t.Fatalf("Detect(): %v", err)
 	}
@@ -89,26 +91,26 @@ func TestProbeDetectSyntheticFirstPacket(t *testing.T) {
 
 // Detect() through synthetic seams: a FULL burst classifies FULL.
 func TestProbeDetectSyntheticFull(t *testing.T) {
-	pr := NewProbe(
-		func(tierAttachArgs) (TierHandle, error) { return fakeHandle{}, nil },
-		func() (ProbeStats, error) { return ProbeStats{XDP: 5, TC: 5}, nil },
-	)
-	res, err := pr.Detect("tr04h", fakeSender{})
+	var sim burstSim // sender bumps BOTH counters by the burst size
+	sim.xdpPerBurst = ProbesPerBurst
+	sim.tcPerBurst = ProbesPerBurst
+	pr := NewProbe(fakeAttach, sim.source)
+	res, err := pr.Detect("tr04h", &sim)
 	if err != nil {
 		t.Fatalf("Detect(): %v", err)
 	}
 	if res.Tier != TierFull {
 		t.Fatalf("tier = %s, want full", res.Tier)
 	}
+	if res.Ev.XDPInvoked != ProbesPerBurst || res.Ev.TCInvoked != ProbesPerBurst {
+		t.Fatalf("evidence incomplete: %+v", res)
+	}
 }
 
 // A failing sender surfaces as a probe error (the boot refuses on a
 // probe that could not run — never on a guessed tier).
 func TestProbeDetectSenderError(t *testing.T) {
-	pr := NewProbe(
-		func(tierAttachArgs) (TierHandle, error) { return fakeHandle{}, nil },
-		func() (ProbeStats, error) { return ProbeStats{}, nil },
-	)
+	pr := NewProbe(fakeAttach, func() (ProbeStats, error) { return ProbeStats{}, nil })
 	if _, err := pr.Detect("x", boomSender{}); err == nil {
 		t.Fatal("sender failure must surface, got nil error")
 	}
@@ -122,8 +124,7 @@ func TestProbeWiringErrors(t *testing.T) {
 	if _, err := NewProbe(nil, nil).Detect("x", fakeSender{}); err == nil {
 		t.Fatal("nil seams must error")
 	}
-	if _, err := NewProbe(
-		func(tierAttachArgs) (TierHandle, error) { return fakeHandle{}, nil },
+	if _, err := NewProbe(fakeAttach,
 		func() (ProbeStats, error) { return ProbeStats{}, nil },
 	).Detect("", fakeSender{}); err == nil {
 		t.Fatal("empty iface must error")
@@ -169,10 +170,31 @@ func TestTierRefusal(t *testing.T) {
 
 // --- synthetic seams (kernel-free; the e2e uses the kernel source) ---
 
-type fakeHandle struct{}
+// fakeAttach is the no-op attach seam (the real one is the linux
+// loader's ProbeKernel — probe_kernel.go).
+func fakeAttach(tierAttachArgs) (TierHandle, error) { return nil, nil }
 
-func (fakeHandle) Stats() (ProbeStats, error) { return ProbeStats{}, nil }
-func (fakeHandle) Close() error               { return nil }
+// burstSim models the kernel plane for Detect: a MONOTONIC counter pair
+// the sender bumps per burst (xdpPerBurst/tcPerBurst = invocations the
+// "kernel" produces for one burst; the classifier sees the delta).
+type burstSim struct {
+	calls       int
+	xdp         uint64
+	tc          uint64
+	xdpPerBurst int
+	tcPerBurst  int
+}
+
+func (s *burstSim) Send(tierAttachArgs, int) error {
+	s.calls++
+	s.xdp += uint64(s.xdpPerBurst)
+	s.tc += uint64(s.tcPerBurst)
+	return nil
+}
+
+func (s *burstSim) source() (ProbeStats, error) {
+	return ProbeStats{XDP: uint64(s.xdp), TC: uint64(s.tc)}, nil
+}
 
 type fakeSender struct{}
 

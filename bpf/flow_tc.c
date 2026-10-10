@@ -21,6 +21,20 @@
 #define ETH_P_IP 0x0800
 #define ETH_P_IPV6 0x86DD
 #define IPPROTO_TCP 6
+#define IP_DF 0x4000 /* TR-80 visibility-probe marker bit (host order) */
+
+/* TR-80 visibility probe: the DF-mask marker tick (probe_stats[0]); the
+ * ipv4 path calls it for every non-fragmented IPv4 datagram (offset 0 =
+ * non-frag; a stacked mask can never carry DF). */
+static __always_inline void tc_probe_tick(struct iphdr *ip)
+{
+	if (!(ip->frag_off & bpf_htons(IP_DF))) {
+		__u32 z = PROBE_SEEN;
+		__u64 *c = bpf_map_lookup_elem(&probe_stats, &z);
+		if (c)
+			*c += 1; /* per-CPU: no atomic needed */
+	}
+}
 
 /* Shared verdict authority (TR-03's maps; §9.3): engine → kernel. */
 #define KEY_AF_INET 4
@@ -98,6 +112,24 @@ struct {
 	__type(key, struct flow_key);
 	__type(value, struct flow_stat);
 } flow_stats SEC(".maps");
+
+/* TR-80 visibility probe (issue #80): probe_stats[0] ticks ONCE per
+ * tc_ingress_waf invocation on a probe-marked packet — the marker is the
+ * DF-bit mask (a NEVER-DF stack: every ordinary stack sets DF today; the
+ * tier probe sender clears it on every burst packet, ICMP included — the
+ * reliable invocation signal on OrbStack veths). The loader reads the
+ * delta around the burst → the visibility tier (internal/shield/tier.go:
+ * full / first_packet / none — the OrbStack pod-veth signature is exactly
+ * ONE tc tick per connection here, the first packet; established-flow
+ * segments never re-ingress clsact). */
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, __u32);
+	__type(value, __u64);
+} probe_stats SEC(".maps");
+
+#define PROBE_SEEN 0 /* probe_stats[0]: TC probe invocations */
 
 static __always_inline int is_http_method(__u8 b0, __u8 b1)
 {
@@ -301,6 +333,7 @@ int tc_ingress_waf(struct __sk_buff *skb)
 			return TC_ACT_OK;
 		if (ip->version != 4)
 			return TC_ACT_OK;
+		tc_probe_tick(ip); /* TR-80: the TC-side probe invocation tick */
 		return on_ip4(skb, data, data_end, ip);
 	}
 	case bpf_htons(ETH_P_IPV6):
