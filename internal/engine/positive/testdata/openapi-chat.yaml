@@ -1,0 +1,38 @@
+openapi: 3.1.0
+
+info:
+  # One demo route — the smallest honest slice of §11.5, never a
+  # real-world monster schema.
+  title: trishula positive-security demo
+  version: 0.0.0
+
+paths:
+  /v1/chat/completions:
+    post:
+      operationId: chatCompletions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [model, messages]
+              properties:
+                model:
+                  type: string
+                  enum: [gpt-4o-mini, llama3-8b]
+                  maxLength: 32
+                messages:
+                  type: array
+                  items:
+                    type: object
+                    required: [role, content]
+                    properties:
+                      role:
+                        type: string
+                        enum: [system, user, assistant]
+                      content:
+                        type: string
+                        maxLength: 512
+                temperature:
+                  type: number

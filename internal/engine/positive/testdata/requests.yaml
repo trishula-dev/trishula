@@ -1,0 +1,26 @@
+cases:
+  - name: conforming-full
+    method: POST
+    path: /v1/chat/completions
+    content_type: application/json
+    body:
+      model: gpt-4o-mini
+      messages:
+        - role: system
+          content: answer briefly
+        - role: user
+          content: what is positive security?
+      temperature: 0.2
+  - name: malformed-many
+    method: POST
+    path: /v1/chat/completions
+    content_type: application/json
+    body:
+      model: 7
+      messages:
+        - role: system
+          content: answer briefly
+        - content: no role here
+        - role: wheel
+          content: x
+      temperature: hot
