@@ -1,4 +1,4 @@
-package operator_test
+package operator
 
 import (
 	"encoding/json"
@@ -19,7 +19,7 @@ import (
 // rule pack (TR-02, rules/cel/seed.yaml): exactly one rule, the §11.3
 // rate-shape example, action=log. Every bundle embeds it as the default
 // CEL plane so a minimal v0 policy is evaluable.
-const seedRuleID = "TR02-001"
+const wantSeedRuleID = "TR02-001"
 
 func fixturePolicy() v1alpha1.WAFPolicy {
 	return v1alpha1.WAFPolicy{
@@ -54,8 +54,8 @@ func TestCompileLoadRoundTrip(t *testing.T) {
 	if bundle.FormatVersion != 1 {
 		t.Fatalf("bundle format version = %d, want 1", bundle.FormatVersion)
 	}
-	if len(bundle.CELRules) != 1 || bundle.CELRules[0] != seedRuleID {
-		t.Fatalf("bundle CEL rules = %v, want [%s]", bundle.CELRules, seedRuleID)
+	if len(bundle.RulePacks) != 1 || len(bundle.RulePacks[0].Rules) != 1 || bundle.RulePacks[0].Rules[0].ID != wantSeedRuleID {
+		t.Fatalf("bundle CEL plane = %+v, want one rule with id %s", bundle.RulePacks, wantSeedRuleID)
 	}
 	if bundle.KernelValues == nil {
 		t.Fatalf("bundle.KernelValues = nil, want the empty §9.3 stub record")
@@ -86,7 +86,6 @@ func TestLoadMismatchDetectsTampering(t *testing.T) {
 		t.Fatalf("Compile: %v", err)
 	}
 	spoiled := bundle
-	spoiled.CELRules = []string{seedRuleID}
 	spoiled.RulePacks = append([]cel.RulePack(nil), bundle.RulePacks...)
 	spoiled.RulePacks[0].Rules[0].Expression = "request.method == \"GET\""
 
@@ -111,7 +110,7 @@ func TestBundleRoundTripsThroughBytes(t *testing.T) {
 	if err := json.Unmarshal(data, &back); err != nil {
 		t.Fatalf("unmarshal bundle: %v", err)
 	}
-	if !reflect.DeepEqual(bundle, &back) {
+	if !reflect.DeepEqual(bundle, back) {
 		t.Fatalf("bundle round-trip drift:\n want %+v\n got  %+v", bundle, back)
 	}
 }
