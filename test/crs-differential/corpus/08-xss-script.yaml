@@ -1,0 +1,18 @@
+# TR-07b corpus case (go-ftw shape) — source: live probe matrix
+# (probe against the committed engine.conf; see README delta table).
+name: 08-xss-script
+surface: "XSS <script>alert(1)</script> in query string"
+request:
+  method: "GET"
+  uri: "/?q=<script>alert(1)</script>"
+  version: "1.1"
+  headers:
+    Host: "trishula.local"
+expect:
+  # engine-mirror-noise pin (setup + threshold echoes; README).
+  phase1_pinned: [900000, 900110, 900990]
+  # 941010 demoted via ctl:ruleRemoveTargetById (990002); README.
+  p1_941010: true
+  phase2_seed: [941100, 941110, 941160, 941320]
+  # observed off-seed attack ids (live probe evidence, README table).
+  phase2_offseed: [941390, 942131, 942431, 942432]

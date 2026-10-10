@@ -1,0 +1,20 @@
+# TR-07b corpus case (go-ftw shape) — source: live probe matrix
+# (probe against the committed engine.conf; see README delta table).
+name: 07-sqli-post-postform
+surface: "SQLi OR tautology in urlencoded form body"
+request:
+  method: "POST"
+  uri: "/login"
+  version: "1.1"
+  headers:
+    Host: "trishula.local"
+    Content-Type: "application/x-www-form-urlencoded"
+  body: "user=admin' OR '1'='1"
+expect:
+  # engine-mirror-noise pin (setup + threshold echoes; README).
+  phase1_pinned: [900000, 900110, 900990]
+  phase2_seed: [942180, 942330, 942370, 942390, 942520, 942511]
+  # observed off-seed attack ids (live crs.Evaluator evidence, README:
+  # 942130 chains on the form-body tx; 942431 fired only under the
+  # standalone probe binary — process-level chain-state delta, README).
+  phase2_offseed: [942130, 942432]

