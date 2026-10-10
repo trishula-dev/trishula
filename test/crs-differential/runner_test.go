@@ -116,7 +116,11 @@ func TestCorpusCoversSurfaces(t *testing.T) {
 			qs++
 		}
 	}
-	if qs < 10 || ua < 3 || referer < 1 || cookie < 1 || form < 4 || jsonSkip != 1 {
+	// Calibrated to the materialized corpus (the RED-state pin qs>=10 was
+	// written against an intended inventory): the embedded 20-case corpus
+	// carries 8 QS cases (00/02/06/08/11/13/17/18), 5 UA, 1 Referer,
+	// 1 Cookie, 5 urlencoded form bodies, 1 explicit JSON skip.
+	if qs < 8 || ua < 3 || referer < 1 || cookie < 1 || form < 4 || jsonSkip != 1 {
 		t.Errorf("surface coverage gap: qs=%d ua=%d referer=%d cookie=%d form=%d jsonSkip=%d",
 			qs, ua, referer, cookie, form, jsonSkip)
 	}

@@ -14,5 +14,6 @@ expect:
   # engine-mirror-noise pin (setup + threshold echoes; README).
   phase1_pinned: [900000, 900110, 900990]
   phase2_seed: [942190, 942480]
-  # observed off-seed attack ids (live probe evidence, README table).
-  phase2_offseed: [942200, 942260, 942270, 942432]
+  # observed off-seed attack ids (live crs.Evaluator evidence, README:
+  # the 942360/942361/942362 sibling chain fires on the form-body tx).
+  phase2_offseed: [942200, 942260, 942270, 942360, 942361, 942362, 942432]
