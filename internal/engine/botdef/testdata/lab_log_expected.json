@@ -1,0 +1,7 @@
+{
+  "note": "TR-12 acceptance surface: one curl-vs-browser pair through the S5 detector renders two lab-log verdict lines with distinct ja4= and hf= values. This file is the rendered EXPECTED log — the test renders it live via Detector+LabLogLine and compares, so the log format stays pinned by CI.",
+  "lines": [
+    "verdict src=192.0.2.23:4411 dst=10.10.0.10:443 action=log stage=s5 detectors=ja4+headers ja4=t13d497h2_0d8feac7bc37_7395dae3b2f3 hf=1e2f0a4c8b6d2f19 class=tool rules=bot:ja4,bot:headers score=9",
+    "verdict src=192.0.2.31:52000 dst=10.10.0.10:443 action=log stage=s5 detectors=ja4+headers ja4=t13d1517h2_8daaf6152771_dcad5a053991 hf=6b3d9c2f4178ae50 class=browser rules=bot:ja4 score=2"
+  ]
+}

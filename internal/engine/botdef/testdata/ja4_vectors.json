@@ -1,0 +1,91 @@
+{
+  "note": "JA4 golden vectors (FoxIO JA4 spec, 2023). 'ciphers'/'extensions'/'signature_algorithms' are uint16 values as the ClientHello carries them (extensions in arbitrary order — JA4 sorts). Every row is traceable to a published raw string: foxio-spec-example and foxio-page-ciphers are the JA4.md worked example; curl-local is the JA4/JA4_r pair reported by tls.peet.ws for a real curl/OpenSSL handshake captured 2026-10-10; chrome-141 and chrome-151-dev publish their sorted extension scope + signature algorithms in refraction-networking/utls#397. The chrome-151-dev row exercises prepended ML-DSA signature algorithms.",
+  "vectors": [
+    {
+      "name": "foxio-spec-example",
+      "transport": "t",
+      "legacy_version": 771,
+      "supported_versions": [772, 771, 770, 769],
+      "sni": "example.com",
+      "alpn": ["h2", "http/1.1"],
+      "ciphers": [4865, 4866, 4867, 49195, 49199, 49196, 49200, 52393, 52392, 49171, 49172, 156, 157, 47, 53],
+      "extensions": [27, 0, 51, 16, 17513, 23, 45, 13, 5, 35, 18, 43, 65281, 11, 10, 21],
+      "signature_algorithms": [1027, 2052, 1025, 1283, 2053, 1281, 2054, 1537],
+      "expected_ja4": "t13d1516h2_8daaf6152771_e5627efa2ab1",
+      "expected_ja4_o": "t13d1516h2_acb858a92679_18f69afefd3d",
+      "expected_ja4_r": "t13d1516h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0015,0017,001b,0023,002b,002d,0033,4469,ff01_0403,0804,0401,0503,0805,0501,0806,0601",
+      "expected_ja4_ro": "t13d1516h2_1301,1302,1303,c02b,c02f,c02c,c030,cca9,cca8,c013,c014,009c,009d,002f,0035_001b,0000,0033,0010,4469,0017,002d,000d,0005,0023,0012,002b,ff01,000b,000a,0015_0403,0804,0401,0503,0805,0501,0806,0601"
+    },
+    {
+      "name": "curl-local",
+      "transport": "t",
+      "legacy_version": 771,
+      "supported_versions": [772, 771, 770, 769],
+      "sni": "tls.peet.ws",
+      "alpn": ["h2", "http/1.1"],
+      "ciphers": [4, 5, 10, 22, 47, 51, 53, 57, 60, 61, 65, 69, 103, 107, 129, 132, 136, 156, 157, 158, 159, 186, 190, 192, 196, 255, 4865, 4866, 4867, 49159, 49161, 49162, 49169, 49171, 49172, 49187, 49191, 49192, 49195, 49196, 49199, 49200, 49299, 49300, 52392, 52393, 52394, 65413, 65413],
+      "extensions": [10, 11, 13, 43, 51],
+      "signature_algorithms": [2054, 1537, 1539, 2053, 1281, 1283, 2052, 1025, 1027, 513, 515],
+      "expected_ja4": "t13d497h2_0d8feac7bc37_7395dae3b2f3",
+      "expected_ja4_r": "t13d497h2_0004,0005,000a,0016,002f,0033,0035,0039,003c,003d,0041,0045,0067,006b,0081,0084,0088,009c,009d,009e,009f,00ba,00be,00c0,00c4,00ff,1301,1302,1303,c007,c008,c009,c00a,c011,c012,c013,c014,c023,c024,c027,c028,c02b,c02c,c02f,c030,cca8,cca9,ccaa,ff85_000a,000b,000d,002b,0033_0806,0601,0603,0805,0501,0503,0804,0401,0403,0201,0203"
+    },
+    {
+      "name": "chrome-141",
+      "transport": "t",
+      "legacy_version": 771,
+      "supported_versions": [772, 771, 770, 769],
+      "sni": "www.example",
+      "alpn": ["h2", "http/1.1"],
+      "ciphers": [4865, 4866, 4867, 49195, 49199, 49196, 49200, 52393, 52392, 49171, 49172, 156, 157, 47, 53],
+      "extensions": [27, 0, 51, 16, 17513, 23, 45, 13, 5, 35, 18, 43, 51764, 65281, 11, 10, 21],
+      "signature_algorithms": [1027, 2052, 1025, 1283, 2053, 1281, 2054, 1537],
+      "expected_ja4": "t13d1517h2_8daaf6152771_dcad5a053991",
+      "expected_ja4_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,ca34,44cd,fe0d,ff01_0403,0804,0401,0503,0805,0501,0806,0601"
+    },
+    {
+      "name": "chrome-151-dev",
+      "transport": "t",
+      "legacy_version": 771,
+      "supported_versions": [772, 771, 770, 769],
+      "sni": "www.example",
+      "alpn": ["h2", "http/1.1"],
+      "ciphers": [4865, 4866, 4867, 49195, 49199, 49196, 49200, 52393, 52392, 49171, 49172, 156, 157, 47, 53],
+      "extensions": [27, 0, 51, 16, 17513, 23, 45, 13, 5, 35, 18, 43, 51764, 65281, 11, 10, 21],
+      "signature_algorithms": [2308, 2309, 2310, 1027, 2052, 1025, 1283, 2053, 1281, 2054, 1537],
+      "expected_ja4": "t13d1517h2_8daaf6152771_cb7bf5808d99",
+      "expected_ja4_r": "t13d1517h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,ca34,44cd,fe0d,ff01_0904,0905,0906,0403,0804,0401,0503,0805,0501,0806,0601"
+    },
+    {
+      "name": "chrome-149-no-trust-anchors",
+      "transport": "t",
+      "legacy_version": 771,
+      "supported_versions": [772, 771, 770, 769],
+      "sni": "www.example",
+      "alpn": ["h2", "http/1.1"],
+      "ciphers": [4865, 4866, 4867, 49195, 49199, 49196, 49200, 52393, 52392, 49171, 49172, 156, 157, 47, 53],
+      "extensions": [27, 0, 51, 16, 17513, 23, 45, 13, 5, 35, 18, 43, 17613, 65281, 11, 10],
+      "signature_algorithms": [1027, 2052, 1025, 1283, 2053, 1281, 2054, 1537],
+      "expected_ja4": "t13d1516h2_8daaf6152771_d8a2da3f94cd",
+      "expected_ja4_r": "t13d1516h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,fe0d,ff01_0403,0804,0401,0503,0805,0501,0806,0601"
+    }
+  ],
+  "alpn_cases": [
+    {
+      "note": "ALPN a-section codes per the JA4.md rule: first+last ASCII alphanumeric of the first value; single-char values double; a first/last non-alphanumeric byte replaces the code with first+last chars of the value's hex representation (curl-peet style 'h2' stays 'h2'). The 0x30 0xab 0xcd 0x31 row documents JA4.md's inconsistent last table row (first+last-of-hex gives '31'; the published table says '01') — v0 pins first+last-of-hex, which fits the other seven published rows.",
+      "cases": [
+        { "values": ["h2", "http/1.1"], "want": "h2" },
+        { "values": ["http/1.1"], "want": "h1" },
+        { "values": [], "want": "00" },
+        { "values": ["h"], "want": "hh" },
+        { "values": ["h3"], "want": "h3" },
+        { "values": [":path"], "want": "38" },
+        { "values": ["\u0030\u0130"], "want": "00" },
+        { "values": ["a\u00b0"], "want": "61" },
+        { "values": ["0\u00ab"], "want": "3b" },
+        { "values": ["a\u0020"], "want": "60" },
+        { "values": ["01\u00ab\u00cd"], "want": "3d" },
+        { "values": ["0\u00ab\u00cd1"], "want": "31" }
+      ]
+    }
+  ]
+}
