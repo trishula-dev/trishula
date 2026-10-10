@@ -14,14 +14,19 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"path/filepath"
+	"sync"
+	"time"
 
 	"github.com/trishula-dev/trishula/internal/engine/cel"
 	"github.com/trishula-dev/trishula/internal/operator"
@@ -31,27 +36,129 @@ import (
 // (lab/dx1) can produce hop-by-hop evidence.
 const hopHeader = "X-Trishula-Hop"
 
+// bundleBox holds the consulted bundle state: nil eval = transparent. The
+// reload loop swaps the eval under the lock; the handler reads it per
+// request (the box also dedups reloads to the last successfully loaded
+// bytes).
+type bundleBox struct {
+	mu     sync.RWMutex
+	eval   *operator.Eval
+	loaded []byte // last successfully loaded bundle bytes (reload dedup)
+}
+
+func (b *bundleBox) get() *operator.Eval {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.eval
+}
+
+func (b *bundleBox) same(data []byte) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return string(b.loaded) == string(data) && b.eval != nil
+}
+
+func (b *bundleBox) set(data []byte, e *operator.Eval) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.eval, b.loaded = e, data
+}
+
+// loadBundle decodes + loads bundle bytes (operator wire format v1).
+func loadBundle(data []byte) (*operator.Eval, error) {
+	var b operator.Bundle
+	if err := json.Unmarshal(data, &b); err != nil {
+		return nil, fmt.Errorf("bundle decode: %w", err)
+	}
+	e, err := operator.Load(b)
+	if err != nil {
+		return nil, fmt.Errorf("bundle load: %w (tampered, corrupt, or uncompilable — refusing)", err)
+	}
+	return e, nil
+}
+
+// startBundlePolling polls path for bundle bytes: first presence = consult
+// activated, content change = reloaded, corrupt content = keep previous and
+// log (fail conservative — the previous verdicts stand). Process-lifetime
+// loop (the lab's engine never exits on reload).
+func startBundlePolling(ctx context.Context, path string, box *bundleBox, tick time.Duration) {
+	go func() {
+		t := time.NewTicker(tick)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				data, err := os.ReadFile(path)
+				if err != nil {
+					continue // absent/flaky read: consult stays as-is
+				}
+				if box.same(data) {
+					continue
+				}
+				e, err := loadBundle(data)
+				if err != nil {
+					log.Printf("engine: bundle %s NOT reloaded: %v (previous bundle stands)", path, err)
+					continue
+				}
+				box.set(data, e)
+				log.Printf("engine: bundle loaded (%d rule packs) — consult active", len(e.EvalRulePacks()))
+			}
+		}
+	}()
+}
+
 // newEngineHandler builds the engine host: /healthz answers ok engine-local
 // (it must not reach the upstream); every other path is transparently
 // proxied to the upstream. hop, when non-empty, is echoed on responses as
 // X-Trishula-Hop. This is the v0 no-bundle shape (TR-06 contract).
 func newEngineHandler(upstream, hop string) http.Handler {
-	h, err := newEngineHandlerWithBundle(upstream, hop, nil)
-	if err != nil {
-		panic(fmt.Sprintf("engine: %v", err))
-	}
-	return h
+	return newEngineHandlerWithBox(upstream, hop, &bundleBox{})
 }
 
-// newEngineHandlerWithBundle builds the engine host with an optional
-// bundle: nil keeps the pure transparent proxy; non-nil bytes are the
-// operator's bundle JSON, loaded (operator.Load: digest-re-verified, rules
-// compile-checked) BEFORE any request is served. A bundle that fails load
-// is a constructor error (fail closed at boot — never proxy unaudited).
+// newEngineHandlerWithBundle builds the engine host with explicit bundle
+// bytes (the load-at-boot shape): nil keeps the pure transparent proxy;
+// non-nil bytes load BEFORE any request is served — a failing bundle is a
+// constructor error (fail closed at boot, never proxy unaudited).
 func newEngineHandlerWithBundle(upstream, hop string, bundle []byte) (http.Handler, error) {
+	box := &bundleBox{}
+	if bundle != nil {
+		e, err := loadBundle(bundle)
+		if err != nil {
+			return nil, fmt.Errorf("engine: %w", err)
+		}
+		box.set(bundle, e)
+	}
+	return newEngineHandlerWithBox(upstream, hop, box), nil
+}
+
+// newEngineHandlerWithBundlePath builds the engine host with a polled
+// bundle path (the hot-reload shape): consult activates on the file's
+// first valid content, reloads on change, keeps the previous bundle on a
+// corrupt reload.
+func newEngineHandlerWithBundlePath(ctx context.Context, upstream, hop, path string, tick time.Duration) (http.Handler, *bundleBox) {
+	box := &bundleBox{}
+	if data, err := os.ReadFile(path); err == nil {
+		if e, err := loadBundle(data); err == nil {
+			box.set(data, e)
+			log.Printf("engine: bundle loaded (%d rule packs) — consult active", len(e.EvalRulePacks()))
+		} else {
+			log.Printf("engine: bundle at %s rejected at boot, polling for valid content: %v", path, err)
+		}
+	} else {
+		log.Printf("engine: no bundle at %s yet — consult inactive (transparent), polling", path)
+	}
+	startBundlePolling(ctx, path, box, tick)
+	return newEngineHandlerWithBox(upstream, hop, box), box
+}
+
+// newEngineHandlerWithBox is the handler core: the TR-06 proxy plus the
+// TR-08c consult (nil eval in the box = the pure transparent proxy).
+func newEngineHandlerWithBox(upstream, hop string, box *bundleBox) http.Handler {
 	target, err := url.Parse(upstream)
 	if err != nil {
-		return nil, fmt.Errorf("engine: invalid upstream URL %q: %w", upstream, err)
+		panic(fmt.Sprintf("engine: invalid upstream URL %q: %v", upstream, err))
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	// Transparent: upstream transport failures surface as 502, never as
@@ -60,18 +167,6 @@ func newEngineHandlerWithBundle(upstream, hop string, bundle []byte) (http.Handl
 		log.Printf("engine: upstream error for %s %s: %v", r.Method, r.URL.Path, err)
 		w.WriteHeader(http.StatusBadGateway)
 	}
-	var consult *operator.Eval
-	if bundle != nil {
-		var b operator.Bundle
-		if err := json.Unmarshal(bundle, &b); err != nil {
-			return nil, fmt.Errorf("engine: bundle decode: %w", err)
-		}
-		consult, err = operator.Load(b)
-		if err != nil {
-			return nil, fmt.Errorf("engine: bundle load: %w", err)
-		}
-		log.Printf("engine: bundle loaded (%d rule packs) — consult active", len(b.RulePacks))
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -79,14 +174,13 @@ func newEngineHandlerWithBundle(upstream, hop string, bundle []byte) (http.Handl
 			_, _ = w.Write([]byte("ok"))
 			return
 		}
-		if consult != nil {
-			reqView := celRequestView(r)
-			decision, err := consult.Decide(reqView)
+		if consult := box.get(); consult != nil {
+			decision, err := consult.Decide(celRequestView(r))
 			if err != nil {
-				// Fail safe (§11.3): an evaluating bundle erroring is a
-				// decode/state corruption; with nothing to consult the
-				// fail-closed answer is deny.
+				// Fail safe (§11.3): a deciding bundle erroring is state
+				// corruption; the fail-closed answer is deny.
 				log.Printf("engine: consult error for %s %s: %v", r.Method, r.URL.Path, err)
+				w.Header().Set(hopHeader, "engine")
 				w.Header().Set("X-Trishula-Decision", "error")
 				http.Error(w, "engine consult error", http.StatusForbidden)
 				return
@@ -108,7 +202,44 @@ func newEngineHandlerWithBundle(upstream, hop string, bundle []byte) (http.Handl
 			w.Header().Set(hopHeader, hop)
 		}
 		proxy.ServeHTTP(w, r)
-	}), nil
+	})
+}
+
+// isReceiveMode reports whether argv carries the -receive-bundle mode
+// (scanned before flag.Parse: it is a run mode, not a server flag).
+func isReceiveMode(argv []string) (path string, ok bool) {
+	for i := 0; i < len(argv); i++ {
+		switch argv[i] {
+		case "-receive-bundle", "--receive-bundle":
+			if i+1 < len(argv) {
+				return argv[i+1], true
+			}
+			return "", true
+		}
+	}
+	return "", false
+}
+
+// receiveBundle writes stdin's bytes to path atomically (tmp+rename) and
+// reports the byte count — the lab's kubectl-exec delivery into the
+// running engine's polled path.
+func receiveBundle(path string, in io.Reader, out io.Writer) error {
+	data, err := io.ReadAll(in)
+	if err != nil {
+		return fmt.Errorf("receive: stdin: %w", err)
+	}
+	if len(data) == 0 {
+		return fmt.Errorf("receive: stdin was empty")
+	}
+	tmp := path + ".part"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return fmt.Errorf("receive: write %s: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("receive: rename -> %s: %w", path, err)
+	}
+	fmt.Fprintf(out, "bundle-received bytes=%d path=%s\n", len(data), filepath.Clean(path))
+	return nil
 }
 
 // celRequestView projects the inbound request into the §11.3 structured
@@ -124,10 +255,16 @@ func celRequestView(r *http.Request) (req cel.Request) {
 }
 
 func main() {
+	if path, _ := isReceiveMode(os.Args[1:]); path != "" {
+		if err := receiveBundle(path, os.Stdin, os.Stdout); err != nil {
+			log.Fatalf("engine: -receive-bundle: %v", err)
+		}
+		return
+	}
 	listen := flag.String("listen", ":8080", "listen address of the engine host")
 	upstream := flag.String("upstream", "", "upstream URL the engine transparently forwards to (required)")
 	hop := flag.String("hop", "engine", "value for the X-Trishula-Hop response header (empty omits it)")
-	bundlePath := flag.String("bundle", "", "path to the operator bundle JSON (internal/operator wire format v1); loads and consults before forwarding (TR-08c)")
+	bundlePath := flag.String("bundle", "", "path the operator's bundle JSON is loaded from (internal/operator wire format v1); first valid content activates the consult, changes hot-reload (TR-08c)")
 	flag.Parse()
 
 	if *upstream == "" {
@@ -135,17 +272,11 @@ func main() {
 		flag.Usage()
 		os.Exit(2)
 	}
-	var bundleBytes []byte
+	var handler http.Handler
 	if *bundlePath != "" {
-		data, err := os.ReadFile(*bundlePath)
-		if err != nil {
-			log.Fatalf("engine: read --bundle %s: %v", *bundlePath, err)
-		}
-		bundleBytes = data
-	}
-	handler, err := newEngineHandlerWithBundle(*upstream, *hop, bundleBytes)
-	if err != nil {
-		log.Fatal(err)
+		handler, _ = newEngineHandlerWithBundlePath(context.Background(), *upstream, *hop, *bundlePath, 200*time.Millisecond)
+	} else {
+		handler = newEngineHandler(*upstream, *hop)
 	}
 	addr := *listen
 	log.Printf("engine: listening on %s, forwarding to %s", addr, *upstream)

@@ -194,5 +194,15 @@ type Decision struct {
 	Detail string
 }
 
+// EvalRulePacks reports the loaded bundle's rule packs (the count is the
+// engine log's consult-activation evidence; the packs themselves stay
+// internal). Nil-safe: a zero count means no packs loaded.
+func (e *Eval) EvalRulePacks() []cel.RulePack {
+	if e == nil {
+		return nil
+	}
+	return e.rulePacks
+}
+
 // compile-time guard: strings stays for future decision log formatting.
 var _ = strings.TrimSpace
