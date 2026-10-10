@@ -92,16 +92,23 @@ kubectl apply -f "${DX1_DIR}/manifests/dx1-operator-svc.yaml" >/dev/null
 kubectl apply -f "${DX1_DIR}/manifests/dx1-operator.yaml" >/dev/null
 kubectl rollout status --timeout=3m -n "${ENGINE_NS}" deployment/dx1-operator >/dev/null
 
-# The rule pack (the enforced DX-LAB-001) + ensure a clean policy slate.
+# The rule pack (the enforced DX-LAB-001) + the failure-path fixture (the
+# uncompilable dx1-broken pack the broken policy's ruleSets[0] resolves to)
+# + ensure a clean policy slate.
 kubectl apply -f "${DX1_DIR}/manifests/dx1-rulepack-sqli.yaml" >/dev/null
+kubectl apply -f "${DX1_DIR}/manifests/dx1-broken-pack.yaml" >/dev/null
 kubectl -n "${ENGINE_NS}" delete wafpolicy --all >/dev/null 2>&1 || true
 kubectl -n "${ENGINE_NS}" delete configmap dx1-wafpolicy-bundle --ignore-not-found >/dev/null
 
 # Engine probes (through NGF) before the policy: both shapes pass with no
 # decision surface (the TR-06 transparent contract is the baseline).
 NODE_IP="$(kubectl get nodes -o go-template --template '{{range .items}}{{range .status.addresses}}{{if eq .type "InternalIP"}}{{.address}} {{end}}{{end}}{{end}}' | awk '{print $1}')"
-probe() { # probe - -> the benign probe's HTTP status
-  curl -s -o /dev/null -w '%{http_code}' --max-time 10 "http://${NODE_IP}:${NODE_HTTP_PORT}/v1/chat/completions?q=greeting" -H "Host: ${HOST_HDR}"
+# The baseline probes are POST — the enforced rule matches
+# request.method == "POST" (dx1-rulepack-sqli.yaml), so the timed probes
+# and the failure-path shape assert fire the rule the same way.
+probe() { # probe - -> the benign probe's HTTP status (POST, the rule's shape)
+  curl -s -o /dev/null -w '%{http_code}' --max-time 10 -X POST \
+    "http://${NODE_IP}:${NODE_HTTP_PORT}/v1/chat/completions?q=greeting" -H "Host: ${HOST_HDR}"
 }
 BASELINE="$(probe -)"
 [ "${BASELINE}" = "200" ] || { echo "baseline probe failed (${BASELINE}); fix the lab before the timed scenario" >&2; exit 4; }
@@ -110,6 +117,8 @@ log "pre-policy baseline: the benign probe passes transparently (200)"
 # --- (b) t0: kubectl apply the WAFPolicy CR ---------------------------------
 log "(b) t0 — kubectl apply dx1-wafpolicy.yaml"
 T0_NS="$(date +%s%N)"
+kubectl apply -f "${DX1_DIR}/manifests/dx1-wafpolicy.yaml" >/dev/null || \
+  fail_with "t0 apply of dx1-wafpolicy.yaml failed (rc=$?)"
 
 # --- (c) wait for compile + pickup: the operator's bundle configmap, fed
 #         to the engine, the consult ACTIVE in the engine logs --------------
@@ -124,7 +133,7 @@ kubectl -n "${BUNDLE_NS}" get configmap dx1-wafpolicy-bundle -o jsonpath='{.data
 [ -s /tmp/tr08c-bundle.json ] || fail_with "the published bundle is empty"
 # Engine pickup: feed the bundle into the running engine's polled path
 # (kubectl exec, single process, no TTY discipline games).
-kubectl -n "${ENGINE_NS}" exec deploy/dx1-engine -c engine -i -- /engine -receive-bundle /tmp/bundle.json < /tmp/tr08c-bundle.json >/tmp/tr08c-receive.log 2>&1 \
+kubectl -n "${ENGINE_NS}" exec deploy/dx1-engine -c engine -i -- /engine -receive-bundle /bundle.json < /tmp/tr08c-bundle.json >/tmp/tr08c-receive.log 2>&1 \
   || fail_with "engine -receive-bundle delivery failed: $(cat /tmp/tr08c-receive.log | tail -2)"
 CONSULT=""
 for _ in $(seq 1 100); do # wait for the hot reload (200ms poll)
@@ -139,7 +148,7 @@ SQLI_MARK="UNION%20SELECT%2F%2A"
 T1_NS=""
 EFFECT_MS=""
 for _ in $(seq 1 100); do
-  ST="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://${NODE_IP}:${NODE_HTTP_PORT}/v1/chat/completions?q=${SQLI_MARK}" -H "Host: ${HOST_HDR}")"
+  ST="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 -X POST "http://${NODE_IP}:${NODE_HTTP_PORT}/v1/chat/completions?q=${SQLI_MARK}" -H "Host: ${HOST_HDR}")"
   if [ "${ST}" = "403" ]; then
     T1_NS="$(date +%s%N)"
     EFFECT_MS=$(( (T1_NS - T0_NS) / 1000000 ))
@@ -151,7 +160,7 @@ done
 
 log "(d) effect: SQLi probe → 403"
 # The evidence headers + the benign probe still passes (defaultAction pass).
-EV="$(curl -s -i --max-time 10 "http://${NODE_IP}:${NODE_HTTP_PORT}/v1/chat/completions?q=${SQLI_MARK}" -H "Host: ${HOST_HDR}")"
+EV="$(curl -s -i --max-time 10 -X POST "http://${NODE_IP}:${NODE_HTTP_PORT}/v1/chat/completions?q=${SQLI_MARK}" -H "Host: ${HOST_HDR}")"
 printf '%s\n' "${EV}" | head -3
 printf '%s' "${EV}" | grep -qi '^x-trishula-decision: block' || fail_with "X-Trishula-Decision: block absent"
 printf '%s' "${EV}" | grep -qi '^x-trishula-rule: DX-LAB-001' || fail_with "X-Trishula-Rule: DX-LAB-001 absent"
@@ -181,7 +190,7 @@ log "operator logged the compile error"
 # No effect: the previously loaded bundle still decides the traffic shape
 # (the good policy was deleted, the broken one ships NOTHING).
 ST_BENIGN="$(probe -)"
-ST_SQLI="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "http://${NODE_IP}:${NODE_HTTP_PORT}/v1/chat/completions?q=${SQLI_MARK}" -H "Host: ${HOST_HDR}")"
+ST_SQLI="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 -X POST "http://${NODE_IP}:${NODE_HTTP_PORT}/v1/chat/completions?q=${SQLI_MARK}" -H "Host: ${HOST_HDR}")"
 [ "${ST_BENIGN}" = "200" ] || fail_with "fail-closed broken: the benign request changed shape (${ST_BENIGN})"
 [ "${ST_SQLI}" = "403" ] || fail_with "fail-closed broken: the SQLi probe changed shape (${ST_SQLI})"
 # The engine (and operator) processes are still alive (no crash).

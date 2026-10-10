@@ -1,0 +1,7 @@
+# TR-08c DX1 lab — operator image from the cmd/operator watch-loop leaf,
+# reproducible from the repo alone (scratch + the Go binary; the ko build
+# is the registry-direct alternative).
+FROM scratch
+COPY operator /operator
+EXPOSE 1936
+ENTRYPOINT ["/operator"]

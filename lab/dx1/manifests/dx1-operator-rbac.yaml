@@ -20,7 +20,7 @@ metadata:
 rules:
   - apiGroups: ["trishula.security"]
     resources: ["wafpolicies"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list", "watch", "patch"]
   - apiGroups: ["trishula.security"]
     resources: ["wafpolicies/status"]
     verbs: ["get", "patch"]

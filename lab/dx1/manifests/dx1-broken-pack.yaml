@@ -1,0 +1,32 @@
+---
+# TR-08c (issue #76, M9) — the FAILURE-path fixture rule pack: the CEL rule
+# named by the broken policy's ruleSets[0].name. Parses as YAML but does NOT
+# validate in the engine's CEL env: `request.body` carries no such key in the
+# §11.3 structured request view (method/path/query/rate_windows only — the
+# §11.3 body-view slice rides a later TR), so the rule cannot be compiled or
+# probe-evaluated ("no such key: body"). The operator's reconcile-side gate
+# (internal/operator validatePackRules) must REJECT the policy: the log line
+# `COMPILE FAILED dx1/broken-rule-gate` is the evidence, NO bundle is
+# published, and traffic keeps its previous shape (fail closed = the policy
+# never loads — never a crash, never silent under-enforcement).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dx1-broken
+  namespace: dx1
+  labels:
+    app.kubernetes.io/part-of: trishula-dx1-lab
+    app.kubernetes.io/trishula-fixture: uncompilable
+data:
+  pack.yaml: |
+    rules:
+      - id: DX-LAB-BROKEN
+        name: broken-body-size-rule
+        description: >-
+          Fixture: parses as YAML but does NOT compile in the engine's CEL
+          env (size(request.body.messages) — no body view in the §11.3
+          structured request yet; probe eval errors "no such key: body").
+          Reconcile's compile gate must reject the policy.
+        action: enforce
+        expression: |
+          size(request.body.messages) > 128

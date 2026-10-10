@@ -20,6 +20,7 @@ spec:
       labels:
         app.kubernetes.io/name: trishula-operator
     spec:
+      serviceAccountName: dx1-operator
       containers:
         - name: operator
           image: trishula-operator:dx1
