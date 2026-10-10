@@ -52,9 +52,10 @@ import (
 // bundle.json); the engine's --bundle pickup reads it.
 const bundleCMName = "dx1-wafpolicy-bundle"
 
-// serveHealthz answers engine-local readiness on 127.0.0.1:1936 (the pod's
-// probe port; the process never serves anything else on it). Runs for the
-// process lifetime; the reconcile loop's health is the pod being Ready.
+// serveHealthz answers readiness on :1936 (the pod's probe port; the
+// kubelet probes the pod IP, so the listener is not loopback-only). Runs
+// for the process lifetime; the reconcile loop's health is the pod being
+// Ready.
 func serveHealthz() {
 	go func() {
 		mux := http.NewServeMux()
@@ -62,7 +63,7 @@ func serveHealthz() {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			_, _ = w.Write([]byte("ok"))
 		})
-		if err := http.ListenAndServe("127.0.0.1:1936", mux); err != nil {
+		if err := http.ListenAndServe(":1936", mux); err != nil {
 			log.Printf("operator: healthz endpoint: %v", err)
 		}
 	}()

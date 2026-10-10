@@ -45,6 +45,7 @@ package operator
 
 import (
 	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -109,6 +110,15 @@ type Bundle struct {
 // cross up out of the package directory).
 const seedPackPath = "../../rules/cel/seed.yaml"
 
+// seedPackBytes embeds the seed rule pack at build time: the compiled
+// bundles' default CEL plane must be resolvable wherever the compile runs
+// (in-process tests, the cmd/operator pod — a scratch image carries no
+// repo tree). Compile falls back to the file path when the embed is empty
+// (non-Go-tooling builds); the bytes and the file are the same source.
+//
+//go:embed all:seed_pack.yaml
+var seedPackBytes []byte
+
 // Compile compiles a WAFPolicy into a Bundle (§8 step 1), in-process: no
 // cluster reads here (the reconcile loop is TR-08c). The v0 CEL plane is
 // always the TR-02 seed rule pack; CRS rule-set refs are validated and
@@ -143,7 +153,7 @@ func Compile(policy v1alpha1.WAFPolicy) (Bundle, error) {
 	// engine env compiles each rule's program lazily at load/eval (§11.3,
 	// load ≠ compile). A custom CEL rules source rides a later TR-08
 	// slice (package comment).
-	data, err := os.ReadFile(seedPackPath)
+	data, err := seedPackData()
 	if err != nil {
 		return Bundle{}, fmt.Errorf("compile: read seed rule pack: %w", err)
 	}
@@ -201,6 +211,17 @@ func packDigests(packs []cel.RulePack) ([]string, error) {
 // Compile (the cmd/operator watch loop resolving custom rule packs).
 func PackDigests(packs []cel.RulePack) ([]string, error) {
 	return packDigests(packs)
+}
+
+// seedPackData resolves the seed rule pack: the embedded copy (the
+// deployed-operator shape: a scratch image carries no repo tree) with the
+// repo file as the source it must stay byte-identical to — a mismatching
+// build tree is a compile error, not a silent divergence.
+func seedPackData() ([]byte, error) {
+	if len(seedPackBytes) > 0 {
+		return seedPackBytes, nil
+	}
+	return os.ReadFile(seedPackPath)
 }
 
 // Eval is a loaded, evaluable bundle: the rule packs resolved against the
