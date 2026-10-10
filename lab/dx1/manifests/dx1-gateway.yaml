@@ -1,0 +1,23 @@
+---
+# Gateway provisioned by the NGF helm release (dx1 in the nginx-gateway
+# ns); this manifest is kept for the committed lab record and for clusters
+# where the operator provisions it separately. The release sets
+# service.type=NodePort with a pinned nodePort 31437 for listener :80.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: edge-gateway
+  namespace: nginx-gateway
+spec:
+  gatewayClassName: nginx
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+      hostname: "*.dx1.example.com"
+      allowedRoutes:
+        kinds:
+          - group: gateway.networking.k8s.io
+            kind: HTTPRoute
+        namespaces:
+          from: All

@@ -1,0 +1,63 @@
+---
+# The engine runs the cmd/engine transparent reverse proxy (TR-06a) built
+# into the trishula-engine:dx1 image by lab/dx1/setup.sh. The gateway
+# steers to its Service as a plain Gateway API backend (PRD §10.2
+# steering term); the engine forwards transparently to the echo pool.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dx1-engine
+  namespace: dx1
+  labels:
+    app.kubernetes.io/name: trishula-engine
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: trishula-engine
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: trishula-engine
+    spec:
+      containers:
+        - name: engine
+          image: trishula-engine:dx1
+          imagePullPolicy: IfNotPresent
+          args:
+            - --listen
+            - :8080
+            - --upstream
+            - http://dx1-echo.dx1.svc.cluster.local:8080
+            - --hop
+            - engine
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dx1-engine
+  namespace: dx1
+  labels:
+    app.kubernetes.io/name: trishula-engine
+spec:
+  selector:
+    app.kubernetes.io/name: trishula-engine
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
