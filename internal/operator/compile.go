@@ -194,6 +194,15 @@ func packDigests(packs []cel.RulePack) ([]string, error) {
 	return digests, nil
 }
 
+// PackDigests digests each rule pack's canonical JSON encoding
+// ("sha256-<hex>" per pack, in order). The canonical-JSON encoding and the
+// digest format are exactly Compile/Load's internal rule (packDigests);
+// exported for callers that splice packs into a compiled bundle outside
+// Compile (the cmd/operator watch loop resolving custom rule packs).
+func PackDigests(packs []cel.RulePack) ([]string, error) {
+	return packDigests(packs)
+}
+
 // Eval is a loaded, evaluable bundle: the rule packs resolved against the
 // engine's TR-02-style CEL env (load ≠ compile — a pack whose expression
 // does not compile fails HERE, never mid-request), kernel values staged

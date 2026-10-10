@@ -15,6 +15,7 @@ import (
 
 	"github.com/trishula-dev/trishula/api/v1alpha1"
 	"github.com/trishula-dev/trishula/internal/engine/cel"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // srcMap is the v0 RulePackSource shape: rule-set refs resolve to CEL rule
@@ -57,6 +58,7 @@ rules:
 // rule pack from the policy's namespace).
 func fixturePolicyWithRef() v1alpha1.WAFPolicy {
 	return v1alpha1.WAFPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "chat-completions-gate", Namespace: "dx1"},
 		Spec: v1alpha1.WAFPolicySpec{
 			DefaultAction: v1alpha1.DefaultActionBlock,
 			ModeFlags:     v1alpha1.PolicyModeFlags{Inline: true, Shadow: true},
@@ -117,8 +119,8 @@ func TestReconcileCompilesPolicyWithCustomPack(t *testing.T) {
 	if d.RuleID != "TR08C-001" {
 		t.Errorf("decided rule = %q, want TR08C-001", d.RuleID)
 	}
-	if d.Action != cel.ActionEnforce {
-		t.Errorf("decided action = %q, want enforce", d.Action)
+	if got := d.RuleAction; got != "enforce" {
+		t.Errorf("decided rule action = %q, want enforce", got)
 	}
 	if d2, err := ev.Decide(cel.Request{Method: "POST", Path: "/v1/chat/completions", Query: "q=greeting"}); err != nil || d2.RuleID != "" {
 		t.Errorf("benign probe must stay a clean no-match, got %+v err %v", d2, err)

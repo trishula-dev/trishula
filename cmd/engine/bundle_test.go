@@ -47,7 +47,9 @@ func compileLabBundle(t *testing.T) []byte {
 	}
 	policy := v1alpha1.WAFPolicy{
 		Spec: v1alpha1.WAFPolicySpec{
-			DefaultAction: v1alpha1.DefaultActionBlock,
+			// The lab CR's default (dx1-wafpolicy.yaml): undecided requests
+			// pass; the enforced SQLi rule is the blocking leg.
+			DefaultAction: v1alpha1.DefaultActionPass,
 			ModeFlags:     v1alpha1.PolicyModeFlags{Inline: true, Shadow: true},
 		},
 	}
@@ -100,8 +102,8 @@ func TestEngineBundleBlocksSQLi(t *testing.T) {
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("sqli probe status = %d, want 403", resp.StatusCode)
 	}
-	if got := resp.Header.Get("X-Trishula-Decision"); got != "enforce" {
-		t.Errorf("X-Trishula-Decision = %q, want enforce", got)
+	if got := resp.Header.Get("X-Trishula-Decision"); got != "block" {
+		t.Errorf("X-Trishula-Decision = %q, want block (the enforced match)", got)
 	}
 	if got := resp.Header.Get("X-Trishula-Rule"); got != "TR08C-001" {
 		t.Errorf("X-Trishula-Rule = %q, want TR08C-001", got)

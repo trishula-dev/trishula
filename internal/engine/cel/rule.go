@@ -22,6 +22,7 @@ import (
 type Request struct {
 	Method      string                `yaml:"method" json:"method"`
 	Path        string                `yaml:"path" json:"path"`
+	Query       string                `yaml:"query" json:"query"`
 	RateWindows map[string]RateWindow `yaml:"rate_windows" json:"rate_windows"`
 }
 
@@ -118,6 +119,7 @@ func (r *Rule) activation(req Request) map[string]any {
 		"request": map[string]any{
 			"method":       req.Method,
 			"path":         req.Path,
+			"query":        req.Query,
 			"rate_windows": req.RateWindows,
 		},
 		"path": req.Path,
