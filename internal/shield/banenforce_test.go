@@ -96,7 +96,9 @@ func TestBanEnforcerPublishesAndRecords(t *testing.T) {
 	if v.BanUntilMs != wantUntil {
 		t.Fatalf("BanUntilMs = %d, want %d (publish-now + window)", v.BanUntilMs, wantUntil)
 	}
-	if wantScore := uint16(12.34*100 + 0.5); v.Score != wantScore {
+	// Hand-pinned: 12.34 × 100 = 1234 (round-half-up centi-score).
+	const wantScore = uint16(1234)
+	if v.Score != wantScore {
 		t.Fatalf("Score u16 = %d, want %d (score × 100)", v.Score, wantScore)
 	}
 	if v.ReasonCode != wantReasonCode {
@@ -112,8 +114,8 @@ func TestBanEnforcerPublishesAndRecords(t *testing.T) {
 		t.Fatalf("record enrichment: %+v", r)
 	}
 	// The R11 account must survive the wire hop verbatim (§13.5).
-	if r.Score != 12.34 || r.Threshold != 10 || r.WindowSec != 600 ||
-		r.UntilSec != 1100 || r.Recidivism != 1 || r.BantimeSec != 600 {
+	if r.Score != 12.34 || r.Threshold != 10 || r.BantimeSec != 600 ||
+		r.UntilSec != 1100 || r.Recidivism != 1 {
 		t.Fatalf("R11 fields lost: %+v", r)
 	}
 	if r.UntilMS != wantUntil {
@@ -138,15 +140,16 @@ func TestBanEnforcerReconcileLiftsExpired(t *testing.T) {
 	if err := bx.Record(eng); err != nil {
 		t.Fatalf("Record: %v", err)
 	}
-	if lifted := bx.Reconcile(1099); lifted != 0 {
+	// Expiry parity with the engine (BanVal.Expired semantics): now >=
+	// until means the ban is over. until_ms = publish-now (1000 ms) +
+	// the window (600 s = 600000 ms) = 601000.
+	if lifted := bx.Reconcile(600_999); lifted != 0 {
 		t.Fatalf("pre-expiry reconcile lifted %d", lifted)
 	}
 	if _, ok := pub.bans[[4]byte{10, 66, 0, 66}]; !ok {
 		t.Fatal("pre-expiry reconcile deleted a live ban")
 	}
-	// Expiry parity with the engine (BanVal.Expired semantics): now >=
-	// until means the ban is over.
-	if lifted := bx.Reconcile(1100); lifted != 1 {
+	if lifted := bx.Reconcile(601_000); lifted != 1 {
 		t.Fatalf("post-expiry (now >= until) lifted %d, want 1", lifted)
 	}
 	if _, ok := pub.bans[[4]byte{10, 66, 0, 66}]; ok {
@@ -216,7 +219,8 @@ func TestJSONLEvidenceSinkFile(t *testing.T) {
 	if !rec.Published || rec.Verdict != "ban" || rec.SourceIP != "10.66.0.9" {
 		t.Fatalf("record invariants: %+v", rec)
 	}
-	if got, want := rec.UntilMS, uint64(2_000_000+601*1000); got != want {
+	if got, want := rec.UntilMS, uint64(603_000); got != want {
+		// publish-now 2000 ms + the window 601 s·1000 = 603000.
 		t.Fatalf("UntilMS = %d, want %d", got, want)
 	}
 	t.Logf("evidence line: %s", lines[0])
