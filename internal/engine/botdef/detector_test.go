@@ -175,7 +175,7 @@ func TestLabPairDistinctVerdicts(t *testing.T) {
 	if curlJA4 == browserJA4 {
 		t.Fatalf("acceptance violated: curl and browser carry the SAME ja4 (%q)", curlJA4)
 	}
-	if curlJA4 != "t13d497h2_0d8feac7bc37_7395dae3b2f3" {
+	if curlJA4 != "t13d4907h2_0d8feac7bc37_7395dae3b2f3" {
 		t.Errorf("curl tx ja4 = %q, want the golden curl vector", curlJA4)
 	}
 	if browserJA4 != "t13d1517h2_8daaf6152771_dcad5a053991" {
@@ -223,12 +223,18 @@ func containsRule(rules []ladder.RuleID, id string) bool {
 }
 
 // TestLabLogGolden pins the rendered lab-log FORMAT against the expected
-// pair (testdata/lab_log_expected.json): same shape, and the field order
-// is byte-stable. The values (ports, src IPs, ja4, hf) come from the live
-// fixtures — the golden carries the same measured values, so the file is
-// the diffable expected artifact for the lab run.
+// pair (testdata/lab_log_expected.json): the fixture txes walk the wired
+// S5 detector (the lab run), then the rendered lines compare byte-for-byte
+// against the expected artifact — same field order, same values.
 func TestLabLogGolden(t *testing.T) {
 	curlTx, browserTx := labPair(t)
+	d := NewDetector()
+	e := ladder.NewEngine()
+	if err := e.Use(ladder.StageBots, d); err != nil {
+		t.Fatalf("Use(S5): %v", err)
+	}
+	e.EvaluateTx(curlTx)
+	e.EvaluateTx(browserTx)
 	curlLog, browserLog := LabLogLine(curlTx), LabLogLine(browserTx)
 
 	f, err := os.Open("testdata/lab_log_expected.json")
