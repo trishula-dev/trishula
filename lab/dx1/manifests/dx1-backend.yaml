@@ -1,0 +1,45 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dx1-echo
+  namespace: dx1
+  labels:
+    app.kubernetes.io/name: dx1-echo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dx1-echo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dx1-echo
+    spec:
+      containers:
+        - name: echo
+          image: ghcr.io/mendhak/http-https-echo:42
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: ECHO_INCLUDE_HEADERS
+              value: "true"
+            - name: ECHO_LOG_BODY
+              value: "true"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dx1-echo
+  namespace: dx1
+  labels:
+    app.kubernetes.io/name: dx1-echo
+spec:
+  selector:
+    app.kubernetes.io/name: dx1-echo
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

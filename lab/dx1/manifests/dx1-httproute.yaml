@@ -1,0 +1,51 @@
+---
+# Host-based steering on the edge-gateway:
+# - direct-echo.dx1.example.com -> the echo pool directly (demonstrates the
+#   gateway steering to an ordinary backend),
+# - everything else under *.dx1.example.com -> the engine Service, which
+#   transparently forwards to the same echo pool (PRD §10.3 variant A:
+#   gateway -> engine -> pool).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: dx1-direct-echo
+  namespace: dx1
+spec:
+  parentRefs:
+    - name: edge-gateway
+      namespace: nginx-gateway
+      kind: Gateway
+  hostnames:
+    - "direct-echo.dx1.example.com"
+  rules:
+    - backendRefs:
+        - group: ""
+          kind: Service
+          name: dx1-echo
+          port: 8080
+          weight: 100
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: dx1-engine-route
+  namespace: dx1
+spec:
+  parentRefs:
+    - name: edge-gateway
+      namespace: nginx-gateway
+      kind: Gateway
+  hostnames:
+    - "dx1-routed.dx1.example.com"
+    - "engine.dx1.example.com"
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: dx1-engine
+          port: 8080
+          weight: 100

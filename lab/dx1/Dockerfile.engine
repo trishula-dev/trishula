@@ -1,0 +1,8 @@
+# TR-06 DX1 lab — engine image from the cmd/engine proxy leaf (TR-06a),
+# reproducible from the repo alone: Go build of cmd/engine into a scratch
+# image (GOARCH must match the node; a ko build is the registry-direct
+# alternative).
+FROM scratch
+COPY engine /engine
+EXPOSE 8080
+ENTRYPOINT ["/engine"]
