@@ -92,6 +92,25 @@ func TestEmitCorrelatesThreeSignals(t *testing.T) {
 	if corr.RequestID != rid {
 		t.Errorf("Correlation.RequestID = %q, want %q", corr.RequestID, rid)
 	}
+	if corr.TraceID == "" {
+		t.Errorf("Correlation.TraceID empty")
+	}
+
+	// Signals must exist BEFORE the shutdown-flush (span End + log Emit are
+	// synchronous through simple processors); the shutdown-time metric
+	// collect is the one async point.
+	pre := p.Exporter().Snapshot()
+	if len(pre.Spans) != 1 {
+		t.Fatalf("pre-shutdown spans = %d, want 1 (synchronous span End)", len(pre.Spans))
+	}
+	if len(pre.Logs) != 1 {
+		t.Fatalf("pre-shutdown logs = %d, want 1 (synchronous log Emit)", len(pre.Logs))
+	}
+
+	// Shutdown flushes the metric reader (the SDK's one collection point).
+	if err := p.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error: %v", err)
+	}
 
 	snap := p.Exporter().Snapshot()
 
@@ -111,6 +130,9 @@ func TestEmitCorrelatesThreeSignals(t *testing.T) {
 	}
 	if span.SpanID == "" {
 		t.Errorf("span SpanID empty")
+	}
+	if span.TraceID != corr.TraceID {
+		t.Errorf("span TraceID = %q, want Correlation's %q", span.TraceID, corr.TraceID)
 	}
 
 	// (b) the verdict metric increment: one datapoint for this request with
@@ -134,6 +156,9 @@ func TestEmitCorrelatesThreeSignals(t *testing.T) {
 	if got := kvGet(dp.Attributes, AttrVerdictRoute); got != "/api/login" {
 		t.Errorf("metric %s = %q, want /api/login", AttrVerdictRoute, got)
 	}
+	if dp.TraceID != span.TraceID {
+		t.Errorf("metric TraceID = %q, want span's %q", dp.TraceID, span.TraceID)
+	}
 
 	// (c) the log record with trace_id + request id.
 	if len(snap.Logs) != 1 {
@@ -152,8 +177,8 @@ func TestEmitCorrelatesThreeSignals(t *testing.T) {
 	if got := kvGet(rec.Attributes, AttrRequestID); got != rid {
 		t.Errorf("log %s = %q, want %q", AttrRequestID, got, rid)
 	}
-	if rec.SeverityText != "Info" {
-		t.Errorf("log severity = %q, want Info", rec.SeverityText)
+	if rec.SeverityText != "INFO" {
+		t.Errorf("log severity = %q, want INFO", rec.SeverityText)
 	}
 	if !strings.Contains(rec.Body, rid) {
 		t.Errorf("log body %q does not mention the request id", rec.Body)
@@ -235,7 +260,7 @@ func TestExportAfterShutdownErrors(t *testing.T) {
 	if err := e.Shutdown(context.Background()); err != nil {
 		t.Fatalf("exporter Shutdown() error: %v", err)
 	}
-	if err := e.export(context.Background(), nil); !errors.Is(err, ErrExporterClosed) {
+	if err := e.Export(context.Background(), nil); !errors.Is(err, ErrExporterClosed) {
 		t.Errorf("Export() after Shutdown = %v, want ErrExporterClosed", err)
 	}
 }
@@ -263,6 +288,11 @@ func TestMultipleRequestsCorrelateByID(t *testing.T) {
 		if corr.TraceID == "" {
 			t.Errorf("Emit(%q) returned empty TraceID", rid)
 		}
+	}
+
+	// Shutdown flushes the metric reader (all requests' datapoints).
+	if err := p.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error: %v", err)
 	}
 
 	snap := p.Exporter().Snapshot()

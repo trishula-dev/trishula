@@ -10,26 +10,26 @@ import (
 	"github.com/trishula-dev/trishula/internal/engine/ladder"
 )
 
-// fakeEmitter records Emit calls the middleware passed through: the adapter
+// fakeEmitter records emit calls the middleware passed through: the adapter
 // must surface engine output verbatim (its job is correlation, not verdicts).
 type fakeEmitter struct {
 	calls []string
 	err   error
 }
 
-func (f *fakeEmitter) Emit(ctx context.Context, tx *ingest.TxContext, v *ladder.Verdict) error {
+func (f *fakeEmitter) verdict(ctx context.Context, tx *ingest.TxContext) (*ladder.Verdict, error) {
 	if f.err != nil {
-		return f.err
+		return nil, f.err
 	}
 	f.calls = append(f.calls, RequestIDFromContextOrGenerate(ctx))
-	return nil
+	return &ladder.Verdict{Action: ladder.ActionLog, Phase: ladder.PhaseRequestHeaders}, nil
 }
 
 // TestMiddlewareGeneratesAndAttachesRequestID: no client header — the
 // middleware generates the id, attaches it downstream, and emits the verdict.
 func TestMiddlewareGeneratesAndAttachesRequestID(t *testing.T) {
 	fe := &fakeEmitter{}
-	h := Middleware(nil, fe)
+	h := Middleware(nil, fe.verdict)
 	if h == nil {
 		t.Fatal("Middleware returned nil handler")
 	}
@@ -48,7 +48,7 @@ func TestMiddlewareGeneratesAndAttachesRequestID(t *testing.T) {
 	// With a working pipeline, the emitter sees the generated id.
 	fe2 := &fakeEmitter{}
 	p := newTestPipeline(t)
-	h2 := Middleware(p, fe2)
+	h2 := Middleware(p, fe2.verdict)
 	rec2 := newRecorder()
 	h2.ServeHTTP(rec2, newRequest(t, http.MethodGet, "/healthz"))
 	if len(fe2.calls) != 1 {
@@ -64,13 +64,23 @@ func TestMiddlewareGeneratesAndAttachesRequestID(t *testing.T) {
 		t.Errorf("generated request id = %q (%d chars), want 32 hex chars", rid, len(rid))
 	}
 
-	// The emitted triad carries that id end-to-end.
+	// The emitted triad carries that id end-to-end. The middleware adds
+	// its own request span (trishula.request), so 2 spans total; the
+	// triad's verdict span is the one carrying the verdict attrs. The
+	// shutdown collect is the metric flush point.
+	if err := p.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown() error: %v", err)
+	}
 	snap := p.Exporter().Snapshot()
-	if len(snap.Spans) != 1 || len(snap.Metrics) != 1 || len(snap.Logs) != 1 {
-		t.Fatalf("middleware spans/metrics/logs = %d/%d/%d, want 1/1/1",
+	if len(snap.Spans) != 2 || len(snap.Metrics) != 1 || len(snap.Logs) != 1 {
+		t.Fatalf("middleware spans/metrics/logs = %d/%d/%d, want 2/1/1",
 			len(snap.Spans), len(snap.Metrics), len(snap.Logs))
 	}
-	if got := kvGet(snap.Spans[0].Attributes, AttrRequestID); got != rid {
+	verdictSpan := snap.Spans[0]
+	if verdictSpan.Name != SpanName {
+		verdictSpan = snap.Spans[1]
+	}
+	if got := kvGet(verdictSpan.Attributes, AttrRequestID); got != rid {
 		t.Errorf("span %s = %q, want the middleware-generated %q", AttrRequestID, got, rid)
 	}
 }
@@ -81,7 +91,8 @@ func TestMiddlewareGeneratesAndAttachesRequestID(t *testing.T) {
 func TestMiddlewareHonorsClientRequestID(t *testing.T) {
 	p := newTestPipeline(t)
 	fe := &fakeEmitter{}
-	h := Middleware(p, fe)
+	_ = fe
+	h := Middleware(p, nil)
 
 	const rid = "client-supplied-TRace-0001"
 	req := newRequest(t, http.MethodPost, "/api/transfer")
@@ -96,29 +107,31 @@ func TestMiddlewareHonorsClientRequestID(t *testing.T) {
 		defer close(done)
 	}()
 
-	// The adapter contract: the engine callback receives the ctx carrying
-	// the adopted id. fakeEmitter records the id it sees.
+	// The adapter contract: the verdict lands inside the span the
+	// middleware itself opened (one span, one triad per request). The
+	// serveWithEmit seam with nil emitForTest drives pipeline.Emit under
+	// the request span.
 	rec := newRecorder()
 	handler := h.(*wireHandler)
-	handler.emitForTest = func(ctx context.Context, tx *ingest.TxContext, v *ladder.Verdict) error {
-		return fe.Emit(ctx, tx, v)
-	}
 	handler.serveWithEmit(rec, req, tx, v)
-	<-done
 
 	if got := rec.Header().Get(HeaderRequestID); got != rid {
 		t.Errorf("response %s = %q, want echoed %q", HeaderRequestID, got, rid)
 	}
-	if len(fe.calls) != 1 || fe.calls[0] != rid {
-		t.Fatalf("emitter saw %v, want exactly the client id %q", fe.calls, rid)
+	if len(fe.calls) != 0 {
+		t.Fatalf("engine callback should not fire on the emitForTest seam; saw %v", fe.calls)
 	}
 
 	snap := p.Exporter().Snapshot()
-	if len(snap.Spans) != 1 {
-		t.Fatalf("spans = %d, want 1 (client id emit)", len(snap.Spans))
+	if len(snap.Spans) != 2 {
+		t.Fatalf("spans = %d, want 2 (request + verdict spans, one trace)", len(snap.Spans))
 	}
-	if got := kvGet(snap.Spans[0].Attributes, AttrRequestID); got != rid {
-		t.Errorf("span %s = %q, want client id %q", AttrRequestID, got, rid)
+	if snap.Spans[0].TraceID != snap.Spans[1].TraceID {
+		t.Errorf("request/verdict spans on different traces: %q vs %q",
+			snap.Spans[0].TraceID, snap.Spans[1].TraceID)
+	}
+	if got := kvGet(snap.Spans[1].Attributes, AttrRequestID); got != rid {
+		t.Errorf("verdict span %s = %q, want client id %q", AttrRequestID, got, rid)
 	}
 	logs := snap.Logs
 	if len(logs) != 1 {
@@ -161,7 +174,7 @@ func TestWireErrorsAreSentinel(t *testing.T) {
 
 func TestMiddlewareNilPipelineOK(t *testing.T) {
 	fe := &fakeEmitter{}
-	h := Middleware(nil, fe)
+	h := Middleware(nil, fe.verdict)
 	rec := newRecorder()
 	h.ServeHTTP(rec, newRequest(t, http.MethodGet, "/x"))
 	if rec.Code != http.StatusOK {
@@ -202,7 +215,11 @@ func TestErrNoRequestIDSentinel(t *testing.T) {
 	}
 }
 
+// contextChanged wraps an error (test helper for errors.Is chains).
 type contextChanged struct{ error }
+
+// Unwrap exposes the wrapped error (the errors.Is contract).
+func (c contextChanged) Unwrap() error { return c.error }
 
 var errErrNoRequestID = ErrNoRequestID
 
