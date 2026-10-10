@@ -1,0 +1,140 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: wafpolicies.trishula.security
+spec:
+  group: trishula.security
+  names:
+    kind: WAFPolicy
+    listKind: WAFPolicyList
+    plural: wafpolicies
+    singular: wafpolicy
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.defaultAction
+      name: Default Action
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          WAFPolicy is the v0 CRD binding rule sets, the default action and the
+          mode flags to a route class (PRD §16.2). Route selectors and failure
+          semantics arrive with later TR-08 slices.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: WAFPolicySpec is the desired policy state for a route class.
+            properties:
+              defaultAction:
+                allOf:
+                - enum:
+                  - block
+                  - challenge
+                  - log
+                  - pass
+                - enum:
+                  - block
+                  - challenge
+                  - log
+                  - pass
+                description: DefaultAction is the verdict applied when no rule set
+                  fires.
+                type: string
+              modeFlags:
+                description: ModeFlags select the enforcement planes (inline, shield,
+                  shadow).
+                properties:
+                  inline:
+                    description: Inline steers the route class through the engine
+                      deep-inspection path.
+                    type: boolean
+                  shadow:
+                    description: Shadow evaluates verdict-only; no enforcement.
+                    type: boolean
+                  shield:
+                    description: |-
+                      Shield attaches the route class to the kernel fast path (ban/verdict
+                      caches).
+                    type: boolean
+                type: object
+              ruleSets:
+                description: RuleSets lists the rule sets the policy compiles into
+                  its bundle.
+                items:
+                  description: |-
+                    RuleSetRef binds one rule set into the policy. The compile resolves the
+                    ref against the cluster's RuleSet state (compile→load round trip lands
+                    with TR-08b).
+                  properties:
+                    name:
+                      description: Name is the referenced rule set (bundle name in
+                        the CR namespace).
+                      maxLength: 253
+                      minLength: 1
+                      type: string
+                    source:
+                      description: Source declares the rule set's upstream.
+                      properties:
+                        crsVersion:
+                          description: CRSVersion pins the OWASP CRS train the bundle
+                            resolves against.
+                          maxLength: 32
+                          minLength: 1
+                          type: string
+                        profile:
+                          allOf:
+                          - enum:
+                            - PL1
+                            - PL2
+                            - PL3
+                          - enum:
+                            - PL1
+                            - PL2
+                            - PL3
+                          description: Profile is the CRS paranoia level.
+                          type: string
+                      required:
+                      - crsVersion
+                      - profile
+                      type: object
+                  required:
+                  - name
+                  - source
+                  type: object
+                maxItems: 16
+                type: array
+            required:
+            - defaultAction
+            - modeFlags
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
