@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/trishula-dev/trishula/internal/engine/cel"
 	"github.com/trishula-dev/trishula/internal/engine/ingest"
 	"github.com/trishula-dev/trishula/internal/engine/ladder"
 	"sigs.k8s.io/yaml"
@@ -15,72 +14,65 @@ import (
 // requestFixture is one named request sample (testdata/requests.yaml):
 // the §11.3 head fields plus the raw encoded body the validator reads.
 type requestFixture struct {
-	Name        string          `json:"name"`
-	Method      string          `json:"method"`
-	ContentType string          `json:"content_type"`
-	Path        string          `json:"path"`
-	Body        json.RawMessage `json:"body"`
+	Name        string          `json:"name" yaml:"name"`
+	Method      string          `json:"method" yaml:"method"`
+	ContentType string          `json:"content_type" yaml:"content_type"`
+	Path        string          `json:"path" yaml:"path"`
+	Body        json.RawMessage `json:"body" yaml:"body"`
 }
 
 // testState bundles the S4 evaluator and the engine walking it, plus the
-// tx carrying the attached §11.3 view for the named fixture case.
+// tx carrying the attached body-carrying §11.3 view for the fixture case.
 type testState struct {
-	ev *greenEvaluator
-	// eng is GREEN's wired ladder engine (RED: nil — the walk assertions
-	// never run because buildTestState RED-fatals first).
+	ev  *RequestEvaluator
 	eng *ladder.Engine
 	tx  *ingest.TxContext
 	fx  requestFixture
 }
 
-// RED placeholder surface — GREEN (TR-13a) replaces this block with the
-// production types (the real RequestEvaluator with Evaluate, the real
-// Fragment struct, the real LoadPolicy function); the shapes asserted in
-// positive_test.go are pinned here in RED-compile form.
-type greenEvaluator struct {
-	v0 *struct{} // GREEN: the loaded *Policy
-}
-
-// Evaluate is the RED-state method on the placeholder evaluator: it
-// keeps the tests compile-clean while buildTestState still RED-fatals
-// (GREEN binds the real evaluator; this method dies with it).
-func (e *greenEvaluator) Evaluate(tx *ingest.TxContext) *greenFragment {
-	_ = tx
-	return nil
-}
-
-// greenFragment carries the RED fragment/assert surface (GREEN re-points
-// the fields at the production struct + real Decisive method).
-type greenFragment struct {
-	Action      ladder.Action
-	Diagnostics []string
-	decisiveFn  func() bool
-}
-
-// Decisive mirrors the ladder.Action vocabulary through the placeholder.
-func (f *greenFragment) Decisive() bool {
-	if f == nil || f.decisiveFn == nil {
-		return f != nil && f.Action.Decisive()
-	}
-	return f.decisiveFn()
-}
-
-// greenPolicy carries the RED Policy surface (GREEN re-points).
-type greenPolicy struct{ v0 *struct{} }
-
-// greenRuleID is GREEN's RuleIDSchemaViolation constant site (RED names
-// the literal the tests assert; GREEN binds the production constant).
-const greenRuleID = ladder.RuleID("positive:violation")
-
 // buildTestState assembles the S4 stage + engine under test from the repo
-// fixtures. GREEN replaces the fatal with the real assembly.
+// fixtures (the GREEN assembly; the watched-RED fatal is gone). The walk
+// engine carries ONLY the S4 slot — fragments from other stages cannot
+// mask the verdicts these tests assert.
 func buildTestState(t *testing.T, caseName string) *testState {
 	t.Helper()
 	if caseName == "" {
 		t.Fatal("test bug: empty case name")
 	}
-	t.Fatalf("GREEN pending (TR-13a): buildTestState not implemented — watched RED")
-	return nil
+	pol, err := LoadPolicy(filepath.Join("testdata", "openapi-chat.yaml"))
+	if err != nil {
+		t.Fatalf("load policy fixture: %v", err)
+	}
+	fx := decodeFixtures(t, loadFixture(t, "requests.yaml"))[caseName]
+	if fx.Name == "" {
+		t.Fatalf("fixture case %q not found", caseName)
+	}
+	tx := &ingest.TxContext{}
+	if err := AttachRequestBodyView(tx, &bodyView{Method: fx.Method, Path: fx.Path, Body: fx.Body}); err != nil {
+		t.Fatalf("attach body view: %v", err)
+	}
+	ev := NewRequestEvaluator(pol)
+	eng := ladder.NewEngine()
+	if err := eng.Use(ladder.StageSchema, schemaStage{ev}); err != nil {
+		t.Fatalf("wire S4: %v", err)
+	}
+	return &testState{ev: ev, eng: eng, tx: tx, fx: fx}
+}
+
+// schemaStage adapts RequestEvaluator to the ladder.Evaluator interface
+// (Stage pins S4; Evaluate projects the Result into the ladder Verdict).
+type schemaStage struct{ ev *RequestEvaluator }
+
+// Stage pins the fixed S4 slot (the adapter's whole point).
+func (s schemaStage) Stage() ladder.Stage { return ladder.StageSchema }
+
+// Evaluate projects one Result fragment into the ladder vocabulary.
+func (s schemaStage) Evaluate(tx *ingest.TxContext) *ladder.Verdict {
+	r := s.ev.Evaluate(tx)
+	if r == nil {
+		return nil
+	}
+	return &ladder.Verdict{Action: r.Action, Rules: r.Rules, Phase: r.Phase}
 }
 
 // loadFixture reads a testdata file relative to this package (os.ReadFile
@@ -94,12 +86,13 @@ func loadFixture(t *testing.T, name string) []byte {
 	return b
 }
 
-// txWithView attaches a view to a fresh tx (S0 contract, mirror).
-func txWithView(t *testing.T, view *cel.Request) *ingest.TxContext {
+// txWithBodyView attaches a body-carrying view to a fresh tx (the
+// AttachRequestBodyView contract, exercised directly).
+func txWithBodyView(t *testing.T, method, path string, body json.RawMessage) *ingest.TxContext {
 	t.Helper()
 	tx := &ingest.TxContext{}
-	if err := ladder.AttachView(tx, view); err != nil {
-		t.Fatalf("attach view: %v", err)
+	if err := AttachRequestBodyView(tx, &bodyView{Method: method, Path: path, Body: body}); err != nil {
+		t.Fatalf("attach body view: %v", err)
 	}
 	return tx
 }
@@ -110,7 +103,7 @@ func txWithView(t *testing.T, view *cel.Request) *ingest.TxContext {
 func decodeFixtures(t *testing.T, data []byte) map[string]requestFixture {
 	t.Helper()
 	var doc struct {
-		Cases []requestFixture `json:"cases"`
+		Cases []requestFixture `json:"cases" yaml:"cases"`
 	}
 	if err := yaml.UnmarshalStrict(data, &doc); err != nil {
 		t.Fatalf("decode requests.yaml: %v", err)

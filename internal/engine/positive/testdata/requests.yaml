@@ -23,6 +23,4 @@ cases:
         - content: no role here
         - role: wheel
           content: x
-        - role: user
-          content: y
       temperature: hot
