@@ -122,6 +122,7 @@ bash -cl '...'`), never a mac-only assertion.
 | Parity | `go test ./test/crs-differential/` | CRS reference verdict parity (CI-blocking) |
 | Ban enforcement | `go test -tags ban_e2e ./test/banenforce/` | kernel shot + expiry + reconciler + evidence JSONL |
 | Attack demo | `lab/demo-attack.sh` (sudo, Linux) | full attack replay: CRS + BOLA + kernel drop |
+| Exit-gate demo | `lab/demo.sh` | one command: DX1 setup + M9 apply→effect + hop evidence |
 
 **Rule: no invented transcripts.** Any README/PR/issue claim about kernel
 behaviour cites a real run: its output verbatim, plus the issue/PR where it
