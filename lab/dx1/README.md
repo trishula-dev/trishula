@@ -54,6 +54,58 @@ JSON body are the acceptance evidence for the [DX1 issue](https://github.com/tri
 (request through NGF reaches the engine → demo pod and returns; the §10.2
 variant-A diagram reproduced live).
 
+## TR-08c — apply→effect, the timed M9 test
+
+```bash
+lab/dx1/apply-effect.sh
+```
+
+The cluster round trip of [issue #76](https://github.com/trishula-dev/trishula/issues/76)'s
+M9, on the Step-1 lab (reused; no teardown): `kubectl apply` of a WAFPolicy
+CR → the operator pod (cmd/operator, deployed by the script from the repo)
+compiles it — rule-pack resolution + CEL compile, fail closed — publishes
+`bundle.json` to the `dx1-wafpolicy-bundle` configmap → the script feeds it
+to the running engine's polled `-receive-bundle /bundle.json` path (the
+engine hot-reloads, no restart) → the effect is visible on traffic through
+NGF.
+
+**What the timing means.** `t0` = the `kubectl apply` of
+`manifests/dx1-wafpolicy.yaml`; `t1` = the first POST through NGF that the
+enforced rule `DX-LAB-001` blocks (`403`, `X-Trishula-Decision: block`,
+`X-Trishula-Rule: DX-LAB-001`), while a benign POST still passes
+(`defaultAction: pass` — the TR-06 transparent forward preserved). The
+duration (`t1 − t0`) is the full **policy-authoring → enforcement** latency
+an operator would feel end to end: API apply → operator reconcile/compile →
+bundle publish → engine pickup + hot-reload → the deciding request. The
+script prints it and FAILs above the M9 budget (`M9_TARGET`, default 5s).
+
+Measured on this lab (2026-10-10, NGF 1.6.2 fallback single-pod, kind
+provider):
+
+| leg | measured |
+|---|---|
+| apply → operator compiled → engine `consult active` (live watch) | ~1s |
+| **scripted apply→effect, fresh t0→t1** (POST probes) | **2618ms ≤ 5s PASS** |
+| failure path: broken apply → `COMPILE FAILED` logged | 1146ms |
+
+**Failure path (fail closed, also timed).** After deleting the good policy,
+the script applies `manifests/dx1-wafpolicy-broken.yaml`, whose rule set
+resolves to the committed uncompilable fixture
+`manifests/dx1-broken-pack.yaml` (`size(request.body.messages) > 128` —
+no body view in the §11.3 structured request yet, so the operator's
+compile gate rejects it: `no such key: body`). The operator logs
+`COMPILE FAILED dx1/broken-rule-gate … (no bundle published — fail closed)`,
+publishes **no** bundle, and the engine keeps the previously loaded bundle:
+the SQLi probe stays blocked, the benign request still passes — the traffic
+shape is exactly what it was, and both pods stay Ready. A broken policy
+never widens enforcement and never takes the route down; it only ever
+fails to exist (§8, §2.3).
+
+Idempotent: re-run the script any time — it rebuilds/redeploys the operator,
+re-applies the rule-pack configmaps, resets to a clean policy slate, and
+re-times the scenario. Probes are POST (`request.method == "POST"` in the
+enforced rule); cluster is left running.
+
 ## Notes
 
 - The NGF chart ships from the NGINX OCI registry
@@ -80,5 +132,6 @@ variant-A diagram reproduced live).
 - The engine image is built locally (`scratch` + the `cmd/engine` Go
   binary) — no registry push needed; swap in a `ko` build for
   registry-direct delivery.
-- Engine CEL/ladder wiring is a later slice; this lab proves the steering +
-  transparent-proxy shape.
+- The engine is the transparent reverse proxy (TR-06); the compiled-bundle
+  consult + hot-reload ride the TR-08c leg (the timed test above). The
+  rate-enforcement engine (ScoredWindowBan) is TR-09/TR-10.
