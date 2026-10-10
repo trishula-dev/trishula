@@ -1,0 +1,17 @@
+# TR-07b corpus case (go-ftw shape) — source: live probe matrix
+# (probe against the committed engine.conf; see README delta table).
+name: 17-mixed-heavy
+surface: "SQLi + XSS in query string and scanner UA"
+request:
+  method: "GET"
+  uri: "/index.php?id=1 UNION SELECT name FROM users--&q2=<script>alert(1)</script>"
+  version: "1.1"
+  headers:
+    Host: "trishula.local"
+    User-Agent: "sqlmap/1.5"
+expect:
+  # engine-mirror-noise pin (setup + threshold echoes; README).
+  phase1_pinned: [900000, 900110, 900990]
+  phase2_seed: [942190, 942360, 942361, 942362, 942480, 941100, 941110, 941160, 941320]
+  # observed off-seed attack ids (live probe evidence, README table).
+  phase2_offseed: [941390, 942131, 942200, 942260, 942270, 942431, 942432]

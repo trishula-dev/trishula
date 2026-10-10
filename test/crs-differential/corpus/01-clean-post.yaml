@@ -1,0 +1,15 @@
+# TR-07b corpus case (go-ftw shape) — source: live probe matrix
+# (probe against the committed engine.conf; see README delta table).
+name: 01-clean-post
+surface: "clean form POST baseline"
+request:
+  method: "POST"
+  uri: "/login"
+  version: "1.1"
+  headers:
+    Host: "trishula.local"
+    Content-Type: "application/x-www-form-urlencoded"
+  body: "user=admin&pw=secret"
+expect:
+  # engine-mirror-noise pin (setup + threshold echoes; README).
+  phase1_pinned: [900000, 900110, 900990]

@@ -1,0 +1,17 @@
+# TR-07b corpus case (go-ftw shape) — source: live probe matrix
+# (probe against the committed engine.conf; see README delta table).
+name: 16-json-sqli
+surface: "SQLi in JSON body (no ARGS bridge)"
+skip: "no ARGS bridge for JSON bodies (CRS/Coraza v3: no JSON body processor in this slice)"
+skipped: true
+request:
+  method: "POST"
+  uri: "/api"
+  version: "1.1"
+  headers:
+    Host: "trishula.local"
+    Content-Type: "application/json"
+  body: "{\"q\":\"1 UNION SELECT name FROM users--\"}"
+expect:
+  # engine-mirror-noise pin (setup + threshold echoes; README).
+  phase1_pinned: [900000, 900110, 900990]

