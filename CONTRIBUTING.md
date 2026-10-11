@@ -19,7 +19,8 @@ gates enforce.
      plane), `operator` (CRDs, bundles, reconcile), `crs` (embedded Coraza
      wrapper), `cel` (rules, seed pack), `botdefense`, `positive` (OpenAPI
      positive security), `rateban` (ScoredWindowBan), `gateway` (NGF/Envoy
-     steering), `otlp` (verdict telemetry), `docs`, `ci`, `repo`, `deps`.
+     steering), `otlp` (verdict telemetry), `lab` (the runnable lab:
+     `lab/dx1/` and the demo/verify scripts), `docs`, `ci`, `repo`, `deps`.
    - Subject: imperative, lowercase, no trailing period. Body (optional):
      what changed and why; wrap at 72 columns.
    - PR titles follow the same form: `type(scope): subject`; roadmap-slice
