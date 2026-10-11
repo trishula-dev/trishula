@@ -1,6 +1,7 @@
 <!--
-PR title: conventional commit form, e.g. feat(engine): ...
-One logical change per PR. Link the TR-XX issue.
+PR title: Conventional Commits form carrying the task id, e.g.
+feat(engine): TR-05b — HTTP/1 request parse into the §11.3 view
+(A CI gate checks the title form on every PR.) One logical change per PR.
 -->
 ## What
 
