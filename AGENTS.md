@@ -243,9 +243,12 @@ as a contract, not decoration.
 
 ### Title and description
 
-- Title carries the task id: `TR-XXn — summary [child of TR-XX]` (the repo's
-  own convention, older than the template's conventional-commit suggestion —
-  both are accepted, keep the `TR-XX` id either way).
+- Title follows Conventional Commits; roadmap slices carry the task id in
+  the subject — `type(scope): TR-XXn — summary` (e.g. `feat(engine): TR-05b —
+  HTTP/1 request parse into the §11.3 view`). Squash merge uses the PR title
+  as the commit subject, so the PR title is the commit record; a CI title
+  gate checks the form. Issue titles are a separate surface: `TR-XXn —
+  summary` in the TITLE, not a label (issue identity — see [Labels](#labels)).
 - Description: **what** changed, **why** (TR issue), **how verified** (watched
   RED output + GREEN output + lab/VM evidence). Reviewers should not have to
   read the diff to know something changed.
@@ -253,7 +256,7 @@ as a contract, not decoration.
 
 ### Commits
 
-- Small, self-contained, same title style; nothing about build artifacts or
+- Small, self-contained, conventional-commit subjects (`type(scope): subject`); nothing about build artifacts or
   editor settings; no stray scratch files (`x*` test files, probe/ dirs are
   deleted before commit, not gitignored).
 
