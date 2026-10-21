@@ -91,9 +91,9 @@ flowchart LR
 
 - **eBPF data plane (`trishula-shield`, DaemonSet).** XDP sits at the NIC: L3/L4 ACLs, SYN/UDP flood tarpits, verdict-cache and **ban-table** enforcement. TC runs on node/pod veths: flow classification, plaintext fast-path probes, ring-buffer events. A repeat-offender drop in the kernel costs ~1 µs, not a userspace round-trip.
 - **Userspace policy engine (`trishula-engine`, Deployment).** The engine reconstructs HTTP/1.1, HTTP/2 and gRPC, and inspects deeply. The stack: OWASP CRS evaluation via an embedded Coraza-compatible evaluator (SecLang import). A compiled Vectorscan matcher covers the hot regex subset. A **CEL-based DSL** evaluates a structured request view. OpenAPI 3.1 carries **positive-security** validation. **Bot detection** reads TLS, header and behavior fingerprints. **Per-route rate limiting** and **score-based temporary bans** complete the ladder. An in-band ML scorer carries an async escalation path.
-- **Control plane (`trishula-operator`).** The operator compiles `WAFPolicy` / `APISpec` / `RuleSet` / `BanPolicy` CRDs into signed bundles: evaluator chains, matcher DBs, kernel map values and ban thresholds. Hot reload stays within 5 s. Canary rollout, shadow mode for every change, OTel-native telemetry and a CRS differential parity gate in CI complete the plane.
+- **Control plane (`trishula-operator`).** The operator compiles the CRDs (`WAFPolicy` / `APISpec` / `RuleSet` / `BanPolicy`) into signed bundles. The bundle carries evaluator chains, matcher DBs, kernel map values and ban thresholds. Hot reload stays within 5 s. Canary rollout, shadow mode for every change and OTel-native telemetry complete the plane. A CRS differential parity gate runs in CI.
 
-**The reference deployment.** NGF terminates TLS at a Gateway API `Gateway`, and the AI/app routes steer to Trishula as a plain `backendRef` Service. Any conformant implementation (Envoy Gateway, kgateway, Istio, Traefik) supports the same shape. Trishula is deliberately gateway-agnostic. NGF is where the contract is *proved*, not where it ends. A v2 ext_proc mode (§10.4) removes the proxy hop entirely on ext_proc-capable gateways.
+**The reference deployment.** NGF terminates TLS at a Gateway API `Gateway`. The AI/app routes steer to Trishula as a plain `backendRef` Service. Any conformant implementation (Envoy Gateway, kgateway, Istio, Traefik) supports the same shape. Trishula is deliberately gateway-agnostic. NGF is where the contract is *proved*, not where it ends. A v2 ext_proc mode (§10.4) removes the proxy hop entirely on ext_proc-capable gateways.
 
 **Differentiation, as specification.** The OSS WAF field is not empty. "More than OSS WAF" is a feature list, not a slogan (§2.3, §4):
 
@@ -159,12 +159,12 @@ Concretely, this thesis is enforced by five product properties:
 1. **One language for custom logic: CEL.** CEL is small, well-specified, K8s-native (admission control), Envoy-familiar, cost-budgeted and sandboxed. No new DSL enters the learning path. `request.method == "POST" && request.body.?json.messages.size() > 128` is a whole rule.
 2. **One config surface: CRDs + OpenAPI the developers already maintain.** Positive security derives from artifacts API teams already produce. The spec behind their SDK is the policy.
 3. **One observability language: OTel.** Verdict traces, metrics and first-class OTLP logs correlate by trace ID. The team reads them in the backend it already runs — not in a vendor console.
-4. **Failure semantics, one sentence per route:** fail-open or fail-closed, chosen in the `WAFPolicy`, stated on a CRD condition, visible in the trace.
+4. **Failure semantics, one sentence per route.** The mode: fail-open or fail-closed, chosen in the `WAFPolicy`. The state: a CRD condition. The view: the trace.
 5. **Docs that teach the wire (§7):** every rule example links to the bytes it inspects. The docs double as an HTTP/2, TLS and QUIC curriculum. The doc has failed when a developer does not understand why a rule fires.
 
 ### 2.5 D5 — Honesty as a mechanism: shadow-first and differential parity
 
-Every change (rule, schema, ML model, ban threshold) ships **shadow-first**. Promotion follows evidence (matches, FP delta). CRS compatibility is enforced in two places: a verdict-level differential gate against the reference evaluator, in CI and in production telemetry (§11.8). "Compatible" claims die quietly in every engine in this field; Trishula makes them CI failures instead. Performance targets carry the "target" label until a benchmark measures them (§17). Visibility gaps per traffic shape are documented contracts (§9.7).
+Every change (rule, schema, ML model, ban threshold) ships **shadow-first**. Promotion follows evidence (matches, FP delta). CRS compatibility is enforced twice. The verdict-level differential gate runs against the reference evaluator, in CI and in production telemetry (§11.8). "Compatible" claims die quietly in every engine in this field; Trishula makes them CI failures instead. Performance targets carry the "target" label until a benchmark measures them (§17). Visibility gaps per traffic shape are documented contracts (§9.7).
 
 ### 2.6 D6 — One project, several repos: `trishula-dev` + `trishula.dev`
 
@@ -183,7 +183,7 @@ The label/annotation prefixes are `trishula.shield/*` and `trishula.security/*`.
 The estate is a Kubernetes cluster in front of a Gateway-API data plane. The reference deployment runs NGINX Gateway Fabric:
 
 - **Gateway tier:** TLS termination, Gateway/HTTPRoute routing and L4 edge protections: conformant Gateway API, h2c backends, weighted steering. AI estates add the Inference Extension (EPP) for model pools.
-- **Application/model pools:** Deployments on HTTP/1.1, HTTP/2 or gRPC run increasingly AI inference: long bodies, SSE streaming and token-metered endpoints.
+- **Application/model pools:** Deployments on HTTP/1.1, HTTP/2 or gRPC. The rising share: AI inference — long bodies, SSE streaming and token-metered endpoints.
 - **A WAF, somewhere, awkwardly:** an external proxy hop with its own config language, or — in the majority of dev-run clusters — *nothing*. Adoption cost is the reason.
 
 ### 3.2 The problems, enumerated
@@ -201,7 +201,7 @@ The estate is a Kubernetes cluster in front of a Gateway-API data plane. The ref
 
 ### 3.3 Why not: the alternatives, honestly
 
-- **Keep an nginx WAF tier (ModSecurity/NGINX-App-Protect-class):** the choice keeps every problem P1–P8; it *is* P1/P2/P3/P7. ModSecurity is EOL on nginx[316], and libModSecurity is maintenance-mode[318]. The OSS community's CRS work now lives on Coraza[310].
+- **Keep an nginx WAF tier (ModSecurity/NGINX-App-Protect-class):** the choice keeps every problem P1–P8. The shape *is* P1/P2/P3/P7. ModSecurity is EOL on nginx[316], and libModSecurity is maintenance-mode[318]. The OSS community's CRS work now lives on Coraza[310].
 - **Cilium + Envoy:** excellent network policy and L7 authorization, yet not a WAF. The gaps: no CRS evaluation, no body-inspection depth, no security rule lifecycle, no bot defense. Its *architecture* (eBPF fast path + userspace L7 proxy) is the validated pattern this design borrows deliberately[85][87].
 - **Commercial cloud WAAP:** it contradicts the open-source, self-hosted requirement and sends payloads to third-party inspection. Model payloads and regulated estates rule it out.
 - **open-appsec / SafeLine (OSS ML WAFs):** the closest prior art in detection depth. open-appsec couples a learning engine to enforcement with CRDs; the coupling runs through a central management plane[192][239]. SafeLine is container-nginx-shaped with a semantic pipeline[196][205]. Neither carries an eBPF data plane. Neither speaks the Gateway-API steering contract. Neither treats developer comprehensibility as a design target.
@@ -237,7 +237,7 @@ The estate is a Kubernetes cluster in front of a Gateway-API data plane. The ref
 - **open-appsec's learning→enforcement lifecycle** — minus the central-plane coupling[239][237][241].
 - **SafeLine's staged semantic pipeline** — cheap deterministic stages precede the heavier semantic analysis[205][206].
 - **CrowdSec's community telemetry idea** — crowd blocklists as one ban-engine input; optional and CRD-gated[145][170].
-- **fail2ban's temporal ban UX** — score thresholds, temporary bans with expiry and an evidence-driven release; re-specified for HTTP at wire speed (§13)[147].
+- **fail2ban's temporal ban UX** — score thresholds, temporary bans with expiry, an evidence-driven release. The re-spec for HTTP runs at wire speed (§13)[147].
 - **Cilium's two-plane architecture** — eBPF fast path + userspace L7 proxy, the proven decomposition for exactly this problem[85][87].
 
 ### 4.3 Where Trishula sits — the gap no project occupies today
@@ -389,7 +389,7 @@ flowchart TB
 - **Every rule example cites its wire anatomy.** A CEL rule on `request.headers` links to the header explainers (Module 1). The JA4 bot rule links to Module 2's fingerprint lesson. §13's ladder links to the rate-algorithm lesson (token bucket vs sliding window vs EWMA, with interactive fixtures).
 - **Labs are runnable clusters,** not diagrams: `lab/` scenarios replay recorded adversarial traffic against live kind clusters. Module 1's smuggling corpus is exactly the differential corpus of §11.8.
 - **The product is the textbook:** when a rule fires, the verdict's trace metadata carries the module link (DX5). Developers read at incident time.
-- **PQC is in scope from v1 of the docs** (not the data plane). Hybrid key exchange is the curriculum core: X25519+ML-KEM, the IETF-standardized hybrid group [324]. Hybrid groups are default in mainstream TLS stacks and browsers since 2024–2025 [325][326]. The curriculum locates the PQ effects on Trishula's path. The gateway terminates TLS. PQ therefore affects the gateway↔client handshake and the gateway↔pool mTLS choices (Appendix A carries the 4 product-side notes). It covers the ClientHello size effect and the JA4 fingerprint effect [327][328]. It states what a WAF must not assume about payload visibility under future TLS revisions.
+- **PQC is in scope from v1 of the docs** (not the data plane). Hybrid key exchange is the curriculum core: X25519+ML-KEM, the IETF-standardized hybrid group [324]. Hybrid groups are default in mainstream TLS stacks and browsers since 2024–2025 [325][326]. The curriculum locates the PQ effects on Trishula's path. The gateway terminates TLS. PQ therefore affects the gateway↔client handshake and the gateway↔pool mTLS choices. Appendix A carries the 4 product-side notes. It covers the ClientHello size effect and the JA4 fingerprint effect [327][328]. It states what a WAF must not assume about payload visibility under future TLS revisions.
 
 ### 7.3 Deliverables
 
@@ -525,7 +525,7 @@ Trishula splits inspection by altitude:
 - **Kernel plane (shield):** bounded, allocation-free, verdict-cheap. The duties: L3/L4 ACLs, flood defense, ban-table enforcement and flow classification. The kernel classifies most packets and counts them — O(1) work per packet.[60][61]
 - **Userspace plane (engine):** unbounded parsing freedom (loops, allocs, regex, ML) in a language with an ecosystem (Go). Full HTTP reconstruction happens exactly once per request, here.
 
-The kernel deliberately does **not** do: full header walks, body parsing, regex evaluation or TLS. Two hard reasons stand. One is verifier boundedness: loops and instruction budgets make real L7 parsing a tail-call-bound project with poor maintenance economics[96][106][105]. The other is ciphertext: at the NIC, HTTP(S) payloads are TLS records[79]; decisive L7 analysis requires post-termination plaintext. The kernel plane still gets a *bounded* plaintext fast path (§9.6) on legs where the gateway already terminated TLS. It never depends on that path.
+The kernel deliberately does **not** do: full header walks, body parsing, regex evaluation or TLS. Two hard reasons stand. One is verifier boundedness. Loops and instruction budgets make real L7 parsing a tail-call-bound project, with poor maintenance economics[96][106][105]. The other is ciphertext: at the NIC, HTTP(S) payloads are TLS records[79]; decisive L7 analysis requires post-termination plaintext. The kernel plane still gets a *bounded* plaintext fast path (§9.6) on legs where the gateway already terminated TLS. It never depends on that path.
 
 ### 9.2 Hook inventory
 
@@ -581,7 +581,7 @@ It cannot: walk all headers, parse bodies or evaluate regex. Every fast-path cla
 | Re-encrypted engine→pool (secondary mode) | ciphertext | full plaintext (engine terminates the steering hop) |
 | kTLS/app-internal TLS (no proxy hop) | ciphertext + metadata | nothing — documented gap; optional uprobes restore visibility per workload |
 
-**TLS visibility without keys (posture):** eBPF cannot decrypt TLS without key custody. Record framing is visible; payload bytes are not. No kernel mechanism changes that. Two operating models follow. **Model A (kernel plaintext via kTLS handoff):** the scope is where Trishula owns TLS termination: the secondary mode (§6.3), or pod mTLS. The control plane performs the handshake and holds the session keys. It hands Tx/Rx crypto state to the kernel (`TLS_TX`/`TLS_RX` ULP). `strparser` + the socket layer then observe decrypted, message-delineated plaintext. The full fast path of §9.9 applies. The price is kernel-resident session keys. Threat model, blast radius and rotation sit in the §9.9 design-note gate. **Model B (no-key):** when termination is external to Trishula, kernel-side detection is metadata-only. The metadata plane carries the pre-encryption `ClientHello` (SNI, ALPN, JA3/JA4 fingerprint bytes). Certificate-chain metadata and TLS record framing (sizes, timing) feed behavioral and rate/ban policy. Header/body policies, CRS payload evaluation and positive-schema checks are unavailable in Model B. Enforcement is limited to connection- and fingerprint-level verdicts. Extracting keys from application memory out-of-band (SSLKEYLOGFILE-style harvesting) is an anti-pattern and explicitly out of design scope.
+**TLS visibility without keys (posture):** eBPF cannot decrypt TLS without key custody. Record framing is visible; payload bytes are not. No kernel mechanism changes that. Two operating models follow. **Model A (kernel plaintext via kTLS handoff):** the scope is where Trishula owns TLS termination: the secondary mode (§6.3), or pod mTLS. The control plane performs the handshake and holds the session keys. It hands Tx/Rx crypto state to the kernel (`TLS_TX`/`TLS_RX` ULP). `strparser` + the socket layer then observe decrypted, message-delineated plaintext. The full fast path of §9.9 applies. The price is kernel-resident session keys. Threat model, blast radius and rotation sit in the §9.9 design-note gate. **Model B (no-key):** when termination is external to Trishula, kernel-side detection is metadata-only. The metadata plane carries the pre-encryption `ClientHello` (SNI, ALPN, JA3/JA4 fingerprint bytes). Certificate-chain metadata and TLS record framing (sizes, timing) feed behavioral and rate/ban policy. Header/body policies, CRS payload evaluation and positive-schema checks are unavailable in Model B. Enforcement is limited to connection- and fingerprint-level verdicts. Extracting keys from application memory out-of-band (SSLKEYLOGFILE-style harvesting) is an anti-pattern. It is explicitly out of design scope.
 
 ### 9.8 Go-side stack choices
 
@@ -706,7 +706,7 @@ The lab proves, in CI:
 ### 10.4 Beyond the proxy hop: ext_proc (v2) and the Inference Extension
 
 - **ext_proc stage (v2, feature-gated).** Envoy-family data planes (Envoy Gateway, kgateway, Istio/agentgateway) can call out to an `ExternalProcessor`. Trishula's engine ships this server from Phase 0 (one binary, two transports). Ext_proc-capable estates get a **no-proxy-hop** WAF. Headers and body chunks arrive as gRPC frames. The engine returns verdicts, mutations and dynamic metadata. The wire contract is fixed in §19.1. NGF is the reference for Variant A today; ext_proc estates activate v2 with the same engine.
-- **Inference Extension ordering.** On EPP-enabled routes (NGF + GIE integration[39]), EPP runs as its own ext_proc stage alongside the gateway. Filter ordering (WAF before/after EPP) is per-gateway configuration, not standardized upstream; the operator emits the ordering snippet per estate. WAF-before-EPP spares EPP/queue capacity on block. EPP-before-WAF lets verdicts use the selected-endpoint class as policy input. Either order leaves `x-gateway-destination-endpoint` metadata untouched: the WAF writes its own metadata namespace, never EPP's (§19 ext_proc contract).
+- **Inference Extension ordering.** On EPP-enabled routes (NGF + GIE integration[39]), EPP runs as its own ext_proc stage alongside the gateway. Filter ordering (WAF before/after EPP) is per-gateway configuration, not standardized upstream. The operator emits the ordering snippet per estate. WAF-before-EPP spares EPP/queue capacity on block. EPP-before-WAF lets verdicts use the selected-endpoint class as policy input. Either order leaves `x-gateway-destination-endpoint` metadata untouched: the WAF writes its own metadata namespace, never EPP's (§19 ext_proc contract).
 - **What this does not change:** steering stays gateway-owned in every variant. Trishula never selects endpoints.
 
 ### 10.5 Portability honest-delta
@@ -1123,7 +1123,11 @@ eBPF contributes cheap counters (§9.5); the parser contributes payload features
 
 ### 15.3 Kernel-plane counters (shield)
 
-The shield exports this counter set: XDP drop/pass/tarpit per map and reason class; ring depth + drops; per-prefix rate EWMAs; ban-table occupancy/expiries. Export runs on a fixed tick, OTel-native. An xdpcap-compatible capture hook ships from day one. XDP-dropped packets are invisible to tcpdump; forensics needs a sanctioned capture path[66].
+The shield exports this counter set:
+- XDP drop/pass/tarpit, per map and reason class
+- ring depth + drops
+- per-prefix rate EWMAs
+- ban-table occupancy/expiries Export runs on a fixed tick, OTel-native. An xdpcap-compatible capture hook ships from day one. XDP-dropped packets are invisible to tcpdump; forensics needs a sanctioned capture path[66].
 
 ### 15.4 Dashboards & redaction
 
@@ -1188,7 +1192,7 @@ The shield exports this counter set: XDP drop/pass/tarpit per map and reason cla
   `RuleSet` (CRS + CEL); `ThreatIntel` (IP reputation/JA4 lists feeding `src_rep`);
   bot-fingerprint DBs (§12.3); `MLModel` artifacts. The operator resolves → compiles → stages via the same shadow ladder.
 - **Cadence:** CRS upstream LTS quarterly point-releases → auto-PR into the fleet's RuleSet repo (the PR *is* the review). CEL customs are human PR-gated. Intel feeds take daily/weekly digest bumps without a shadow gate (additive map entries, reversible by map replace).
-- **Emergency out-of-band:** a critical CVE drop uses the same CR path, with the evidence gate bypassed by explicit `emergency: true`. The run is audited, time-boxed at 72 h, and auto-reverts absent analyst sign-off. The `PolicyEmergencyActive` alert fires.
+- **Emergency out-of-band:** a critical CVE drop uses the same CR path, with the evidence gate bypassed by `emergency: true`. The run is audited, time-boxed at 72 h, and auto-reverts absent analyst sign-off. The `PolicyEmergencyActive` alert fires.
 - **FP hygiene:** verdict telemetry → exclusion workflow. Exclusion CRs are shadow-tested too.
 
 ### 16.7 Day-2 runbook
@@ -1618,7 +1622,7 @@ spec:
 
 ### 20.2 Phasing
 
-**Phase 0 — PoC (weeks 1–8).** The shield DaemonSet carries XDP ACL + ban/verdict caches + TC flow events → ringbuf. The Go engine drains, parses HTTP/1.1 plaintext and logs verdicts. The engine sits behind NGF steering in kind. CRS runs at PL1 via the Coraza path; the CRD round-trip runs apply → compile → load; the differential suite ships v0. **Exit criteria:** < 10 ms inline (unoptimized); 100% verdict telemetry; a working CRD round-trip; proven NGF steer-to-engine (§10.3 lab green).
+**Phase 0 — PoC (weeks 1–8).** The shield DaemonSet carries XDP ACL + ban/verdict caches + TC flow events → ringbuf. The Go engine drains, parses HTTP/1.1 plaintext and logs verdicts. The engine sits behind NGF steering in kind. CRS runs at PL1 via the Coraza path. The CRD round-trip runs apply → compile → load. The differential suite ships v0. **Exit criteria:** < 10 ms inline (unoptimized); 100% verdict telemetry; a working CRD round-trip; proven NGF steer-to-engine (§10.3 lab green).
 
 **Phase 1 — Alpha (months 2–4).** Performance hardening reaches §17 targets. The Vectorscan matcher DB ships with its differential gate. Positive-security v1 ships with learn mode, API discovery and bot detectors v0 (JA4 + headers + behavior). §13 rate algorithms reach v1; ScoredWindowBan walks shadow→enforce with `BanRelease`; the OTLP log pipeline goes GA (§15). **docs/academy Modules 1, 3, 4 + the DX1 lab ship.** NGF reference manifests + one secondary-gateway CI lane complete the phase.
 
