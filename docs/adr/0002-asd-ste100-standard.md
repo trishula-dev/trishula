@@ -12,9 +12,12 @@ metaphors. Some prose speaks in the second person. Some sentences carry 2
 thoughts across 30 words.
 
 The operator set the writing standard on 2026-10-20: every written text in
-the org follows ASD-STE100 Simplified Technical English. The pqscan project
-holds the same decision as its ADR 0004. No substantive technical discussion
-recorded; the record cites the operator directive of that date.
+the org follows ASD-STE100 Simplified Technical English. The same directive
+fixes the record topology: one canonical ADR per org, in the repo that owns
+the decision's authority, and no ADR scaffolding in the site repo. The
+pqscan project holds the same writing decision as its ADR 0004. No
+substantive technical discussion recorded; the record cites the operator
+directive of that date.
 
 ## Decision
 
@@ -38,6 +41,10 @@ tracked references in the rendered text.
 ## Consequences
 
 - The prose gets shorter. The boundary statements get plainer.
+- The record is canonical per org: this tree carries the ADR records.
+  `trishula-website` carries no `docs/adr/` scaffolding; its one-paragraph
+  adoption note lives in that repo's `CONTRIBUTING.md` and links this
+  record.
 - The records keep their contract names; only the prose converts.
 - New text starts in the standard. The conversion runs one issue per repo —
   TR-82 in this repo, TR-WS-4 in `trishula-website` — and lands as PRs the
