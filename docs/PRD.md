@@ -551,7 +551,7 @@ All C compiles CO-RE (vmlinux.h from `bpftool btf dump`). The Go shield loads it
 | `rate_windows` | per-CPU array + LRU | — | shield (SYN/req-rate EWMA per prefix — kernel-side rate accounting) |
 | `events` | ringbuf | 16 MiB/node | shield → (co-located engine or relay) |
 
-Cross-pod sharing: the shield pins maps on host BPFFS (`/sys/fs/bpf/trishula/`). Engine pods node-affined to shield nodes mount BPFFS read-write (hostPath). They open the pinned maps and ring directly — zero network hop for co-located engines. Non-co-located engines receive events via the shield's gRPC relay (sampled under load). **Verdict authority stays userspace:** the engine decides, and the shield enforces (open question §20.3.3; the kernel stays decision-free).
+Cross-pod sharing: the shield pins maps on host BPFFS (`/sys/fs/bpf/trishula/`). Engine pods node-affined to shield nodes mount BPFFS read-write (hostPath). They open the pinned maps and ring directly — zero network hop for co-located engines. Non-co-located engines receive events via the shield's gRPC relay (sampled under load). **Verdict authority stays userspace.** The engine decides; the shield enforces (open question §20.3.3; the kernel stays decision-free).
 
 ### 9.4 Ring buffer sizing and backpressure
 
@@ -598,7 +598,13 @@ The §9.1 principle keeps the kernel decision-free. A complementary option sits 
 DFA-based header extraction into a bounded header vector; compiled `if`-chain matching;
 a small action-template library (`compare`, `read/write`, `en/decode`, `en/decrypt`, `hash`, `get/set`, `forward`, `drop`). Every action sequence terminates in `drop` or `forward`. Published results measure this design class: 89% of observed L7 service-mesh policies are enforceable without kernel changes. The median request-latency reduction reaches up to 6×. Throughput reaches up to 3× versus an L4-fast-path service proxy. The maximum offloadable policy complexity carries a ≥39% throughput advantage.
 
-**What Trishula would offload (policy subset):** JWT HS256 authentication (`issuer`/`audience` claims), RBAC allowlists (source IPs, ports and paths) and header mutation. Route marking and telemetry counters complete the subset. Every class is already named in §11's ladder; every class is header-class and body-free. CRS/Coraza body evaluation is *never* kernel work. The fast path is an enforcement layer for header-class policies, not a kernel WAF.
+**What Trishula would offload (policy subset):**
+- JWT HS256 authentication (`issuer`/`audience` claims)
+- RBAC allowlists (source IPs, ports and paths)
+- header mutation
+- route marking and telemetry counters
+
+Every class is already named in §11's ladder; every class is header-class and body-free. CRS/Coraza body evaluation is *never* kernel work. The fast path is an enforcement layer for header-class policies, not a kernel WAF.
 
 **Architecture integration:** the fast path consumes the same single compiled bundle (§8.1.2). A `WAFPolicy` subset compiles to policy-specific eBPF templates. The rest routes transparently to the engine slow path.
 The altitude fails open: a parse error or match miss forwards. The fast path never silently drops on its own failure. Verdict/ban state shares the §9.3 maps, so XDP and socket planes enforce one verdict authority. The kernel-module dependency is a gate. Hash/encode helpers are absent from the eBPF runtime on current kernels (upstream kfunc coverage is evolving). A minimal out-of-tree module is the interim precedent, with its own supply-chain and verifier-CI cost. The design note decides adopt, adapt or skip.
