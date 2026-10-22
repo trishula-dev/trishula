@@ -8,23 +8,33 @@ kernel shield · userspace engine · control plane
 [![pre-commit.ci status](https://results.pre-commit.ci/badge/github/trishula-dev/trishula/main.svg)](https://results.pre-commit.ci/latest/github/trishula-dev/trishula/main) [![go-build](https://github.com/trishula-dev/trishula/actions/workflows/go-build.yml/badge.svg)](https://github.com/trishula-dev/trishula/actions/workflows/go-build.yml) [![Dependency Review](https://github.com/trishula-dev/trishula/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/trishula-dev/trishula/actions/workflows/dependency-review.yml) [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/trishula-dev/trishula?label=OpenSSF%20Scorecard&style=flat)](https://scorecard.dev/viewer/?uri=github.com/trishula-dev/trishula) [![OpenSSF Best Practices](https://img.shields.io/badge/cii%20best%20practices-in%20progress-orange)](https://www.bestpractices.dev/projects/15183)
 
 
-**Status: Phase 0 (v0.1) delivered** — every component below is merged to
-`main` under its signature, with the lab gates green on a live cluster. What
-exists today is listed per component with its merge commit; what does **not**
-exist yet is listed just as plainly. The §20.2 exit-criteria table is checked
-honestly further down, and the [Proof](#proof-labdemosh-output-verbatim)
-section is the verbatim output of `lab/demo.sh` — the exit-gate demo, one
-command from a fresh clone to the full run.
+**Status: Phase 0 (v0.1) delivered.** Every component below sits merged on
+`main` under its signature. The lab gates run green on a live cluster. The
+component list pairs each item with its merge commit. The gaps carry their
+own list, just as plainly. The exit-criteria table below reports pass and
+pending per check. The [Proof](#proof-labdemosh-output-verbatim) section
+holds the verbatim output of `lab/demo.sh`. One command runs the full
+exit-gate demo from a fresh clone.
 
-## The one-sentence design thesis
+## The design thesis
 
-> The WAF is the last control that never crossed to developer ubiquity — Trishula brings it across, by pairing a kernel-altitude eBPF shield (fail-open by default, bounded parsing, verifier-checked in CI) with the full userspace detection stack (OWASP CRS via embedded Coraza with a CI-blocking parity differential, CEL rules under cost budgets, OpenAPI positive security with promotion gates, JA4/behavioural bot detection, evidence-recorded ScoredWindowBan) and a Kubernetes-native control plane whose every verdict is a correlated OpenTelemetry record.
+> The WAF is the last major security control outside developer practice.
+> Trishula brings it into everyday developer use. The kernel plane is an
+> eBPF shield: fail-open by default, bounded parsing, verifier-checked in
+> CI. The userspace plane carries the full detection stack: OWASP CRS via
+> embedded Coraza with a CI-blocking parity differential. CEL rules run
+> under cost budgets. OpenAPI positive security carries promotion gates.
+> JA4 and behavioural fingerprints feed bot detection. ScoredWindowBan
+> records evidence for every ban. A Kubernetes-native control plane
+> compiles policy into signed bundles. Every verdict is a correlated
+> OpenTelemetry record.
 
 ## What exists today (per component, merge linked)
 
-Everything below is on `main` (from [4161758](https://github.com/trishula-dev/trishula/commit/416175852d3ba843fbefdd6900a6d89c268d6052) onward), GPG-signed
-`Shain.Singh@owasp.org`, each slice delivered as watched-RED → GREEN leaf
-PRs per [`AGENTS.md`](AGENTS.md).
+Everything below sits on `main` from
+[4161758](https://github.com/trishula-dev/trishula/commit/416175852d3ba843fbefdd6900a6d89c268d6052)
+onward. Every commit carries the `Shain.Singh@owasp.org` signature. Each
+slice lands as a watched-RED then GREEN leaf PR per [AGENTS.md](AGENTS.md).
 
 | Component | Where | What exists | Evidence |
 |---|---|---|---|
@@ -44,30 +54,32 @@ PRs per [`AGENTS.md`](AGENTS.md).
 
 ## What does not exist yet (honest)
 
-- **<10 ms inline measurements** — the benchmark harness is TR-24;
-  `test/bench/` is an empty placeholder. No latency number on this page is a
-  benchmark result. The one timing that exists is the **apply→effect**
-  control-plane round trip (M9 ≤ 5 s budget; recorded 2618 ms on https://github.com/trishula-dev/trishula/issues/76,
-  1465 ms in the run below) — a config-propagation figure, not an
-  inline-processing figure.
-- **The engine ladder in-cluster** — in the current demo the engine serves
-  its decision surface from bundles delivered via `-receive-bundle`; the
-  full ladder serving verdicts on live ringbuf traffic inside the cluster
-  pods is TR-15.
-- **HTTP/2 + HTTP/3 request paths** — the engine parses HTTP/1.1 only; the
-  h2/h3 ingress posture evaluation is the TR-25/TR-29 track.
+- **<10 ms inline measurements** — the benchmark harness is [TR-24](https://github.com/trishula-dev/trishula/issues/24);
+  `test/bench/` holds no harness yet. No latency number on this page is a
+  benchmark result. The one recorded timing is the **apply→effect**
+  control-plane round trip. The M9 budget is 5 s; the runs record 2618 ms on
+  https://github.com/trishula-dev/trishula/issues/76 and 1465 ms in the run
+  below. It is a config-propagation figure, not an inline-processing figure.
+- **The engine ladder in-cluster** — the demo engine serves verdicts from
+  bundles delivered via `-receive-bundle`. The full ladder drives verdicts
+  on live ringbuf traffic inside cluster pods on
+  [TR-15](https://github.com/trishula-dev/trishula/issues/15).
+- **HTTP/2 + HTTP/3 request paths** — the engine parses HTTP/1.1 only. The
+  h2/h3 posture evaluation tracks as
+  [TR-25](https://github.com/trishula-dev/trishula/issues/25)/[TR-29](https://github.com/trishula-dev/trishula/issues/29).
 - **Socket-plane L7 fast path, prefix escalation, async semantic judge** —
-  design/evaluation items (the TR-41-range study trio; not built).
+  these live as design and evaluation items (the TR-41-range study trio).
+  None of them ships yet.
 - **trishulactl full surface** — the CLI skeleton exists
-  (`cmd/trishulactl`); the real surface is a later-phase item.
+  (`cmd/trishulactl`). The full surface is a later-phase item.
 - **Response-side schema / exfiltration guard** — Phase 2 of the roadmap.
 - **Positive-security learn mode + promotion gates** — v0 enforces a static
-  OpenAPI subset; the v1 learn/apply pipeline is not built.
-- **Production OTLP export** — the triad is verified against an in-memory
-  exporter snapshot; the wire-out collector pipeline is not wired.
-- **Multi-arch release engineering, DPU (BlueField-class) port,
-  OpenShift/multi-arch builds** — release engineering begins at v0.1.0 (PRD
-  §9.2); platform breadth is GA-track.
+  OpenAPI subset. The v1 learn/apply pipeline is not built.
+- **Production OTLP export** — the triad verifies against an in-memory
+  exporter snapshot. The wire-out collector pipeline is not wired.
+- **Production-engineering breadth** — multi-arch releases, the DPU
+  (BlueField-class) port and OpenShift builds start at v0.1.0. Platform
+  breadth follows the GA track.
 
 The live board is the [Trishula Roadmap](https://github.com/orgs/trishula-dev/projects/1).
 
@@ -90,18 +102,19 @@ docs/             PRD, paper, academy
 bash lab/demo.sh
 ```
 
-From a fresh clone on a Docker-provider host (kind or OrbStack Kubernetes)
-with `go`, `kubectl`, `helm`, `docker`, `curl`: builds the linux engine +
-operator binaries from this tree if missing, brings the DX1 lab up
-(idempotent), runs the timed apply→effect scenario (M9 ≤ 5 s budget), and
-finishes with the hop-by-hop evidence printed last — each stage passes/fails
-loudly (`set -euo pipefail`, per-stage markers, `DEMO-OK` / `DEMO-FAIL`
-banner). The kernel-side artifacts (XDP attach, in-VM ban E2E, tier probes)
-run on a Linux VM per [`lab/dx1/README.md`](lab/dx1/README.md) and
-[`lab/verify-xdp-chain.sh`](lab/verify-xdp-chain.sh) — see the gate table in
-[`AGENTS.md`](AGENTS.md).
+The script runs on a Docker-provider host (kind or OrbStack Kubernetes)
+with `go`, `kubectl`, `helm`, `docker` and `curl`. It builds the linux
+engine and operator binaries from this tree when missing. It brings the DX1
+lab up (idempotent). It runs the timed apply→effect scenario under the M9
+budget of 5 s. It prints the hop-by-hop evidence last. Every stage ends in a
+loud marker. The script runs under `set -euo pipefail`. The exit banner
+reads `DEMO-OK` or `DEMO-FAIL`. The kernel-side artifacts (XDP attach, in-VM
+ban E2E, tier probes) run on a Linux VM per
+[`lab/dx1/README.md`](lab/dx1/README.md) and
+[`lab/verify-xdp-chain.sh`](lab/verify-xdp-chain.sh). The gate table in
+[AGENTS.md](AGENTS.md) names the checks.
 
-## Status — Phase 0 exit criteria (PRD §20.2, checked honestly in TR-14)
+## Status — Phase 0 exit criteria (checked honestly in TR-14)
 
 | §20.2 criterion | Status | Evidence |
 |---|---|---|
@@ -113,13 +126,14 @@ run on a Linux VM per [`lab/dx1/README.md`](lab/dx1/README.md) and
 | CRS PL1 differential parity reported (shadow) | **pass** | 19/19 corpus cases at 100% verdict parity (1 skipped, documented), CI-blocking; [#7 evidence comment](https://github.com/trishula-dev/trishula/issues/7#issuecomment-6092716820); merge [ec19346](https://github.com/trishula-dev/trishula/commit/ec1934616317d966a42156c47cb394593779bf90) (#103) |
 | Shield attaches on a node; kernel-side ban drop works | **pass (Linux VM)** | XDP attach + ban `TC_ACT_SHOT` (shot 3→4), expiry auto-lift, reconciler lift, JSONL evidence; [#10 in-VM E2E](https://github.com/trishula-dev/trishula/issues/10#issuecomment-6093609582) + [#80 tier vocabulary](https://github.com/trishula-dev/trishula/issues/80#issuecomment-6094023768). NOT evidenced on plain kind nodes: OrbStack-family pod-veth fast paths limit visibility (measured `first_packet` tier) — the loader measures and refuses an invisible shield rather than pretending |
 
-Honesty is the feature: the one **fail**-shaped cell is the pending TR-24
-benchmark — named as such instead of hand-waved.
+The honesty stance shows in the table above. The one pending cell is the
+TR-24 benchmark, named as unmet. No other cell hides a gap.
 
 ## Proof — lab/demo.sh output (verbatim)
 
-Recorded in the TR-14 lane (main at ed9b271) — `M9_TARGET=5 bash lab/demo.sh`
-from the clone. Evidence trail on the issues: https://github.com/trishula-dev/trishula/issues/6 ([steering hop](https://github.com/trishula-dev/trishula/issues/6#issuecomment-6091479891),
+Recorded in the TR-14 lane, main at ed9b271. Command:
+`M9_TARGET=5 bash lab/demo.sh`, run from the clone. The evidence trail sits
+on the issues: https://github.com/trishula-dev/trishula/issues/6 ([steering hop](https://github.com/trishula-dev/trishula/issues/6#issuecomment-6091479891),
 [delivery](https://github.com/trishula-dev/trishula/issues/6#issuecomment-6091986517)), https://github.com/trishula-dev/trishula/issues/76 ([M9](https://github.com/trishula-dev/trishula/issues/76#issuecomment-6093110531)), https://github.com/trishula-dev/trishula/issues/7 ([parity](https://github.com/trishula-dev/trishula/issues/7#issuecomment-6092716820)),
 https://github.com/trishula-dev/trishula/issues/10 ([ban E2E](https://github.com/trishula-dev/trishula/issues/10#issuecomment-6093609582)), https://github.com/trishula-dev/trishula/issues/80 ([tiers](https://github.com/trishula-dev/trishula/issues/80#issuecomment-6094023768)), https://github.com/trishula-dev/trishula/issues/11 ([OTel](https://github.com/trishula-dev/trishula/issues/11#issuecomment-6092518259)),
 https://github.com/trishula-dev/trishula/issues/13 ([positive](https://github.com/trishula-dev/trishula/issues/13#issuecomment-6092602177)).
