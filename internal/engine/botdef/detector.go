@@ -19,13 +19,23 @@ const (
 )
 
 // Detector is the §12 bot detector: a ladder Evaluator at the fixed S5
-// StageBots slot. v0 emits ONLY log-tier fragments (PRD §12: single-detector
-// matches log and score — consensus/blocking arrives with TR-19's merge
-// policy). Detached transactions (no attached ClientHelloSummary and/or
-// HeaderView — the state of every tx until TR-15/29 wire the extraction)
-// produce NO fragment; the S5 stage stays silent rather than fabricate a
-// verdict. No-op when the engine is unwired (ladder skips empty slots).
-type Detector struct{}
+// StageBots slot. v1 (TR-19) adds the §12.1 behavioral family and the
+// merge policy: per-detector verdicts over the three families; a consensus
+// above the family floor resolves the decisive action, a single family
+// keeps the log tier (single-detector matches log and score). Detached
+// transactions (no attached ClientHelloSummary, HeaderView or
+// BehaviorObservation) produce NO fragment; the S5 stage stays silent
+// rather than fabricate a verdict. No-op when the engine is unwired
+// (ladder skips empty slots).
+type Detector struct {
+	// Behavior consults per-source behavioral windows when non-nil
+	// (§12.1 behavioral family; nil = the family stays out of the walk,
+	// the v0 posture).
+	Behavior *BehaviorWindows
+	// Policy merges the per-detector verdicts into the S5 action
+	// (§12.1; a zero policy keeps the log tier).
+	Policy MergePolicy
+}
 
 // ruleBotJA4 / ruleBotHeaders are the §12 (detector_id, evidence) rule ids
 // the S5 fragment carries (ladder.Rules, walk order).
@@ -42,24 +52,44 @@ const (
 	botScoreJa4Prior     = 2 // JA4 present (a prior per §12.3, never a verdict)
 )
 
-// NewDetector builds the bot detector (stateless v0).
-func NewDetector() *Detector { return &Detector{} }
+// NewDetector builds the bot detector on the v1 defaults: the behavioral
+// windows on the pinned thresholds and the §12.1 merge policy.
+func NewDetector() *Detector {
+	return &Detector{
+		Behavior: NewBehaviorWindows(DefaultBehaviorWindowConfig()),
+		Policy:   DefaultMergePolicy(),
+	}
+}
 
 // Stage pins the fixed §19.1 ladder position: S5 bots.
 func (d *Detector) Stage() ladder.Stage { return ladder.StageBots }
 
-// Evaluate walks the two v0 detectors over the attached evidence and folds
-// the §12 evidence into one S5 fragment (always log-tier at v0). Wire
-// contract:
+// confJa4Prior / confHeadersTool are the §12.1 per-detector confidences
+// for the two v0 planes: the JA4 fingerprint stays a PRIOR (§12.3 — a
+// hash without the tooling DB cannot assert, and it scores no consensus),
+// the tool-ish header classification is a direct detection (the masquerade
+// evidence rides the fingerprint reasons).
+const (
+	confJa4Prior    = 25
+	confHeadersTool = 80
+)
+
+// Evaluate walks the §12.1 detector surfaces over the attached evidence
+// and folds it into one S5 fragment:
 //
-//   - JA4 evidence: the computed fingerprint is the bot-vs-browser PRIOR,
-//     not a verdict by itself (§12.3 honest limits — a hash without the
-//     tooling DB cannot assert); it accumulates rule + prior score.
+//   - JA4 evidence: the computed fingerprint is the bot-vs-browser PRIOR
+//     (a DetectorVerdict below the merge confidence floor), never a
+//     verdict by itself (§12.3 honest limits — a hash without the tooling
+//     DB cannot assert); it accumulates rule + prior score.
 //   - Header evidence: the header-plane classification (tool-ish vs
 //     browser-ish) is a direct per-request signal; tool-ish logs AND
-//     scores.
-//   - Both planes agreeing on "tool" still logs (v0 single-detector
-//     posture; the consensus rule is TR-19's merge policy).
+//     scores above the floor.
+//   - Behavioral evidence: the attached observation (BehaviorObservation)
+//     feeds the per-source sliding windows; every fired behavioral
+//     detector logs AND scores above the floor.
+//   - The §12.1 merge rule resolves the fragment action per MergePolicy:
+//     MinFamilies distinct families above the floor trigger the decisive
+//     ConsensusAction; a single family keeps the log tier.
 //
 // A nil fragment (nothing attached) keeps the walk moving — S5 never
 // fabricates an opinion from absent evidence.
@@ -68,16 +98,24 @@ func (d *Detector) Evaluate(tx *ingest.TxContext) *ladder.Verdict {
 		return nil
 	}
 	ch, hv := ClientHelloOf(tx), HeaderViewOf(tx)
-	if ch == nil && hv == nil {
+	obs := BehaviorObservationOf(tx)
+	if ch == nil && hv == nil && obs == nil {
 		return nil
 	}
 
 	v := &ladder.Verdict{Action: ladder.ActionLog, Phase: ladder.PhaseRequestHeaders}
+	var dvs []DetectorVerdict
 
 	if ch != nil {
 		r := ja4f(ch)
 		v.Rules = append(v.Rules, ruleBotJA4)
 		v.Score += botScoreJa4Prior // prior: the fingerprint exists, no DB match v0
+		dvs = append(dvs, DetectorVerdict{
+			ID:         ruleBotJA4,
+			Family:     FamilyTLS,
+			Confidence: confJa4Prior,
+			Evidence:   r.JA4,
+		})
 		// Record the JA4 prior on the tx so the lab log survives the
 		// detached-render path (LabLogLine re-derives when evidence is
 		// still attached; Metadata carries it when it is not).
@@ -97,11 +135,117 @@ func (d *Detector) Evaluate(tx *ingest.TxContext) *ladder.Verdict {
 			v.Rules = append(v.Rules, ruleBotHeaders)
 			v.Score += botScoreToolEvidence
 			tx.Metadata["botdef_class"] = "tool"
+			dvs = append(dvs, DetectorVerdict{
+				ID:         ruleBotHeaders,
+				Family:     FamilyHeaders,
+				Confidence: confHeadersTool,
+				Evidence:   "hf=" + hfp.Hash,
+			})
 		} else {
 			tx.Metadata["botdef_class"] = "browser"
 		}
 	}
+
+	var behavioral []DetectorVerdict
+	if obs != nil && d.Behavior != nil {
+		behavioral = d.Behavior.Observe(srcAddr(tx.Key), *obs)
+		for _, bv := range behavioral {
+			v.Rules = append(v.Rules, bv.ID)
+			v.Score += behavioralScore(bv.ID)
+		}
+		if len(behavioral) > 0 {
+			ids := make([]string, 0, len(behavioral))
+			for _, bv := range behavioral {
+				ids = append(ids, string(bv.ID))
+			}
+			if tx.Metadata == nil {
+				tx.Metadata = map[string]string{}
+			}
+			tx.Metadata["botdef_bv"] = strings.Join(ids, ",")
+		}
+	}
+	dvs = append(dvs, behavioral...)
+
+	resolved, _ := Merge(dvs, d.Policy)
+	if resolved.Decisive() {
+		v.Action = resolved
+	}
+
+	// The lab-log line stamps when the fragment carries behavioral or
+	// consensus evidence; the v0 pair keeps the legacy derivation
+	// (published lab_log_expected.json pins it byte-for-byte).
+	if len(behavioral) > 0 || resolved.Decisive() {
+		stampLabLine(tx, v.Action, detsString(ch != nil, hv != nil, len(behavioral) > 0), v)
+	}
 	return v
+}
+
+// behavioralScore maps one behavioral detector id to its score
+// contribution (unknown ids contribute nothing; the walk stays honest
+// with exactly the ids this package defines).
+func behavioralScore(id ladder.RuleID) int64 {
+	switch id {
+	case ruleBotPace:
+		return botScorePace
+	case ruleBotAuthFail:
+		return botScoreAuthFail
+	case ruleBotSpread:
+		return botScoreSpread
+	}
+	return 0
+}
+
+// detsString renders the detectors= set for a walked fragment (the same
+// tokens the v0 lab line uses, +behavioral joined for the new family).
+func detsString(hasCH, hasHV, hasBV bool) string {
+	parts := make([]string, 0, 3)
+	if hasCH {
+		parts = append(parts, "ja4")
+	}
+	if hasHV {
+		parts = append(parts, "headers")
+	}
+	if hasBV {
+		parts = append(parts, "behavioral")
+	}
+	return strings.Join(parts, "+")
+}
+
+// stampLabLine renders and pins the lab-log line for a behavioral or
+// consensus fragment (the walk state no longer matches the legacy
+// derivation; the v0 pair keeps that derivation byte-for-byte). The
+// field order matches the published lab-line shape exactly.
+func stampLabLine(tx *ingest.TxContext, action ladder.Action, dets string, v *ladder.Verdict) {
+	if tx == nil || v == nil {
+		return
+	}
+	if tx.Metadata == nil {
+		tx.Metadata = map[string]string{}
+	}
+	var sb strings.Builder
+	sb.WriteString("verdict ")
+	sb.WriteString("src=" + flowEndpoint(tx.Key.SrcIP[:], tx.Key.SrcPort, tx.Key.Family) + " ")
+	sb.WriteString("dst=" + flowEndpoint(tx.Key.DstIP[:], tx.Key.DstPort, tx.Key.Family) + " ")
+	sb.WriteString("action=" + string(action) + " stage=s5 ")
+	sb.WriteString("detectors=" + dets + " ")
+	if ja4 := tx.Metadata["botdef_ja4"]; ja4 != "" {
+		sb.WriteString("ja4=" + ja4 + " ")
+	}
+	if hf := tx.Metadata["botdef_hf"]; hf != "" {
+		sb.WriteString("hf=" + hf + " ")
+	}
+	cls := tx.Metadata["botdef_class"]
+	if cls == "" {
+		cls = "none"
+	}
+	sb.WriteString("class=" + cls + " ")
+	ruleIDs := make([]string, 0, len(v.Rules))
+	for _, r := range v.Rules {
+		ruleIDs = append(ruleIDs, string(r))
+	}
+	sb.WriteString("rules=" + strings.Join(ruleIDs, ",") + " ")
+	sb.WriteString(fmt.Sprintf("score=%d", v.Score))
+	tx.Metadata[labLogMeta] = sb.String()
 }
 
 // AttachClientHello stores one terminated-hop ClientHello summary on the tx
