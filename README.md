@@ -52,8 +52,8 @@ head `24d5be7`, before the #150 perf levers. The numbers re-read at each release
 | ladder-json-1k | 600 µs | 548.6 µs | holds (0.91x) |
 | ladder-json-8k | 600 µs | 798.7 µs | unmet (1.33x) — variance class, [#147](https://github.com/trishula-dev/trishula/issues/147) |
 | ladder-json-64k | 1200 µs | 577.2 µs | holds (0.48x) |
-| ladder-form-dense-1k | 600 µs | 116319.7 µs | pinned open — the §17.1 finding |
-| ladder-form-dense-8k | 600 µs | 180720.5 µs | pinned open — the §17.1 finding |
+| ladder-form-dense-1k | 600 µs | 116319.7 µs | pinned open — the [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#171-budgets-by-stage) finding |
+| ladder-form-dense-8k | 600 µs | 180720.5 µs | pinned open — the [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#171-budgets-by-stage) finding |
 | steady-json-8k (the [M2](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#171-budgets-by-stage) e2e cell) | 1500 µs | 320.0 µs | holds (0.21x) |
 
 The gate set: `test/bench` runs the [§17.2](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#172-benchmark-plan)
@@ -72,6 +72,24 @@ the attack cell reads 0.22–0.31 ms per evaluate on the measurement host.
 
 CRS parity: 19/19 corpus cases at 100% verdict parity, one documented skip
 ([#7](https://github.com/trishula-dev/trishula/issues/7#issuecomment-6092716820)).
+
+The dev VM walls ([#147](https://github.com/trishula-dev/trishula/issues/147#issuecomment-6361589665)):
+one quiet run on the OrbStack rig (noble, arm64, 8 vCPU, Go 1.26.0), prefilter
+off vs on. The pinned
+[§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#171-budgets-by-stage)
+finding holds on the VM at 13x-95x (prefilter on). The `64k` row
+carries a guest-side p99 tail on the VM; hosted CI reads the same row at
+0.48x-0.86x and stays the calibration surface.
+
+| Cell | Budget p99 | VM p99 (prefilter off) | VM p99 (prefilter on) |
+|---|---|---|---|
+| steady-json-8k | 1500 µs | 794.6 µs | 188.8 µs |
+| attack-xss-small | 1500 µs | 1039.5 µs | 925.8 µs |
+| attack-sqli-small | 1500 µs | 1095.7 µs | 548.3 µs |
+| ladder-json-1k | 600 µs | 611.3 µs | 483.3 µs |
+| ladder-json-8k | 600 µs | 347.3 µs | 626.6 µs |
+| ladder-json-64k | 1200 µs | 9890.9 µs | 14189.2 µs |
+| ladder-form-dense-8k | 600 µs | 63354.1 µs | 56770.3 µs |
 
 ## Upcoming features
 
@@ -131,6 +149,20 @@ go test ./...
 
 The suite gates the bench walls, the CRS parity differential (19/19 corpus
 cases), the ban conformance set, the shield tier gate and the docs guards.
+
+## Run the bench on the dev VM
+
+[lab/bench-vm.sh](lab/bench-vm.sh) runs the
+[§17.2](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#172-benchmark-plan)
+rig in the dev VM. Start from a VM copy of the tree:
+
+```bash
+orb run -m trishula-build-dev -u root bash /mnt/mac/<path-to-clone>/lab/bench-vm.sh
+```
+
+The script prints four sections: the new CI shape, the old-shape control, the
+walls with the prefilter on and the control with it off. The VM is the A/B
+surface. Hosted CI stays the calibration surface.
 
 ## Proof
 
