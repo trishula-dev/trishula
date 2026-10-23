@@ -23,6 +23,12 @@
 package ml
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"math"
+	"sort"
+	"strings"
+
 	"github.com/trishula-dev/trishula/internal/engine/cel"
 	"github.com/trishula-dev/trishula/internal/engine/ingest"
 )
@@ -69,13 +75,111 @@ type FeatureView struct {
 // when the view is nil — the extractor never fabricates features for an
 // absent parse; the parse stages own the tx.
 func Extract(view *cel.Request, tx *ingest.TxContext) (FeatureView, bool) {
-	return FeatureView{}, false // TR-21 RED stub: GREEN lands the §14.2 extraction
+	if view == nil {
+		return FeatureView{}, false // never fabricate features for an absent parse
+	}
+	target := view.Path + view.Query
+	fv := FeatureView{
+		Version:          FeatureViewVersion,
+		Method:           view.Method,
+		PathLen:          len(view.Path),
+		PathEntropy:      shannonEntropy(target),
+		SpecialCharRatio: specialCharRatio(target),
+		QueryParams:      len(queryParamNames(view.Query)),
+	}
+	for _, w := range view.RateWindows {
+		if w.Requests > fv.WindowRequests {
+			fv.WindowRequests = w.Requests
+		}
+	}
+	if tx != nil {
+		fv.FlowPackets = tx.Packets
+	}
+	return fv, true
 }
 
-// Signature is the normalized request signature (§14.2 item 5): the
-// signature that verdict-cache keys key on. v0 normalization keeps the
-// method, the target and the param NAMES, and drops param values — two
-// requests of one shape share one signature.
-func Signature(fv FeatureView) string {
-	return "" // TR-21 RED stub: GREEN lands the §14.2 normalization
+// Signature is the normalized request signature (§14.2 item 5): the key the
+// judge-verdict cache keys on. v0 normalization keeps the method, the path
+// and the sorted param NAMES — param values are dropped entirely, so two
+// requests of one shape share one signature. The digest is SHA-256 hex: the
+// signature keys evidence and caches, and the raw values never land in a
+// key surface.
+func Signature(view *cel.Request) string {
+	if view == nil {
+		return ""
+	}
+	names := queryParamNames(view.Query)
+	sort.Strings(names)
+	h := sha256.New()
+	h.Write([]byte(view.Method))
+	h.Write([]byte{0x1f})
+	h.Write([]byte(view.Path))
+	h.Write([]byte{0x1f})
+	h.Write([]byte(strings.Join(names, "\x1e")))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// queryParamNames splits the query's non-empty &-segments into param names
+// (one home for the v0 name normalization; values drop at the first '=').
+func queryParamNames(query string) []string {
+	names := make([]string, 0, 8)
+	for _, seg := range strings.Split(query, "&") {
+		if seg == "" {
+			continue
+		}
+		if i := strings.IndexByte(seg, '='); i >= 0 {
+			seg = seg[:i]
+		}
+		names = append(names, seg)
+	}
+	return names
+}
+
+// specialCharRatio is the §14.2 char-class statistic: the fraction of
+// request-target bytes outside the alphabetic, digit and common-URL
+// classes (- . / _ ~). Empty targets report 0.
+func specialCharRatio(target string) float64 {
+	if len(target) == 0 {
+		return 0
+	}
+	special := 0
+	for i := 0; i < len(target); i++ {
+		if !commonTargetByte(target[i]) {
+			special++
+		}
+	}
+	return float64(special) / float64(len(target))
+}
+
+// commonTargetByte is the v0 common class: bytes safe to carry in a URL.
+func commonTargetByte(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
+		return true
+	case b == '-' || b == '.' || b == '/' || b == '_' || b == '~':
+		return true
+	}
+	return false
+}
+
+// shannonEntropy is the §14.2 entropy statistic over the request target:
+// -Σ p·log2 p per byte, in [0, 8]. An empty target reports 0.
+func shannonEntropy(target string) float64 {
+	if len(target) == 0 {
+		return 0
+	}
+	var seen [256]int
+	for i := 0; i < len(target); i++ {
+		seen[target[i]]++
+	}
+	e := 0.0
+	n := float64(len(target))
+	for _, c := range seen {
+		if c == 0 {
+			continue
+		}
+		p := float64(c) / n
+		e -= p * math.Log2(p)
+	}
+	return e
 }

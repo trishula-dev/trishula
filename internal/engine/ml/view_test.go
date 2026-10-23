@@ -91,7 +91,7 @@ func TestExtractEntropyAndCharClass(t *testing.T) {
 		wantRatio float64
 		wantZero  bool // entropy expected exactly 0
 	}{
-		{"flat repeated target", "/aaaaaaaa", "", 0, true},
+		{"flat repeated run (no slash byte)", "aaaaaaaa", "", 0, true},
 		{"varied punctuated target", "", "!@#$%&*()", 1.0, false},
 		{"plain static path", "/healthz", "", 0, false},
 		{"mixed target", "/ab!c", "a|b", 0.25, false},
@@ -131,30 +131,35 @@ func TestExtractNoView(t *testing.T) {
 // --- signature tests ------------------------------------------------------
 
 // TestSignatureNormalization pins the §14.2 normalized request signature:
-// method + target + param names, values dropped, names order-insensitive.
+// method + target + sorted param names, values dropped. The signature reads
+// the parsed view — FeatureView carries aggregates only (no raw text), so
+// the normalizable request shape comes from the view.
 func TestSignatureNormalization(t *testing.T) {
-	base := fvOf(t, "GET", "/a/b", "x=1&y=2", nil, 0)
-	rows := []struct {
-		name string
-		fv   FeatureView
-		same bool
-	}{
-		{"same shape, values swapped", fvOf(t, "GET", "/a/b", "x=9&y=8", nil, 0), true},
-		{"same shape, names reordered", fvOf(t, "GET", "/a/b", "y=2&x=1", nil, 0), true},
-		{"same shape twice", fvOf(t, "GET", "/a/b", "x=1&y=2", nil, 0), true},
-		{"different method", fvOf(t, "POST", "/a/b", "x=1&y=2", nil, 0), false},
-		{"different path", fvOf(t, "GET", "/a/c", "x=1&y=2", nil, 0), false},
-		{"different param names", fvOf(t, "GET", "/a/b", "x=1&z=2", nil, 0), false},
+	sigOf := func(t *testing.T, method, path, query string) string {
+		t.Helper()
+		return Signature(&cel.Request{Method: method, Path: path, Query: query})
 	}
-	want := Signature(base)
+	want := sigOf(t, "GET", "/a/b", "x=1&y=2")
 	if want == "" {
 		t.Fatal("Signature returned an empty string for a real fixture")
 	}
+	rows := []struct {
+		name string
+		sig  string
+		same bool
+	}{
+		{"same shape, values swapped", sigOf(t, "GET", "/a/b", "x=9&y=8"), true},
+		{"same shape, names reordered", sigOf(t, "GET", "/a/b", "y=2&x=1"), true},
+		{"same shape twice", sigOf(t, "GET", "/a/b", "x=1&y=2"), true},
+		{"different method", sigOf(t, "POST", "/a/b", "x=1&y=2"), false},
+		{"different path", sigOf(t, "GET", "/a/c", "x=1&y=2"), false},
+		{"different param names", sigOf(t, "GET", "/a/b", "x=1&z=2"), false},
+		{"nil view", Signature(nil), false},
+	}
 	for _, r := range rows {
 		t.Run(r.name, func(t *testing.T) {
-			got := Signature(r.fv)
-			if (got == want) != r.same {
-				t.Errorf("Signature: got %q vs base %q — same=%v want=%v", got, want, got == want, r.same)
+			if (r.sig == want) != r.same {
+				t.Errorf("Signature: got %q vs base %q — same=%v want=%v", r.sig, want, r.sig == want, r.same)
 			}
 		})
 	}

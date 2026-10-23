@@ -139,7 +139,7 @@ func clockOrZero(tx *ingest.TxContext) uint64 {
 // (the S7 ML extractor, TR-21) share this key literally instead of
 // duplicating the attachment constant.
 func TxView(tx *ingest.TxContext) *cel.Request {
-	return nil // TR-21 RED stub: GREEN wires the single-homed read
+	return txView(tx)
 }
 
 // CELEval is the TR-05c S3 slot (the TR-02 seed pack evaluation). v0 runs
