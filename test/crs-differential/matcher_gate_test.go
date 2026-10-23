@@ -36,7 +36,7 @@ var tr16Seed = []matcher.Pattern{
 	{Rule: 942440, Phase: matcher.PhaseRequestBody, Surfaces: []string{"query", "body"},
 		Expr: `(?i)[';][\s]*--`},
 	{Rule: 942180, Phase: matcher.PhaseRequestBody, Surfaces: []string{"query", "body"},
-		Expr: `(?i)'[\s]*or[\s]*'1'[\s]*=[\s]*'1'`},
+		Expr: `(?i)'[\s]*or[\s]*'1'[\s]*=[\s]*'?1`},
 	{Rule: 941100, Phase: matcher.PhaseRequestBody, Surfaces: []string{"query", "body", "headers"},
 		Expr: `(?i)<script`},
 	{Rule: 913100, Phase: matcher.PhaseRequestHeaders, Surfaces: []string{"headers"},
@@ -127,9 +127,7 @@ func TestMatcherParityGate(t *testing.T) {
 	// reference projection. FP = pattern fires where the reference does
 	// not; MISS = reference fires the tagged id where the pattern does
 	// not.
-	type diverge struct{ kind string }
 	divergent := map[int][]string{} // rule -> case:phase kind
-	fired := map[int]int{}          // rule -> cases where the pattern fired
 	for _, c := range corpus.Cases {
 		if c.Skipped {
 			t.Logf("case %s: SKIPPED (%s)", c.Name, c.Skip)
@@ -159,9 +157,6 @@ func TestMatcherParityGate(t *testing.T) {
 					}
 					fires := gotSet[p.Rule]
 					want := refSet[p.Rule]
-					if fires {
-						fired[p.Rule]++
-					}
 					switch {
 					case fires && !want:
 						divergent[p.Rule] = append(divergent[p.Rule],

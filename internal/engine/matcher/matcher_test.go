@@ -34,7 +34,9 @@ func TestSelectHot(t *testing.T) {
 		wantError string
 	}{
 		{name: "budget above set size", budget: 2, wantHot: []int{913100, 942480}, wantCold: []int{941100}},
-		{name: "budget equals set size", budget: 3, wantHot: []int{913100, 941100, 942480}, wantCold: []int{}},
+		// Ranked order (frequency desc, ties by rule id) is the
+		// selection's output contract: the hot list reads hot-first.
+		{name: "budget equals set size", budget: 3, wantHot: []int{913100, 942480, 941100}, wantCold: []int{}},
 		{name: "zero budget is an error", budget: 0, wantError: "budget"},
 		{name: "negative budget is an error", budget: -1, wantError: "budget"},
 	}

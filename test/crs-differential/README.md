@@ -194,5 +194,52 @@ harness fails when ANY runnable case has an unexplained delta;
 corpus corrections must re-verify live against the reference evaluator
 (deterministic, 2+ runs) before pinning.
 
+## TR-16 — the compiled fast path: matcher differential gate
+
+The compiled fast path (PRD §11.4) adds its gate to this package.
+`TestMatcherParityGate` runs the compiled hot-subset scan against the
+live reference projection on every corpus case, per phase.
+
+### Design
+
+- Package: `internal/engine/matcher`. One concern per part: `Set` carries
+  the hot-subset management, `DB` carries the block-mode scan. One scan
+  covers the pattern set over the §11.3 view segments per phase.
+- R2b pressure valve (PRD §20.1): `SelectHot` ranks by frequency,
+  descending, under a budget cap. Patterns outside the budget stay
+  reference-path-only (never compiled).
+- Seed set: 9 patterns, one per reference rule id the corpus exercises.
+  Every expression mirrors the vendored rule's signature intent in RE2.
+- Gate contract: a pattern fires on its declared surfaces exactly when
+  its tagged rule id fires in the live reference phase set. A divergent
+  pattern demotes to reference-path-only. The recompiled set must hold
+  100% verdict parity on every case with a non-empty active set
+  (self-healing parity, §11.4/§11.8). Parity computes from the live walk
+  per case, never from a pinned set.
+
+### Gate run + pinned census
+
+```
+go test ./test/crs-differential/ -run TestMatcherParityGate -count=1
+# matcher-parity census: seed 9, divergent 1 ([942190]), active 8,
+# active-parity 100% vs live reference projection
+```
+
+Census at the committed sha (deterministic: 3 runs stable):
+
+| id | class | divergence | disposition |
+|---|---|---|---|
+| 942190 | SQLi UNION chain | MISS on 03-sqli-union-cookie | demoted to reference-path-only |
+
+The 942190 delta: the rule targets REQUEST_COOKIES. The v0 view
+projection carries cookie values under the headers segment. The
+pattern's query/body surfaces cannot fire on the cookie carrier. The
+pattern stays reference-path-only until a slice splits the view planes.
+The reference evaluator keeps the coverage.
+
+Active census, post-demotion (fires vs the live projection): 942480 on
+6 cases; 941100 on 3; 944150 on 3; 913100 on 2; 942440, 942180, 930100
+and 930110 on 1 each. Every active pattern holds 100% parity.
+
 Version-safety: the embeds stay GO-1.27-safe (`//go:embed` patterns over
 static files only; no toolchain-version-dependent embed constructs).

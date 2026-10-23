@@ -17,7 +17,9 @@ package matcher
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
+	"sort"
 )
 
 // Path is where a pattern evaluates: in the compiled hot database, or on
@@ -62,18 +64,42 @@ type Set struct {
 	patterns []Pattern
 }
 
-// DB is the compiled block-mode scan database (the hot subset).
+// DB is the compiled block-mode scan database (the hot subset): one pass
+// per declared surface covers the whole pattern set (the Vectorscan seam;
+// the RE2 engine keeps the scan backtracking-free, PRD §18.2).
 type DB struct {
-	rules    []int
-	res      map[int]*regexp.Regexp
-	surfaces map[int][]string
-	phases   map[int]int
+	byPhase map[int][]int
+	res     map[int]*regexp.Regexp
+	surface func(rule int) []string
 }
 
-// NewSet builds a Set; a duplicate rule id or an empty expression fails
-// the build (a malformed pattern is a load error, never a silent skip).
+// NewSet builds a Set; a duplicate rule id, an empty expression, or an
+// unknown Path fails the build (a malformed pattern is a load error,
+// never a silent skip).
 func NewSet(patterns []Pattern) (*Set, error) {
-	return nil, errors.New("matcher: not implemented")
+	seen := map[int]int{}
+	out := make([]Pattern, len(patterns))
+	copy(out, patterns)
+	for i := range out {
+		p := out[i]
+		if p.Rule <= 0 {
+			return nil, fmt.Errorf("matcher: pattern rule id %d invalid", p.Rule)
+		}
+		if p.Expr == "" {
+			return nil, fmt.Errorf("matcher: rule %d: empty expression", p.Rule)
+		}
+		if _, dup := seen[p.Rule]; dup {
+			return nil, fmt.Errorf("matcher: duplicate rule id %d in pattern set", p.Rule)
+		}
+		seen[p.Rule] = i
+		if p.Path == "" {
+			out[i].Path = PathActive
+		}
+		if out[i].Path != PathActive && out[i].Path != PathReference {
+			return nil, fmt.Errorf("matcher: rule %d: unknown path %q", p.Rule, p.Path)
+		}
+	}
+	return &Set{patterns: out}, nil
 }
 
 // SelectHot applies the R2b subset selection: ranking by frequency,
@@ -81,24 +107,69 @@ func NewSet(patterns []Pattern) (*Set, error) {
 // stay on the hot path; the rest move to PathReference. A nil freq or a
 // non-positive budget is a configuration error.
 func (s *Set) SelectHot(freq func(rule int) uint64, budget int) (active []Pattern, referenceOnly []Pattern, err error) {
-	return nil, nil, errors.New("matcher: not implemented")
+	if freq == nil {
+		return nil, nil, errors.New("matcher: nil frequency source")
+	}
+	if budget <= 0 {
+		return nil, nil, fmt.Errorf("matcher: non-positive hot-subset budget %d", budget)
+	}
+	ranked := make([]Pattern, len(s.patterns))
+	copy(ranked, s.patterns)
+	sort.SliceStable(ranked, func(i, j int) bool {
+		a, b := ranked[i], ranked[j]
+		fa, fb := freq(a.Rule), freq(b.Rule)
+		if fa != fb {
+			return fa > fb
+		}
+		return a.Rule < b.Rule
+	})
+	for i := range ranked {
+		if i < budget {
+			ranked[i].Path = PathActive
+		} else {
+			ranked[i].Path = PathReference
+		}
+	}
+	s.patterns = ranked
+	rankedBudget := budget
+	if rankedBudget > len(ranked) {
+		rankedBudget = len(ranked)
+	}
+	return activeOf(ranked), referenceOf(ranked), nil
 }
 
 // Active returns the patterns currently on the hot path.
 func (s *Set) Active() []Pattern {
-	return nil
+	return activeOf(s.patterns)
 }
 
 // ReferenceOnly returns the patterns currently demoted off the hot path.
 func (s *Set) ReferenceOnly() []Pattern {
-	return nil
+	return referenceOf(s.patterns)
 }
 
 // Demote moves the named rules to PathReference (the self-healing parity
 // action, PRD §11.8). An unknown rule id is an error: demotion never
 // removes a phantom. Re-demoting a reference-only rule is a no-op.
 func (s *Set) Demote(rules ...int) error {
-	return errors.New("matcher: not implemented")
+	for _, rule := range rules {
+		idx := s.indexOf(rule)
+		if idx < 0 {
+			return fmt.Errorf("matcher: demote rule %d: not in set", rule)
+		}
+		s.patterns[idx].Path = PathReference
+	}
+	return nil
+}
+
+// indexOf returns the set position of the rule id, or -1.
+func (s *Set) indexOf(rule int) int {
+	for i := range s.patterns {
+		if s.patterns[i].Rule == rule {
+			return i
+		}
+	}
+	return -1
 }
 
 // Compile compiles the active pattern list into the block-mode DB. A bad
@@ -106,12 +177,78 @@ func (s *Set) Demote(rules ...int) error {
 // load, never a mid-request scan). Reference-path patterns in the input
 // are a configuration error.
 func Compile(active []Pattern) (*DB, error) {
-	return nil, errors.New("matcher: not implemented")
+	res := map[int]*regexp.Regexp{}
+	surfaces := map[int][]string{}
+	byPhase := map[int][]int{}
+	for _, p := range active {
+		if p.Path == PathReference {
+			return nil, fmt.Errorf("matcher: compile input carries reference-path rule %d", p.Rule)
+		}
+		if p.Expr == "" {
+			return nil, fmt.Errorf("matcher: rule %d: empty expression", p.Rule)
+		}
+		if _, seen := res[p.Rule]; seen {
+			return nil, fmt.Errorf("matcher: duplicate rule id %d in compile input", p.Rule)
+		}
+		re, err := regexp.Compile(p.Expr)
+		if err != nil {
+			return nil, fmt.Errorf("matcher: rule %d: %w", p.Rule, err)
+		}
+		res[p.Rule] = re
+		surfaces[p.Rule] = p.Surfaces
+		byPhase[p.Phase] = append(byPhase[p.Phase], p.Rule)
+	}
+	return &DB{
+		byPhase: byPhase,
+		res:     res,
+		surface: func(rule int) []string { return surfaces[rule] },
+	}, nil
 }
 
 // Scan runs one pass over the view segments for the given phase and
 // returns the matched rule ids in ascending order, deduplicated. Patterns
 // of another phase, or with no surface present in the view, do not fire.
 func (db *DB) Scan(phase int, view map[string]string) []int {
-	return nil
+	var ids []int
+	seen := map[int]bool{}
+	for _, rule := range db.byPhase[phase] {
+		for _, surf := range db.surface(rule) {
+			payload, ok := view[surf]
+			if !ok || payload == "" {
+				continue
+			}
+			if db.res[rule].MatchString(payload) && !seen[rule] {
+				seen[rule] = true
+				ids = append(ids, rule)
+				break
+			}
+		}
+	}
+	sort.Ints(ids)
+	if ids == nil {
+		ids = []int{}
+	}
+	return ids
+}
+
+// activeOf filters the hot-path patterns.
+func activeOf(ps []Pattern) []Pattern {
+	out := make([]Pattern, 0, len(ps))
+	for _, p := range ps {
+		if p.Path == PathActive {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// referenceOf filters the reference-path patterns.
+func referenceOf(ps []Pattern) []Pattern {
+	out := make([]Pattern, 0, len(ps))
+	for _, p := range ps {
+		if p.Path == PathReference {
+			out = append(out, p)
+		}
+	}
+	return out
 }
