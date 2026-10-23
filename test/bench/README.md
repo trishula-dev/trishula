@@ -1,7 +1,7 @@
 # test/bench — the §17 benchmark harness (TR-24)
 
-This package is the in-repo part of the [PRD §17.2 benchmark plan](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#172-benchmark-plan).
-It encodes the [§17.1 budget table](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#171-budgets-by-stage)
+This package is the in-repo part of the [PRD §17.2 benchmark plan](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#172-benchmark-plan).
+It encodes the [§17.1 budget table](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage)
 as data, measures the engine-side scenarios the hosted CI can run, and
 gates the measurements.
 

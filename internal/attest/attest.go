@@ -11,7 +11,7 @@
 // digest binding, required predicate types and the builder identity prefix.
 // It does not verify signatures; `gh attestation verify` holds the
 // cryptographic step (Sigstore certificate + Rekor transparency log).
-// PRD ref: https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#181-assets-and-trust-boundaries
+// PRD ref: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#181-assets-and-trust-boundaries
 package attest
 
 import (

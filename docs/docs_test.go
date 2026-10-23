@@ -10,7 +10,7 @@ import (
 )
 
 // githubSlug reproduces GitHub's GFM heading-anchor algorithm. It was
-// byte-verified against the rendered github.com blob of PRD.md v4 on
+// byte-verified against the rendered github.com blob of spec.md v4 on
 // 2026-10-08 (117/117 heading anchors matched) — see issue #60.
 //
 // Rules: lowercase; strip everything that is not a letter, digit,
@@ -37,16 +37,16 @@ var reTocLink = regexp.MustCompile(`\]\(#([^)]+)\)`)
 
 func readPRD(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile("PRD.md")
+	b, err := os.ReadFile("spec.md")
 	if err != nil {
-		t.Fatalf("read PRD.md: %v", err)
+		t.Fatalf("read spec.md: %v", err)
 	}
 	return string(b)
 }
 
-// TestPRDSection2Contiguity fails while the D-ladder skips §2.5
+// TestSpecSection2Contiguity fails while the D-ladder skips §2.5
 // (D5 at §2.6, D6 at §2.7). See issue #60.
-func TestPRDSection2Contiguity(t *testing.T) {
+func TestSpecSection2Contiguity(t *testing.T) {
 	prd := readPRD(t)
 	ms := reH3Num.FindAllStringSubmatch(prd, -1)
 	if len(ms) == 0 {
@@ -74,10 +74,10 @@ func seq(ms [][]string) string {
 	return strings.Join(parts, ", ")
 }
 
-// TestPRDTableOfContentsAnchors fails while the manual TOC uses
+// TestSpecTableOfContentsAnchors fails while the manual TOC uses
 // single-dash slugs for headings containing & or — (GitHub slugger
 // renders those as --). See issue #60.
-func TestPRDTableOfContentsAnchors(t *testing.T) {
+func TestSpecTableOfContentsAnchors(t *testing.T) {
 	prd := readPRD(t)
 
 	anchor := map[string]string{} // slug -> heading text
@@ -143,7 +143,7 @@ var rePRDAnchorLink = regexp.MustCompile(
 
 var reMdLink = regexp.MustCompile(`\]\(([^)]+)\)`)
 
-// prdHeadingAnchors returns every heading anchor PRD.md exposes — ## and
+// prdHeadingAnchors returns every heading anchor spec.md exposes — ## and
 // ### headings slugged with the verified GitHub algorithm and deduped the
 // GitHub way — as slug → heading text.
 func prdHeadingAnchors(prd string) map[string]string {
@@ -180,7 +180,7 @@ func TestDX1GateDocs(t *testing.T) {
 		"≤ 15 min",
 		"nightly",
 		"first enforced rule",
-		"https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#21-success-metrics--adoption-gates",
+		"https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#21-success-metrics--adoption-gates",
 	} {
 		if !strings.Contains(labReadme, want) {
 			t.Errorf("lab/dx1/README.md is missing the DX1 gate surface %q", want)
