@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -51,13 +52,10 @@ func bundleFor(t *testing.T, st map[string]any) Bundle {
 	return Bundle(mustStatementJSON(t, doc))
 }
 
-func provenanceStatement(digest string, builder string) map[string]any {
+func provenanceStatement(digests []string, builder string) map[string]any {
 	return map[string]any{
-		"_type": "https://in-toto.io/Statement/v1",
-		"subject": []any{map[string]any{
-			"name":   "bpf_shield_x86_bpfel.o",
-			"digest": map[string]any{"sha256": strings.TrimPrefix(digest, "sha256:")},
-		}},
+		"_type":         "https://in-toto.io/Statement/v1",
+		"subject":       subjectsFor(digests),
 		"predicateType": PredProvenance,
 		"predicate": map[string]any{
 			"runDetails": map[string]any{
@@ -67,16 +65,26 @@ func provenanceStatement(digest string, builder string) map[string]any {
 	}
 }
 
-func sbomStatement(digest string) map[string]any {
+func sbomStatement(digests []string) map[string]any {
 	return map[string]any{
-		"_type": "https://in-toto.io/Statement/v1",
-		"subject": []any{map[string]any{
-			"name":   "bpf_shield_x86_bpfel.o",
-			"digest": map[string]any{"sha256": strings.TrimPrefix(digest, "sha256:")},
-		}},
+		"_type":         "https://in-toto.io/Statement/v1",
+		"subject":       subjectsFor(digests),
 		"predicateType": PredSBOM,
 		"predicate":     map[string]any{"data": map[string]any{"spdxVersion": "SPDX-2.3"}},
 	}
+}
+
+// subjectsFor builds the statement's subject list: one named subject per
+// digest, in order.
+func subjectsFor(digests []string) []any {
+	subjects := make([]any, 0, len(digests))
+	for i, d := range digests {
+		subjects = append(subjects, map[string]any{
+			"name":   fmt.Sprintf("asset-%02d", i),
+			"digest": map[string]any{"sha256": strings.TrimPrefix(d, "sha256:")},
+		})
+	}
+	return subjects
 }
 
 type stubLister struct{ assets []AssetSpec }
@@ -108,7 +116,7 @@ func verifierOf(assets []AssetSpec, bundles map[string][]Bundle) *Verifier {
 }
 
 func TestDecodeStatementCarriesTheWireFields(t *testing.T) {
-	st, err := DecodeStatement(bundleFor(t, provenanceStatement(assetSHA,
+	st, err := DecodeStatement(bundleFor(t, provenanceStatement([]string{assetSHA},
 		"https://github.com/trishula-dev/trishula/.github/workflows/release-attest.yml@refs/heads/main")))
 	if err != nil {
 		t.Fatalf("decode bundle: %v", err)
@@ -116,8 +124,8 @@ func TestDecodeStatementCarriesTheWireFields(t *testing.T) {
 	if st.PredicateType != PredProvenance {
 		t.Errorf("predicate type %q, want %q", st.PredicateType, PredProvenance)
 	}
-	if st.SubjectSHA256 != assetSHA {
-		t.Errorf("subject digest %q, want %q", st.SubjectSHA256, assetSHA)
+	if got := st.SubjectDigests; len(got) != 1 || got[0] != assetSHA {
+		t.Errorf("subject digests %v, want [%s]", got, assetSHA)
 	}
 	if !strings.HasPrefix(st.Builder, "https://github.com/trishula-dev/trishula/") {
 		t.Errorf("builder id %q carries no repository identity", st.Builder)
@@ -134,6 +142,25 @@ func TestDecodeStatementRejectsMalformedBundles(t *testing.T) {
 		if _, err := DecodeStatement(b); err == nil {
 			t.Errorf("bundle %q decoded with no error; the contract rejects a malformed bundle", b)
 		}
+	}
+}
+
+func TestDecoderCollectsEverySubjectDigest(t *testing.T) {
+	st := provenanceStatement([]string{assetSHA, otherSHA}, "b")
+	decoded, err := DecodeStatement(bundleFor(t, st))
+	if err != nil {
+		t.Fatalf("decode bundle: %v", err)
+	}
+	if got := decoded.SubjectDigests; len(got) != 2 || got[0] != assetSHA || got[1] != otherSHA {
+		t.Errorf("subject digests %v, want every subject in order", got)
+	}
+}
+
+func TestDecoderRejectsStatementWithoutSubjects(t *testing.T) {
+	st := provenanceStatement([]string{assetSHA}, "b")
+	delete(st, "subject")
+	if _, err := DecodeStatement(bundleFor(t, st)); err == nil {
+		t.Error("statement with no subject decoded with no error; the contract rejects it")
 	}
 }
 
@@ -164,8 +191,8 @@ func TestVerifierAcceptsFullyAttestedRelease(t *testing.T) {
 	}
 	localBuilder := "https://github.com/trishula-dev/trishula/.github/workflows/release-attest.yml@refs/heads/main"
 	bundles := map[string][]Bundle{
-		assetSHA: {bundleFor(t, provenanceStatement(assetSHA, localBuilder)), bundleFor(t, sbomStatement(assetSHA))},
-		otherSHA: {bundleFor(t, provenanceStatement(otherSHA, localBuilder)), bundleFor(t, sbomStatement(otherSHA))},
+		assetSHA: {bundleFor(t, provenanceStatement([]string{assetSHA}, localBuilder)), bundleFor(t, sbomStatement([]string{assetSHA}))},
+		otherSHA: {bundleFor(t, provenanceStatement([]string{otherSHA}, localBuilder)), bundleFor(t, sbomStatement([]string{otherSHA}))},
 	}
 	results := verifierOf(assets, bundles).Verify("2026.01-rc2")
 	if len(results) != len(assets) {
@@ -181,12 +208,37 @@ func TestVerifierAcceptsFullyAttestedRelease(t *testing.T) {
 	}
 }
 
+func TestVerifierAcceptsTheMultiSubjectReleaseStatement(t *testing.T) {
+	// The released attest statements carry every release asset in one
+	// subject list; the verifier accepts the asset set from a single
+	// statement pair.
+	assets := []AssetSpec{
+		{Name: "bpf_shield_x86_bpfel.o", SHA256: assetSHA},
+		{Name: "checksums.txt", SHA256: otherSHA},
+	}
+	localBuilder := "https://github.com/trishula-dev/trishula/.github/workflows/release-attest.yml@refs/heads/main"
+	digests := []string{assetSHA, otherSHA}
+	bundles := map[string][]Bundle{
+		assetSHA: {bundleFor(t, provenanceStatement(digests, localBuilder)), bundleFor(t, sbomStatement(digests))},
+		otherSHA: {bundleFor(t, provenanceStatement(digests, localBuilder)), bundleFor(t, sbomStatement(digests))},
+	}
+	results := verifierOf(assets, bundles).Verify("2026.01-rc2")
+	if len(results) != len(assets) {
+		t.Fatalf("Verify() returned %d results, want %d", len(results), len(assets))
+	}
+	for _, r := range results {
+		if r.Status != StatusPass || !r.Provenance || !r.SBOM {
+			t.Errorf("asset %s: status %q provenance=%v sbom=%v with reasons %v, want both statements bound from the one subject list", r.Asset.Name, r.Status, r.Provenance, r.SBOM, r.Reasons)
+		}
+	}
+}
+
 func TestVerifierRejectsSubjectDigestMismatch(t *testing.T) {
 	// The bundle fetch keys on the asset digest, but both statements
 	// inside carry a different subject: the binding is broken.
 	wrong := map[string][]Bundle{
-		assetSHA: {bundleFor(t, provenanceStatement(otherSHA, "https://github.com/trishula-dev/trishula/.github/workflows/release-attest.yml@refs/heads/main")),
-			bundleFor(t, sbomStatement(otherSHA))},
+		assetSHA: {bundleFor(t, provenanceStatement([]string{otherSHA}, "https://github.com/trishula-dev/trishula/.github/workflows/release-attest.yml@refs/heads/main")),
+			bundleFor(t, sbomStatement([]string{otherSHA}))},
 	}
 	results := verifierOf([]AssetSpec{{Name: "bpf_shield_x86_bpfel.o", SHA256: assetSHA}}, wrong).Verify("2026.01-rc1")
 	if len(results) != 1 {
@@ -203,8 +255,8 @@ func TestVerifierRejectsSubjectDigestMismatch(t *testing.T) {
 
 func TestVerifierRejectsForeignBuilder(t *testing.T) {
 	bundles := map[string][]Bundle{
-		assetSHA: {bundleFor(t, provenanceStatement(assetSHA, "https://github.com/other-fork/evil/.github/workflows/attest.yml@refs/heads/main")),
-			bundleFor(t, sbomStatement(assetSHA))},
+		assetSHA: {bundleFor(t, provenanceStatement([]string{assetSHA}, "https://github.com/other-fork/evil/.github/workflows/attest.yml@refs/heads/main")),
+			bundleFor(t, sbomStatement([]string{assetSHA}))},
 	}
 	results := verifierOf([]AssetSpec{{Name: "bpf_shield_x86_bpfel.o", SHA256: assetSHA}}, bundles).Verify("2026.01-rc1")
 	if len(results) != 1 {
@@ -228,7 +280,7 @@ func TestVerifierRejectsForeignBuilder(t *testing.T) {
 func TestVerifierDemandsBothPredicateTypes(t *testing.T) {
 	localBuilder := "https://github.com/trishula-dev/trishula/.github/workflows/release-attest.yml@refs/heads/main"
 	provenanceOnly := map[string][]Bundle{
-		assetSHA: {bundleFor(t, provenanceStatement(assetSHA, localBuilder))},
+		assetSHA: {bundleFor(t, provenanceStatement([]string{assetSHA}, localBuilder))},
 	}
 	results := verifierOf([]AssetSpec{{Name: "bpf_shield_x86_bpfel.o", SHA256: assetSHA}}, provenanceOnly).Verify("2026.01-rc1")
 	if len(results) != 1 {

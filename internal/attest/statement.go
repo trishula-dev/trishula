@@ -81,13 +81,18 @@ func DecodeStatement(bundle Bundle) (Statement, error) {
 	if len(doc.Subject) == 0 {
 		return Statement{}, errors.New("statement carries no subject")
 	}
-	sha, ok := doc.Subject[0].Digest["sha256"]
-	if !ok || sha == "" {
+	digests := make([]string, 0, len(doc.Subject))
+	for _, s := range doc.Subject {
+		if sha := s.Digest["sha256"]; sha != "" {
+			digests = append(digests, "sha256:"+sha)
+		}
+	}
+	if len(digests) == 0 {
 		return Statement{}, errors.New("statement subject carries no sha256 digest")
 	}
 	return Statement{
-		PredicateType: doc.PredicateType,
-		SubjectSHA256: "sha256:" + sha,
-		Builder:       doc.Predicate.RunDetails.Builder.ID,
+		PredicateType:  doc.PredicateType,
+		SubjectDigests: digests,
+		Builder:        doc.Predicate.RunDetails.Builder.ID,
 	}, nil
 }

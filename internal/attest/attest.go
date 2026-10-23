@@ -53,12 +53,14 @@ type AssetSpec struct {
 }
 
 // Statement carries one decoded in-toto statement from an attestation
-// bundle. SubjectSHA256 is in the "sha256:<hex>" form. Builder is the
-// provenance predicate's builder.id; SBOM statements carry it empty.
+// bundle. SubjectDigests holds every subject digest, in the
+// "sha256:<hex>" form; the released statements name every release asset.
+// Builder is the provenance predicate's builder.id; SBOM statements carry
+// it empty.
 type Statement struct {
-	PredicateType string
-	SubjectSHA256 string
-	Builder       string
+	PredicateType  string
+	SubjectDigests []string
+	Builder        string
 }
 
 // Bundle carries one Sigstore bundle object as the attestations REST
@@ -152,6 +154,10 @@ func (v *Verifier) verifyAsset(a AssetSpec) *AssetResult {
 // predicate type binds the asset: the subject digest equals the asset
 // digest and, for provenance, the builder id sits inside the repository
 // identity. It appends the reject reasons where no statement binds.
+//
+// TR-81 multi-subject RED stub: only the statement's first subject binds.
+// The GREEN commit widens the binding to every subject the statement
+// carries; the released attest statements name all release assets.
 func (v *Verifier) bindStatement(candidates []Statement, a AssetSpec, checkBuilder bool, reasons *[]string) bool {
 	predicate := PredSBOM
 	if checkBuilder {
@@ -162,8 +168,8 @@ func (v *Verifier) bindStatement(candidates []Statement, a AssetSpec, checkBuild
 		return false
 	}
 	for _, st := range candidates {
-		if st.SubjectSHA256 != a.SHA256 {
-			*reasons = append(*reasons, fmt.Sprintf("%s: %s does not match %s", reasonSubjectMismatch, st.SubjectSHA256, a.SHA256))
+		if len(st.SubjectDigests) == 0 || st.SubjectDigests[0] != a.SHA256 {
+			*reasons = append(*reasons, fmt.Sprintf("%s: %s", reasonSubjectMismatch, strings.Join(st.SubjectDigests, ", ")))
 			continue
 		}
 		if checkBuilder && v.BuilderPrefix != "" && !strings.HasPrefix(st.Builder, v.BuilderPrefix) {
