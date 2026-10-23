@@ -1,7 +1,7 @@
 package bench
 
 // Guard: the percentile estimator is the nearest-rank rule, exactly, on
-// pinned inputs. One concern: the percentile math the §17.1 p50/p99
+// pinned inputs. One concern: the percentile math the spec's budget-table p50/p99
 // reports stand on.
 import (
 	"testing"

@@ -1,12 +1,12 @@
-// Package gatewayconformance implements the PRD §10 secondary-gateway
-// conformance lane (TR-26; PRD §10.5 portability honest-delta and
-// §20.1 R12): the engine leg of the §10.2 Gateway API contract, checked
+// Package gatewayconformance implements the spec's secondary-gateway
+// conformance lane (TR-26; the spec's portability honest-delta and
+// its R12 risk row): the engine leg of the Gateway API contract, checked
 // in CI against BOTH the NGF reference profile and the Envoy Gateway
 // secondary profile.
 //
 // The lane's falsifiable claim: the engine leg is
 // implementation-independent — a steered request head reconstructs the
-// same §11.3 view whatever conformant Gateway-API implementation
+// same spec request view whatever conformant Gateway-API implementation
 // delivers it, so an NGF-specific assumption wired into the parse
 // surface shows up as a conformance-row violation against the second
 // profile the day it is written, not in production portability. This
@@ -29,7 +29,7 @@
 // the lane runs in the hosted CI gate (`go test ./...`) per AGENTS.md.
 //
 // The delta record is also the R12 per-release review artifact: the
-// nine §10.5 rows stand in typed data, with each row's leg, expected
+// nine honest-delta rows stand in typed data, with each row's leg, expected
 // reference/secondary behaviour and honest degradation from the PRD
 // table verbatim.
 package gatewayconformance
@@ -38,7 +38,7 @@ import (
 	"fmt"
 )
 
-// Leg says which plane a §10.5 delta row lives on:
+// Leg says which plane a spec honest-delta row lives on:
 // LegGateway (gateway behaviour per Gateway API implementation),
 // LegEngine (Trishula's engine leg, driveable in CI), LegKernel
 // (the eBPF shield plane, gateway-independent by contract).
@@ -53,7 +53,7 @@ const (
 	LegKernel Leg = "kernel"
 )
 
-// Row encodes one §10.5 portability honest-delta row with the PRD
+// Row encodes one spec portability honest-delta row with the
 // table's wording verbatim: Reference and Secondary carry the table's
 // expectation cells, Degradation its degradation cell, Leg the plane
 // the capability lives on, PerGatewayVerify the rows the PRD marks
@@ -69,12 +69,12 @@ type Row struct {
 	PerGatewayVerify bool
 }
 
-// Delta is the loaded §10.5 honest-delta table keyed by row id.
+// Delta is the loaded spec honest-delta table keyed by row id.
 type Delta struct {
 	ByID map[string]Row
 }
 
-// LoadDelta returns the §10.5 honest-delta table. Rows are verbatim
+// LoadDelta returns the spec's honest-delta table. Rows are verbatim
 // from the PRD table (nine rows). LoadDelta fails on any malformed or
 // double id — the record never ships a silently-fudged row.
 func LoadDelta() (Delta, error) {
@@ -119,7 +119,7 @@ func LoadDelta() (Delta, error) {
 		d.ByID[r.ID] = r
 	}
 	if len(d.ByID) != 9 {
-		return Delta{}, fmt.Errorf("gatewayconformance: delta table carries %d rows, want the §10.5 table's 9", len(d.ByID))
+		return Delta{}, fmt.Errorf("gatewayconformance: delta table carries %d rows, want the §10.5 table's 9", len(d.ByID)) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 	}
 	return d, nil
 }

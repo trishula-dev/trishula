@@ -1,8 +1,8 @@
 package bench
 
-// Guard: the budget table encodes every §17.1 row 1:1, including the
-// two kernel-cache regimes the seventh line states and the §21 M2 flag
-// on the end-to-end hop row. One concern: the §17.1 budget record.
+// Guard: the budget table encodes every spec budget-table row 1:1, including the
+// two kernel-cache regimes the seventh line states and the spec's M2 flag
+// on the end-to-end hop row. One concern: the spec's budget-record set.
 import "testing"
 
 func TestBudgetsEncode17_1(t *testing.T) {
@@ -11,7 +11,7 @@ func TestBudgetsEncode17_1(t *testing.T) {
 		t.Fatalf("load budgets: %v", err)
 	}
 
-	// The §17.1 row set, read off the PRD (line 7 splits into its two
+	// The spec's budget-table row set, read off the spec (line 7 splits into its two
 	// stated regimes: direct short-circuit vs context-fetch).
 	want := []Budget{
 		{ID: "xdp-hot-path", PRDRow: "XDP shield (ACL/flood/cache/ban-hit path)", Kind: CeilingP99, Value: 10, EnforcedBy: "shield DaemonSet, node NIC"},
@@ -25,7 +25,7 @@ func TestBudgetsEncode17_1(t *testing.T) {
 		{ID: "engine-throughput-replica", PRDRow: "Throughput per engine replica (4 vCPU, CRS+schema)", Kind: FloorReqPS, Value: 10000, EnforcedBy: "load gate"},
 	}
 	if len(cat.ByID) != len(want) {
-		t.Errorf("budget rows = %d, want %d (one per §17.1 line; line 7 splits into two regimes)", len(cat.ByID), len(want))
+		t.Errorf("budget rows = %d, want %d (one per §17.1 line; line 7 splits into two regimes)", len(cat.ByID), len(want)) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 	}
 	for _, w := range want {
 		got, ok := cat.ByID[w.ID]

@@ -1,5 +1,5 @@
-// Package bench (TR-24) implements the PRD §17 benchmark harness in-repo:
-// the §17.1 budget table and the §17.2 scenario inventory as typed data,
+// Package bench (TR-24) implements the spec's benchmark harness in-repo:
+// the budget table and the scenario inventory it states as typed data,
 // the driveable engine-side scenarios measured over the committed CRS
 // reference path (test/crs-differential), the nearest-rank p50/p99
 // estimator, and the CI gate that turns measurements into budget and
@@ -16,7 +16,7 @@ import (
 	"fmt"
 )
 
-// BudgetKind pins the comparison direction §17.1 states per row: a
+// BudgetKind pins the comparison direction the spec's budget table states per row: a
 // latency ceiling (µs) or a throughput floor (req/s).
 type BudgetKind string
 
@@ -28,17 +28,17 @@ const (
 	FloorReqPS BudgetKind = "floor_reqps"
 )
 
-// Budget encodes one §17.1 stage row. P50us carries the row's secondary
+// Budget encodes one budget-table stage row from the spec. P50us carries the row's secondary
 // p50 bound when the PRD states one (the end-to-end hop row states p99
-// and p50); M2 marks the row §21 lists as the M2 adoption gate.
+// and p50); M2 marks the row the spec's adoption gates list as M2.
 type Budget struct {
 	ID         string
-	PRDRow     string // the §17.1 stage label this row encodes
+	PRDRow     string // the budget-table stage label this row encodes
 	Kind       BudgetKind
 	Value      float64 // µs for ceilings; req/s for floors
 	P50us      float64 // optional p50 ceiling; 0 = the row states none
 	EnforcedBy string
-	M2         bool // the §21 M2 adoption gate row
+	M2         bool // the spec's M2 adoption-gate row
 }
 
 // Catalog is the loaded budget table keyed by budget id.
@@ -46,8 +46,8 @@ type Catalog struct {
 	ByID map[string]Budget
 }
 
-// LoadBudgets returns the §17.1 budget table. Rows read 1:1 off the PRD
-// (§17.1's kernel-cache line encodes as its two stated regimes: the
+// LoadBudgets returns the spec's budget table. Rows read 1:1 off the spec
+// (the budget table's kernel-cache line encodes as its two stated regimes: the
 // direct short-circuit and the context fetch). A violated budget is a
 // recorded finding, never a silently-fudged row: the PRD marks the
 // userspace budgets targets pending PoC validation.

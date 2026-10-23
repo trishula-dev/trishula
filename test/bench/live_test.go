@@ -1,6 +1,6 @@
 package bench
 
-// Guard: the driveable §17.2 scenarios measure on the REAL committed CRS
+// Guard: the driveable spec scenarios measure on the REAL committed CRS
 // reference path, deterministically bounded (Iterations + Warmup), with
 // behavior-consistency checks per recipe family (idle passing traffic
 // carries no CRS matches; attack recipes land phase-2 matches; the body
@@ -15,12 +15,12 @@ import (
 // The idle recipe: clean passing traffic through the CRS walk.
 const idleRecipeID = "idle-get"
 
-// The §21 M2 metric shape: the inline 8KB full-CRS cell the end-to-end
+// The spec's M2 metric shape: the inline 8KB full-CRS cell the end-to-end
 // hop budget binds (plus the two small attack shapes same surface).
 const steadyM2RecipeID = "steady-json-8k"
 
 // pinnedUnmet are the recipe ids whose budget-exceeded verdicts the
-// harness pins as the OPEN §17.1 finding: the arg-dense urlencoded
+// harness pins as the OPEN budget finding: the arg-dense urlencoded
 // deep-inspect surface. The pin flips on engine evidence only — the
 // guard FAILS when the surface improves (the budget starts holding), a
 // conscious re-pin with fresh recorded numbers, never a silent green.
@@ -48,7 +48,7 @@ const borderlineUnmet = "ladder-json-64k"
 func TestDriveableScenariosMeasureOnRealPath(t *testing.T) {
 	byScen := recipesByScenario(t)
 
-	// Exactly the §17.2 driveable set carries recipes.
+	// Exactly the spec's driveable scenario set carries recipes.
 	if len(byScen) != 3 {
 		t.Errorf("recipe scenarios = %d, want 3 (inline-idle, inline-steady, body-ladder)", len(byScen))
 	}
@@ -185,7 +185,7 @@ func TestBudgetVerdictsOnLivePath(t *testing.T) {
 	for _, id := range pinnedUnmet {
 		factor, ok := unmet[id]
 		if !ok {
-			t.Errorf("pinned unmet %q now within budget — the open §17.1 finding moved: re-pin with the fresh recorded run (this failure is the drift alarm firing, not noise)", id)
+			t.Errorf("pinned unmet %q now within budget — the open §17.1 finding moved: re-pin with the fresh recorded run (this failure is the drift alarm firing, not noise)", id) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 			continue
 		}
 		if factor < PinUnmetMargin {
