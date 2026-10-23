@@ -268,7 +268,7 @@ as a contract, not decoration.
 | `area:ebpf|engine|gateway|crs|cel|botdefense|otlp|positive|rateban|crd|docs|academy|repo|org|testing|h2h3` | component |
 | `type:task` | a leaf-sized roadmap slice (RED→GREEN→merge) |
 | `type:feature|fix|docs|lab|research|test` | the slice's shape |
-| `target:v0.1|v0.2|v0.3` | milestone |
+| `target:2026.01-rc1|2026.01-rc2|2026.01-rc3` | milestone |
 | `complexity:starter|involved` | effort hint |
 | `bug`, `documentation`, `ci` | maintenance |
 | `upstream` | staged draft for an upstream issue (#97 pattern) |
