@@ -39,32 +39,71 @@ Each slice landed as a watched-RED then GREEN leaf PR per [AGENTS.md](AGENTS.md)
 
 ## Measured performance
 
-The apply→effect figure is a control-plane measure, not inline processing:
-apply → compile → engine reload → enforced 403 reads 1465 ms and 2618 ms
-against the 5 s budget ([#76](https://github.com/trishula-dev/trishula/issues/76#issuecomment-6093110531)).
+Budgets read off [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#171-budgets-by-stage).
+Wall numbers read from the last recorded per-row CI run:
+[39920698798](https://github.com/trishula-dev/trishula/actions/runs/39920698798/job/120312408390),
+head `24d5be7`, before the #150 perf levers. The numbers re-read at each release.
 
-The CI bench walls ([§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#171-budgets-by-stage), recorded run
-[39920698798](https://github.com/trishula-dev/trishula/actions/runs/39920698798/job/120312408390)):
-idle GET p99 546.7 µs against the 600 µs budget; steady 8 KB JSON p99
-320.0 µs against the 1500 µs end-to-end bound; 64 KB JSON p99 577.2 µs
-against the 1200 µs budget. The arg-dense urlencoded rows sit pinned open at
-≥194x over budget — the open
-[§17.1 finding](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#171-budgets-by-stage), tracked on
-[#147](https://github.com/trishula-dev/trishula/issues/147). The perf levers
-(SecRxPreFilter + serialized CI packages) ride
-[#150](https://github.com/trishula-dev/trishula/pull/150).
+| Cell | Budget p99 | Last build p99 | Verdict |
+|---|---|---|---|
+| idle-get | 600 µs | 546.7 µs | holds (0.91x) |
+| attack-sqli-small | 1500 µs | 828.3 µs | holds (0.55x) |
+| attack-xss-small | 1500 µs | 1733.5 µs | unmet (1.16x) — variance class, [#147](https://github.com/trishula-dev/trishula/issues/147) |
+| ladder-json-1k | 600 µs | 548.6 µs | holds (0.91x) |
+| ladder-json-8k | 600 µs | 798.7 µs | unmet (1.33x) — variance class, [#147](https://github.com/trishula-dev/trishula/issues/147) |
+| ladder-json-64k | 1200 µs | 577.2 µs | holds (0.48x) |
+| ladder-form-dense-1k | 600 µs | 116319.7 µs | pinned open — the [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#171-budgets-by-stage) finding |
+| ladder-form-dense-8k | 600 µs | 180720.5 µs | pinned open — the [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#171-budgets-by-stage) finding |
+| steady-json-8k (the [M2](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#171-budgets-by-stage) e2e cell) | 1500 µs | 320.0 µs | holds (0.21x) |
 
-## Honest gaps
+The gate set: `test/bench` runs the [§17.2](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#172-benchmark-plan)
+recipes in CI. A verdict re-reads per run. Per-row walls print in the job log
+when a row breaks the gate; green runs print package lines only.
 
-- Inline `< 10 ms` walls on the lab plane — the CI harness measures engine-only cells today.
-- Verdicts on live ringbuf traffic inside cluster pods — a later engine slice.
-- HTTP/3 request-path parse — none exists; the posture evaluation tracks on [#29](https://github.com/trishula-dev/trishula/issues/29).
-- Socket-plane fast path, fast-path compiler, kTLS posture — design studies [#51](https://github.com/trishula-dev/trishula/issues/51) · [#52](https://github.com/trishula-dev/trishula/issues/52) · [#53](https://github.com/trishula-dev/trishula/issues/53).
-- trishulactl full CLI surface — the skeleton exists; the surface is a later phase.
-- OpenAPI learn mode + promotion gates — v1 pipeline, [#18](https://github.com/trishula-dev/trishula/issues/18).
-- ML scorer tier — not landed, [#21](https://github.com/trishula-dev/trishula/issues/21).
-- Wire-out OTLP export — the triad verifies in-memory today.
-- OpenShift + multi-arch + DPU port — GA-track, [#33](https://github.com/trishula-dev/trishula/issues/33) · [#32](https://github.com/trishula-dev/trishula/issues/32).
+The [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#171-budgets-by-stage)
+arg-dense finding stays open: the form rows read ≥194x over budget. The perf
+levers (`SecRxPreFilter` + serialized CI packages) ride
+[#150](https://github.com/trishula-dev/trishula/pull/150). After the levers,
+the attack cell reads 0.22–0.31 ms per evaluate on the measurement host.
+
+| Control-plane gate | Budget | Recorded | Verdict |
+|---|---|---|---|
+| apply→effect (M9) | 5000 ms | 1465 ms and 2618 ms, [#76](https://github.com/trishula-dev/trishula/issues/76#issuecomment-6093110531) | holds |
+
+CRS parity: 19/19 corpus cases at 100% verdict parity, one documented skip
+([#7](https://github.com/trishula-dev/trishula/issues/7#issuecomment-6092716820)).
+
+The dev VM walls ([#147](https://github.com/trishula-dev/trishula/issues/147#issuecomment-6361589665)):
+one quiet run on the OrbStack rig (noble, arm64, 8 vCPU, Go 1.26.0), prefilter
+off vs on. The pinned
+[§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#171-budgets-by-stage)
+finding holds on the VM at 13x-95x (prefilter on). The `64k` row
+carries a guest-side p99 tail on the VM; hosted CI reads the same row at
+0.48x-0.86x and stays the calibration surface.
+
+| Cell | Budget p99 | VM p99 (prefilter off) | VM p99 (prefilter on) |
+|---|---|---|---|
+| steady-json-8k | 1500 µs | 794.6 µs | 188.8 µs |
+| attack-xss-small | 1500 µs | 1039.5 µs | 925.8 µs |
+| attack-sqli-small | 1500 µs | 1095.7 µs | 548.3 µs |
+| ladder-json-1k | 600 µs | 611.3 µs | 483.3 µs |
+| ladder-json-8k | 600 µs | 347.3 µs | 626.6 µs |
+| ladder-json-64k | 1200 µs | 9890.9 µs | 14189.2 µs |
+| ladder-form-dense-8k | 600 µs | 63354.1 µs | 56770.3 µs |
+
+## Upcoming features
+
+The list pairs each not-shipped feature with its tracker.
+
+- [ ] Inline `< 10 ms` walls on the lab plane — the CI harness measures engine-only cells today.
+- [ ] Verdicts on live ringbuf traffic inside cluster pods — a later engine slice.
+- [ ] HTTP/3 request-path parse — posture evaluation on [#29](https://github.com/trishula-dev/trishula/issues/29).
+- [ ] Socket-plane fast path, fast-path compiler, kTLS posture — [#51](https://github.com/trishula-dev/trishula/issues/51) · [#52](https://github.com/trishula-dev/trishula/issues/52) · [#53](https://github.com/trishula-dev/trishula/issues/53).
+- [ ] trishulactl full CLI surface — the skeleton exists; the surface is a later phase.
+- [ ] OpenAPI learn mode + promotion gates — [#18](https://github.com/trishula-dev/trishula/issues/18).
+- [ ] ML scorer tier — [#21](https://github.com/trishula-dev/trishula/issues/21).
+- [ ] Wire-out OTLP export — the triad verifies in-memory today.
+- [ ] OpenShift + multi-arch + DPU port — [#33](https://github.com/trishula-dev/trishula/issues/33) · [#32](https://github.com/trishula-dev/trishula/issues/32).
 
 The board is the [Trishula Roadmap](https://github.com/orgs/trishula-dev/projects/1).
 
@@ -110,6 +149,20 @@ go test ./...
 
 The suite gates the bench walls, the CRS parity differential (19/19 corpus
 cases), the ban conformance set, the shield tier gate and the docs guards.
+
+## Run the bench on the dev VM
+
+[lab/bench-vm.sh](lab/bench-vm.sh) runs the
+[§17.2](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#172-benchmark-plan)
+rig in the dev VM. Start from a VM copy of the tree:
+
+```bash
+orb run -m trishula-build-dev -u root bash /mnt/mac/<path-to-clone>/lab/bench-vm.sh
+```
+
+The script prints four sections: the new CI shape, the old-shape control, the
+walls with the prefilter on and the control with it off. The VM is the A/B
+surface. Hosted CI stays the calibration surface.
 
 ## Proof
 
