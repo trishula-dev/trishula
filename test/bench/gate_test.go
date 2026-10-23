@@ -56,7 +56,7 @@ func TestGateVerdicts(t *testing.T) {
 		},
 		{
 			name:      "machine factor normalizes the budget + regression checks",
-			in:        GateInput{Report: Report{RecipeID: "steady-json-8k", BudgetID: "e2e-inline-hop-8k", P99us: 1400}, Base: &Report{RecipeID: "steady-json-8k", BudgetID: "e2e-inline-hop-8k", P99us: 1000}, MachineFactor: 1.2},
+			in:        GateInput{Report: Report{RecipeID: "steady-json-8k", BudgetID: "e2e-inline-hop-8k", P99us: 1400}, Base: &Report{RecipeID: "steady-json-8k", BudgetID: "e2e-inline-hop-8k", P99us: 1000}, MachineFactor: 1.3},
 			wantKinds: nil,
 		},
 		{

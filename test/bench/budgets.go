@@ -12,7 +12,9 @@
 // gates per AGENTS.md; this package is CI-buildable (`go test ./...`).
 package bench
 
-import "errors"
+import (
+	"fmt"
+)
 
 // BudgetKind pins the comparison direction §17.1 states per row: a
 // latency ceiling (µs) or a throughput floor (req/s).
@@ -44,16 +46,88 @@ type Catalog struct {
 	ByID map[string]Budget
 }
 
-var errNotImplemented = errors.New("bench: not implemented (TR-24 RED state)")
-
-// LoadBudgets returns the §17.1 budget table.
+// LoadBudgets returns the §17.1 budget table. Rows read 1:1 off the PRD
+// (§17.1's kernel-cache line encodes as its two stated regimes: the
+// direct short-circuit and the context fetch). A violated budget is a
+// recorded finding, never a silently-fudged row: the PRD marks the
+// userspace budgets targets pending PoC validation.
 func LoadBudgets() (Catalog, error) {
-	return Catalog{}, errNotImplemented
+	rows := []Budget{
+		{ID: "xdp-hot-path", PRDRow: "XDP shield (ACL/flood/cache/ban-hit path)", Kind: CeilingP99, Value: 10, EnforcedBy: "shield DaemonSet, node NIC"},
+		{ID: "tc-classifier-emit", PRDRow: "TC classifier + ringbuf emit", Kind: CeilingP99, Value: 20, EnforcedBy: "shield DaemonSet"},
+		{ID: "engine-inspect-8k", PRDRow: "Engine parse + deep inspect (CRS+CEL+schema, 8KB body)", Kind: CeilingP99, Value: 600, EnforcedBy: "engine"},
+		{ID: "engine-inspect-64k", PRDRow: "Engine parse + deep inspect (64KB JSON body)", Kind: CeilingP99, Value: 1200, EnforcedBy: "engine"},
+		{ID: "ml-scorer-local", PRDRow: "ML local scorer (in-band, parallel with rules)", Kind: CeilingP99, Value: 1000, EnforcedBy: "engine ML tier"},
+		{ID: "e2e-inline-hop-8k", PRDRow: "Total inline hop added vs direct (8KB, full CRS)", Kind: CeilingP99, Value: 1500, P50us: 300, EnforcedBy: "end-to-end gate", M2: true},
+		{ID: "kernel-cache-direct", PRDRow: "Kernel-cached verdict/ban short-circuit (direct)", Kind: CeilingP99, Value: 1, EnforcedBy: "shield"},
+		{ID: "kernel-cache-context", PRDRow: "Kernel-cached verdict/ban short-circuit (context fetch)", Kind: CeilingP99, Value: 100, EnforcedBy: "shield"},
+		{ID: "engine-throughput-replica", PRDRow: "Throughput per engine replica (4 vCPU, CRS+schema)", Kind: FloorReqPS, Value: 10000, EnforcedBy: "load gate"},
+	}
+	c := Catalog{ByID: make(map[string]Budget, len(rows))}
+	for _, b := range rows {
+		if b.ID == "" || b.PRDRow == "" || b.EnforcedBy == "" {
+			return Catalog{}, fmt.Errorf("bench: budget row %+v: empty id, PRD row or enforcer", b)
+		}
+		if b.Value <= 0 {
+			return Catalog{}, fmt.Errorf("bench: budget %q: non-positive value %g", b.ID, b.Value)
+		}
+		if b.Kind != CeilingP99 && b.Kind != FloorReqPS {
+			return Catalog{}, fmt.Errorf("bench: budget %q: unknown kind %q", b.ID, b.Kind)
+		}
+		if b.P50us < 0 || (b.P50us > 0 && b.P50us >= b.Value) {
+			return Catalog{}, fmt.Errorf("bench: budget %q: p50 bound %g not under p99 %g", b.ID, b.P50us, b.Value)
+		}
+		if _, dup := c.ByID[b.ID]; dup {
+			return Catalog{}, fmt.Errorf("bench: budget %q doubles an earlier row", b.ID)
+		}
+		c.ByID[b.ID] = b
+	}
+	if len(c.ByID) == 0 {
+		return Catalog{}, fmt.Errorf("bench: the budget table is empty")
+	}
+	return c, nil
 }
 
 // ValidateRecipes checks every recipe resolves against the budget
 // catalog and the scenario inventory: known ids, a latency budget the
 // CI runner can bind, and a driveable scenario.
 func ValidateRecipes(cat Catalog, scens []Scenario, rs []Recipe) error {
-	return errNotImplemented
+	scenByID := map[string]Scenario{}
+	for _, s := range scens {
+		if s.ID == "" {
+			return fmt.Errorf("bench: scenario with empty id")
+		}
+		if _, dup := scenByID[s.ID]; dup {
+			return fmt.Errorf("bench: scenario %q doubles an earlier row", s.ID)
+		}
+		scenByID[s.ID] = s
+	}
+	seen := map[string]bool{}
+	for _, r := range rs {
+		if r.ID == "" {
+			return fmt.Errorf("bench: recipe with empty id")
+		}
+		if seen[r.ID] {
+			return fmt.Errorf("bench: recipe %q doubles an earlier recipe", r.ID)
+		}
+		seen[r.ID] = true
+		s, ok := scenByID[r.Scenario]
+		if !ok {
+			return fmt.Errorf("bench: recipe %q cites unknown scenario %q", r.ID, r.Scenario)
+		}
+		if !s.Driveable {
+			return fmt.Errorf("bench: recipe %q binds scenario %q, not driveable (%s)", r.ID, r.Scenario, s.Gate)
+		}
+		b, ok := cat.ByID[r.BudgetID]
+		if !ok {
+			return fmt.Errorf("bench: recipe %q cites unknown budget %q", r.ID, r.BudgetID)
+		}
+		if b.Kind == FloorReqPS {
+			return fmt.Errorf("bench: recipe %q binds floor budget %q; throughput cells belong to the lab load gate", r.ID, b.ID)
+		}
+		if r.Iterations <= 0 || r.Warmup < 0 {
+			return fmt.Errorf("bench: recipe %q: bounds out of range (iters=%d warmup=%d)", r.ID, r.Iterations, r.Warmup)
+		}
+	}
+	return nil
 }
