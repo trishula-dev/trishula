@@ -52,7 +52,11 @@ const evalBudget uint64 = 100_000
 
 // Rule is one declarative CEL entry: pack metadata plus a compile-once,
 // eval-many program under a per-evaluation cost budget (§11.3, H-1).
-// Not goroutine-safe: TR-04 ingest owns the concurrency decision.
+// CostBudget rides the pack's wire (TR-17: a rule authored in an applied
+// pack declares its own ceiling and the pack digest covers it; 0 = unset =
+// the policy's budget or the package default) and SetCostBudget is the
+// programmatic set on the same field. Not goroutine-safe: TR-04 ingest
+// owns the concurrency decision.
 type Rule struct {
 	ID          string `yaml:"id" json:"id"`
 	Name        string `yaml:"name" json:"name"`
@@ -60,14 +64,19 @@ type Rule struct {
 	Action      Action `yaml:"action" json:"action"`
 	// Expression is the CEL source; compiled lazily on first Eval.
 	Expression string `yaml:"expression" json:"expression"`
+	// CostBudget is the per-evaluation cost budget on this rule: declared
+	// by the pack's own wire (TR-17) or set programmatically
+	// (SetCostBudget). 0 = unset — the policy's celBudget or the package
+	// default (evalBudget) applies.
+	CostBudget uint64 `yaml:"costBudget,omitempty" json:"costBudget,omitempty"`
 
-	// compiled state (not serialized). Compile is once per expression; the
-	// cost budget is a program option, so a budget change re-plans (never
-	// re-compiles).
-	env    *cel.Env
-	ast    *cel.Ast
-	prg    cel.Program
-	budget uint64
+	// compiled state (not serialized). Compile is once per expression;
+	// the cost budget is a program option, so a budget change re-plans
+	// (never re-compiles: SetCostBudget resets the program and the next
+	// Eval plans under the new budget).
+	env *cel.Env
+	ast *cel.Ast
+	prg cel.Program
 }
 
 // SetCostBudget sets the per-evaluation cost budget. H-1: the budget is
@@ -78,7 +87,7 @@ func (r *Rule) SetCostBudget(n uint64) error {
 	if n == 0 {
 		return errors.New("cost budget must be > 0")
 	}
-	r.budget = n
+	r.CostBudget = n
 	r.prg = nil // re-planned on next Eval
 	return nil
 }
@@ -126,9 +135,12 @@ func (r *Rule) activation(req Request) map[string]any {
 	}
 }
 
-// programForEval compiles once and plans once per budget.
+// programForEval compiles once and plans once per budget: the budget is a
+// program option, so the plan carries the resolved ceiling (CostBudget,
+// else evalBudget) exactly once; SetCostBudget resets the program and the
+// next Eval re-plans under the new value.
 func (r *Rule) programForEval() (cel.Program, error) {
-	budget := r.budget
+	budget := r.CostBudget
 	if budget == 0 {
 		budget = evalBudget
 	}
@@ -137,12 +149,12 @@ func (r *Rule) programForEval() (cel.Program, error) {
 			return nil, err
 		}
 	}
-	if r.prg == nil || r.budget != budget {
+	if r.prg == nil {
 		p, err := r.env.Program(r.ast, cel.CostLimit(budget))
 		if err != nil {
 			return nil, fmt.Errorf("plan program (budget %d): %w", budget, err)
 		}
-		r.prg, r.budget = p, budget
+		r.prg = p
 	}
 	return r.prg, nil
 }
