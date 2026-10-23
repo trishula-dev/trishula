@@ -7,89 +7,113 @@ kernel shield · userspace engine · control plane
 
 [![pre-commit.ci status](https://results.pre-commit.ci/badge/github/trishula-dev/trishula/main.svg)](https://results.pre-commit.ci/latest/github/trishula-dev/trishula/main) [![go-build](https://github.com/trishula-dev/trishula/actions/workflows/go-build.yml/badge.svg)](https://github.com/trishula-dev/trishula/actions/workflows/go-build.yml) [![Dependency Review](https://github.com/trishula-dev/trishula/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/trishula-dev/trishula/actions/workflows/dependency-review.yml) [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/trishula-dev/trishula?label=OpenSSF%20Scorecard&style=flat)](https://scorecard.dev/viewer/?uri=github.com/trishula-dev/trishula) [![OpenSSF Best Practices](https://img.shields.io/badge/cii%20best%20practices-in%20progress-orange)](https://www.bestpractices.dev/projects/15183)
 
+Trishula protects Kubernetes traffic in three planes. The kernel shield runs
+verifier-checked eBPF programs. The userspace engine runs the detection
+stack: OWASP CRS, CEL rules, OpenAPI positive security, bot fingerprints and
+the ban table. The control plane compiles `WAFPolicy` CRDs into signed policy
+bundles. Every verdict is a correlated OpenTelemetry record.
 
-**Status: Phase 0 (2026.01-rc1) delivered.** Every component below sits merged on
-`main` under its signature. The lab gates run green on a live cluster. The
-component list pairs each item with its merge commit. The gaps carry their
-own list, just as plainly. The exit-criteria table below reports pass and
-pending per check. The [Proof](#proof-labdemosh-output-verbatim) section
-holds the verbatim output of `lab/demo.sh`. One command runs the full
-exit-gate demo from a fresh clone.
+**Status:** the 2026.01-rc1 component set sits merged on `main`. The lab
+gates run green on a live cluster. The bench harness measures the
+[§17 walls](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#171-budgets-by-stage) in CI. The gaps carry their own
+list on this page.
 
-## The design thesis
+## What exists today
 
-> The WAF is the last major security control outside developer practice.
-> Trishula brings it into everyday developer use. The kernel plane is an
-> eBPF shield: fail-open by default, bounded parsing, verifier-checked in
-> CI. The userspace plane carries the full detection stack: OWASP CRS via
-> embedded Coraza with a CI-blocking parity differential. CEL rules run
-> under cost budgets. OpenAPI positive security carries promotion gates.
-> JA4 and behavioural fingerprints feed bot detection. ScoredWindowBan
-> records evidence for every ban. A Kubernetes-native control plane
-> compiles policy into signed bundles. Every verdict is a correlated
-> OpenTelemetry record.
-
-## What exists today (per component, merge linked)
-
-Everything below sits on `main` from
-[4161758](https://github.com/trishula-dev/trishula/commit/416175852d3ba843fbefdd6900a6d89c268d6052)
-onward. Every commit carries the `Shain.Singh@owasp.org` signature. Each
-slice lands as a watched-RED then GREEN leaf PR per [AGENTS.md](AGENTS.md).
+Each slice landed as a watched-RED then GREEN leaf PR per [AGENTS.md](AGENTS.md).
 
 | Component | Where | What exists | Evidence |
 |---|---|---|---|
-| Kernel shield loaders | [`internal/shield/`](https://github.com/trishula-dev/trishula/commit/ed9b2714512ecad1bb6b0960eeeb7951e9693726) | CO-RE bpf2go objects (arm64 + amd64) for the XDP shield (ACL + verdict cache + ban table) and the TC flow producer; Go loaders (XDP/TC attach, pinned-prog lifecycle, fail-closed `TierRefusal`); visibility tier measured at boot, emitted as `trishula.shield.visibility_tier`; ban publish/reconcile (`bans_v4`); JSONL evidence sink. | [#80 tier vocabulary + measured tiers](https://github.com/trishula-dev/trishula/issues/80#issuecomment-6094023768); [#10 in-VM ban E2E](https://github.com/trishula-dev/trishula/issues/10#issuecomment-6093609582) |
-| Kernel C + wire contracts | [`bpf/`](https://github.com/trishula-dev/trishula/commit/ed9b2714512ecad1bb6b0960eeeb7951e9693726) | `shield_xdp.c` (XDP ACL/verdict-cache/ban table + tier probe counters), `flow_tc.c` (TC ringbuf producer); map keys/event layouts/action codes pinned by object-level contract tests. | contract + banwire tests in-package; [#10 flow/ban E2E](https://github.com/trishula-dev/trishula/issues/10#issuecomment-6093609582) |
-| Ingest | [`internal/engine/ingest/`](https://github.com/trishula-dev/trishula/commit/17e78d551de26cb0e7243b02247568538b866d2a) | ringbuf drain → FlowEvent decode → per-connection transaction assembly (kernel-free, CI-runnable). | [#81 TR-04d merge](https://github.com/trishula-dev/trishula/commit/17e78d551de26cb0e7243b02247568538b866d2a, closes TR-04) |
-| Detection ladder | [`internal/engine/ladder/`](https://github.com/trishula-dev/trishula/commit/b86cf6f9a5bbff2903fe058980fed39e9f472ab6) | S0–S5 stage wiring + the Verdict/Action/Phase vocabulary (extend, never fork); HTTP/1 parse into the §11.3 request view. | [#91 TR-05 main delivery](https://github.com/trishula-dev/trishula/commit/b86cf6f9a5bbff2903fe058980fed39e9f472ab6) |
-| OTel verdict telemetry | [`internal/engine/otel/`](https://github.com/trishula-dev/trishula/commit/e63d990e4deef8e3ce9e0ed108987b80585dd47e) | verdict trace span + `verdicts_total` metric + structured log record, correlated by request id; in-memory exporter snapshot. SDKs pinned v1.47.0. | [#11 evidence comment (the triad)](https://github.com/trishula-dev/trishula/issues/11#issuecomment-6092518259) |
-| Bot fingerprints | [`internal/engine/botdef/`](https://github.com/trishula-dev/trishula/commit/c4f5e7e8bb766ee482aaae59ece5ffacc89020d1) | JA4 (FoxIO-faithful assembly) + header-plane fingerprint detector v0, lab-log surface. | [#99 body (watched RED/GREEN + JA4 golden vectors)](https://github.com/trishula-dev/trishula/pull/99) |
-| Positive security | [`internal/engine/positive/`](https://github.com/trishula-dev/trishula/commit/8f4c2f22d39ef52fe5633dafa6949cb47521bb14) | OpenAPI 3.1-subset body gate on the demo route: exhaustive field-path diagnostics, fail-closed on undecodable bodies, fail-open on unmatched paths. | [#13 evidence comment](https://github.com/trishula-dev/trishula/issues/13#issuecomment-6092602177) |
-| CRS evaluator + parity gate | [`internal/crs/`](https://github.com/trishula-dev/trishula/commit/a1d9b027c983f7da141a4f8f8914bce6eb15c0c0) · [`test/crs-differential/`](https://github.com/trishula-dev/trishula/commit/ec1934616317d966a42156c47cb394593779bf90) | embedded-Coraza reference CRS evaluator + the CI-blocking differential: **19/19 corpus cases at 100% verdict parity** (1 skipped, documented). | [#7 evidence comment (parity 19/19 + 1 skip)](https://github.com/trishula-dev/trishula/issues/7#issuecomment-6092716820) |
-| ScoredWindowBan | [`internal/engine/rateban/`](https://github.com/trishula-dev/trishula/commit/f116ded4e093facc7228002d52ced6f06996f9df) | ScoredWindowBan v1 (§13.3) with the Clock seam + evidence records; the `BanEnforcer` adapter publishes bans to the kernel map. | [#10 in-VM E2E](https://github.com/trishula-dev/trishula/issues/10#issuecomment-6093609582): kernel shot 3→4, expiry lift, reconciler, JSONL |
-| Operator compile + reconcile | [`internal/operator/`](https://github.com/trishula-dev/trishula/commit/cb60e2b0cd3463f84e72acf3d07356cacda66f2a) · [`api/v1alpha1/`](https://github.com/trishula-dev/trishula/commit/2826178d6c489df2a785b7b7d9ace0c3a644c494) | `WAFPolicy` CRD (controller-gen artifacts committed) → Bundle v1 compile (fail closed) → CRD watch → `bundle.json` publish; sealed in-process compile→load round-trip test. | [#76 M9 evidence](https://github.com/trishula-dev/trishula/issues/76#issuecomment-6093110531): apply→effect 2618 ms + fail-closed; compile→load round-trip test (#98, [https://github.com/trishula-dev/trishula/issues/75](https://github.com/trishula-dev/trishula/issues/75) closed on it) |
-| Engine: consult + hot-reload | [`cmd/engine/`](https://github.com/trishula-dev/trishula/commit/cb60e2b0cd3463f84e72acf3d07356cacda66f2a) | transparent proxy host (`--upstream`, `X-Trishula-Hop`) + bundle consult (`--bundle`) with polled hot-reload and `-receive-bundle` in-cluster delivery; engine-local `/healthz`. | [#6 delivery + hop evidence](https://github.com/trishula-dev/trishula/issues/6#issuecomment-6091986517) |
-| Operator runtime | [`cmd/operator/`](https://github.com/trishula-dev/trishula/commit/cb60e2b0cd3463f84e72acf3d07356cacda66f2a) | the real CRD watch loop + healthz :1936 (the image the lab deploys). | [#76 M9 E2E](https://github.com/trishula-dev/trishula/issues/76#issuecomment-6093110531) |
-| DX1 lab | [`lab/dx1/`](https://github.com/trishula-dev/trishula/commit/8bc24a27d6b4e0ca839e22453f9c519a13e3000c) · [`lab/demo.sh`](https://github.com/trishula-dev/trishula/commit/ed9b2714512ecad1bb6b0960eeeb7951e9693726) | idempotent setup (OrbStack/kind + NGF + engine + echo), apply→effect M9 timer, hop verification — composed by `lab/demo.sh`, one command; the timed gate `lab/dx1/dx1-gate.sh` asserts the M3 timing (clone → first enforced rule ≤ 15 min), nightly-timed by [.github/workflows/lab-nightly.yml](.github/workflows/lab-nightly.yml). | the [Proof](#proof-labdemosh-output-verbatim) below (this run) + [#6 live hop evidence](https://github.com/trishula-dev/trishula/issues/6#issuecomment-6091479891); the M3 gate's recorded nightly timing rides `lab-nightly` (first run recorded on the TR-23 PR) |
+| Shield loaders | [`internal/shield/`](https://github.com/trishula-dev/trishula/commit/ed9b2714512ecad1bb6b0960eeeb7951e9693726) | CO-RE XDP + TC objects (arm64, amd64); Go loaders; fail-closed `TierRefusal`; tier measure at boot. | [#80 tier run](https://github.com/trishula-dev/trishula/issues/80#issuecomment-6094023768) · [#10 ban E2E](https://github.com/trishula-dev/trishula/issues/10#issuecomment-6093609582) |
+| Kernel C + wire | [`bpf/`](https://github.com/trishula-dev/trishula/commit/ed9b2714512ecad1bb6b0960eeeb7951e9693726) | `shield_xdp.c` (ACL, verdict cache, ban table), `flow_tc.c` (ringbuf); wire layouts test-pinned. | banwire tests in-package |
+| Ingest | [`internal/engine/ingest/`](https://github.com/trishula-dev/trishula/commit/17e78d551de26cb0e7243b02247568538b866d2a) | ringbuf drain → decode → per-connection assembly; kernel-free. | [TR-04d merge](https://github.com/trishula-dev/trishula/commit/17e78d551de26cb0e7243b02247568538b866d2a) |
+| Detection ladder | [`internal/engine/ladder/`](https://github.com/trishula-dev/trishula/commit/b86cf6f9a5bbff2903fe058980fed39e9f472ab6) | S0–S5 wiring + verdict vocabulary; HTTP/1 and HTTP/2/gRPC parse. | [TR-05 merge](https://github.com/trishula-dev/trishula/commit/b86cf6f9a5bbff2903fe058980fed39e9f472ab6) |
+| OTel telemetry | [`internal/engine/otel/`](https://github.com/trishula-dev/trishula/commit/e63d990e4deef8e3ce9e0ed108987b80585dd47e) | span + metric + log record, correlated by request id. | [#11 evidence](https://github.com/trishula-dev/trishula/issues/11#issuecomment-6092518259) |
+| Bot fingerprints | [`internal/engine/botdef/`](https://github.com/trishula-dev/trishula/commit/c4f5e7e8bb766ee482aaae59ece5ffacc89020d1) | JA4 + header-plane detector; golden vectors. | [#99](https://github.com/trishula-dev/trishula/pull/99) |
+| Positive security | [`internal/engine/positive/`](https://github.com/trishula-dev/trishula/commit/8f4c2f22d39ef52fe5633dafa6949cb47521bb14) | OpenAPI 3.1-subset body gate; fail-closed. | [#13 evidence](https://github.com/trishula-dev/trishula/issues/13#issuecomment-6092602177) |
+| CRS evaluator | [`internal/crs/`](https://github.com/trishula-dev/trishula/commit/a1d9b027c983f7da141a4f8f8914bce6eb15c0c0) · [`test/crs-differential/`](https://github.com/trishula-dev/trishula/commit/ec1934616317d966a42156c47cb394593779bf90) | embedded Coraza reference + CI-blocking parity differential. | [#7 parity 19/19](https://github.com/trishula-dev/trishula/issues/7#issuecomment-6092716820) |
+| ScoredWindowBan | [`internal/engine/rateban/`](https://github.com/trishula-dev/trishula/commit/f116ded4e093facc7228002d52ced6f06996f9df) | [§13.3](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#133-the-ban-algorithm-scoredwindowban-v1-specified) ban with clock seam + evidence; kernel publish. | [#10 in-VM E2E](https://github.com/trishula-dev/trishula/issues/10#issuecomment-6093609582) |
+| Operator | [`internal/operator/`](https://github.com/trishula-dev/trishula/commit/cb60e2b0cd3463f84e72acf3d07356cacda66f2a) · [`api/v1alpha1/`](https://github.com/trishula-dev/trishula/commit/2826178d6c489df2a785b7b7d9ace0c3a644c494) | `WAFPolicy` CRD → bundle compile (fail closed) → publish. | [#76 M9 evidence](https://github.com/trishula-dev/trishula/issues/76#issuecomment-6093110531) |
+| Engine + consult | [`cmd/engine/`](https://github.com/trishula-dev/trishula/commit/cb60e2b0cd3463f84e72acf3d07356cacda66f2a) | transparent proxy; bundle consult; hot reload. | [#6 hop evidence](https://github.com/trishula-dev/trishula/issues/6#issuecomment-6091986517) |
+| DX1 lab | [`lab/dx1/`](https://github.com/trishula-dev/trishula/commit/8bc24a27d6b4e0ca839e22453f9c519a13e3000c) · [`lab/demo.sh`](https://github.com/trishula-dev/trishula/commit/ed9b2714512ecad1bb6b0960eeeb7951e9693726) | idempotent bring-up; timed apply→effect; hop verification. | [Proof record](https://github.com/trishula-dev/trishula/issues/6#issuecomment-6091479891) |
 
-## What does not exist yet (honest)
+## Measured performance
 
-- **<10 ms inline measurements** — the benchmark harness is [TR-24](https://github.com/trishula-dev/trishula/issues/24);
-  `test/bench/` holds no harness yet. No latency number on this page is a
-  benchmark result. The one recorded timing is the **apply→effect**
-  control-plane round trip. The M9 budget is 5 s; the runs record 2618 ms on
-  https://github.com/trishula-dev/trishula/issues/76 and 1465 ms in the run
-  below. It is a config-propagation figure, not an inline-processing figure.
-- **The engine ladder in-cluster** — the demo engine serves verdicts from
-  bundles delivered via `-receive-bundle`. The full ladder drives verdicts
-  on live ringbuf traffic inside cluster pods on
-  [TR-15](https://github.com/trishula-dev/trishula/issues/15).
-- **HTTP/2 + HTTP/3 request paths** — the engine parses HTTP/1.1 only. The
-  h2/h3 posture evaluation tracks as
-  [TR-25](https://github.com/trishula-dev/trishula/issues/25)/[TR-29](https://github.com/trishula-dev/trishula/issues/29).
-- **Socket-plane L7 fast path, prefix escalation, async semantic judge** —
-  these live as design and evaluation items (the TR-41-range study trio).
-  None of them ships yet.
-- **trishulactl full surface** — the CLI skeleton exists
-  (`cmd/trishulactl`). The full surface is a later-phase item.
-- **Response-side schema / exfiltration guard** — Phase 2 of the roadmap.
-- **Positive-security learn mode + promotion gates** — v0 enforces a static
-  OpenAPI subset. The v1 learn/apply pipeline is not built.
-- **Production OTLP export** — the triad verifies against an in-memory
-  exporter snapshot. The wire-out collector pipeline is not wired.
-- **Production-engineering breadth** — multi-arch releases, the DPU
-  (BlueField-class) port and OpenShift builds start at 2026.01-rc1. Platform
-  breadth follows the GA track.
+Budgets read off [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#171-budgets-by-stage).
+Wall numbers read from the last recorded per-row CI run:
+[39920698798](https://github.com/trishula-dev/trishula/actions/runs/39920698798/job/120312408390),
+head `24d5be7`, before the #150 perf levers. The numbers re-read at each release.
 
-The live board is the [Trishula Roadmap](https://github.com/orgs/trishula-dev/projects/1).
+| Cell | Budget p99 | Last build p99 | Verdict |
+|---|---|---|---|
+| idle-get | 600 µs | 546.7 µs | holds (0.91x) |
+| attack-sqli-small | 1500 µs | 828.3 µs | holds (0.55x) |
+| attack-xss-small | 1500 µs | 1733.5 µs | unmet (1.16x) — variance class, [#147](https://github.com/trishula-dev/trishula/issues/147) |
+| ladder-json-1k | 600 µs | 548.6 µs | holds (0.91x) |
+| ladder-json-8k | 600 µs | 798.7 µs | unmet (1.33x) — variance class, [#147](https://github.com/trishula-dev/trishula/issues/147) |
+| ladder-json-64k | 1200 µs | 577.2 µs | holds (0.48x) |
+| ladder-form-dense-1k | 600 µs | 116319.7 µs | pinned open — the [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#171-budgets-by-stage) finding |
+| ladder-form-dense-8k | 600 µs | 180720.5 µs | pinned open — the [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#171-budgets-by-stage) finding |
+| steady-json-8k (the [M2](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#171-budgets-by-stage) e2e cell) | 1500 µs | 320.0 µs | holds (0.21x) |
 
-## Layout (PRD v4 §19)
+The gate set: `test/bench` runs the [§17.2](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#172-benchmark-plan)
+recipes in CI. A verdict re-reads per run. Per-row walls print in the job log
+when a row breaks the gate; green runs print package lines only.
+
+The [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#171-budgets-by-stage)
+arg-dense finding stays open: the form rows read ≥194x over budget. The perf
+levers (`SecRxPreFilter` + serialized CI packages) ride
+[#150](https://github.com/trishula-dev/trishula/pull/150). After the levers,
+the attack cell reads 0.22–0.31 ms per evaluate on the measurement host.
+
+| Control-plane gate | Budget | Recorded | Verdict |
+|---|---|---|---|
+| apply→effect (M9) | 5000 ms | 1465 ms and 2618 ms, [#76](https://github.com/trishula-dev/trishula/issues/76#issuecomment-6093110531) | holds |
+
+CRS parity: 19/19 corpus cases at 100% verdict parity, one documented skip
+([#7](https://github.com/trishula-dev/trishula/issues/7#issuecomment-6092716820)).
+
+The dev VM walls ([#147](https://github.com/trishula-dev/trishula/issues/147#issuecomment-6361589665)):
+one quiet run on the OrbStack rig (noble, arm64, 8 vCPU, Go 1.26.0), prefilter
+off vs on. The pinned
+[§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#171-budgets-by-stage)
+finding holds on the VM at 13x-95x (prefilter on). The `64k` row
+carries a guest-side p99 tail on the VM; hosted CI reads the same row at
+0.48x-0.86x and stays the calibration surface.
+
+| Cell | Budget p99 | VM p99 (prefilter off) | VM p99 (prefilter on) |
+|---|---|---|---|
+| steady-json-8k | 1500 µs | 794.6 µs | 188.8 µs |
+| attack-xss-small | 1500 µs | 1039.5 µs | 925.8 µs |
+| attack-sqli-small | 1500 µs | 1095.7 µs | 548.3 µs |
+| ladder-json-1k | 600 µs | 611.3 µs | 483.3 µs |
+| ladder-json-8k | 600 µs | 347.3 µs | 626.6 µs |
+| ladder-json-64k | 1200 µs | 9890.9 µs | 14189.2 µs |
+| ladder-form-dense-8k | 600 µs | 63354.1 µs | 56770.3 µs |
+
+## Upcoming features
+
+The list pairs each not-shipped feature with its tracker.
+
+- [ ] Inline `< 10 ms` walls on the lab plane — the CI harness measures engine-only cells today.
+- [ ] Verdicts on live ringbuf traffic inside cluster pods — a later engine slice.
+- [ ] HTTP/3 request-path parse — posture evaluation on [#29](https://github.com/trishula-dev/trishula/issues/29).
+- [ ] Socket-plane fast path, fast-path compiler, kTLS posture — [#51](https://github.com/trishula-dev/trishula/issues/51) · [#52](https://github.com/trishula-dev/trishula/issues/52) · [#53](https://github.com/trishula-dev/trishula/issues/53).
+- [ ] trishulactl full CLI surface — the skeleton exists; the surface is a later phase.
+- [ ] OpenAPI learn mode + promotion gates — [#18](https://github.com/trishula-dev/trishula/issues/18).
+- [ ] ML scorer tier — [#21](https://github.com/trishula-dev/trishula/issues/21).
+- [ ] Wire-out OTLP export — the triad verifies in-memory today.
+- [ ] OpenShift + multi-arch + DPU port — [#33](https://github.com/trishula-dev/trishula/issues/33) · [#32](https://github.com/trishula-dev/trishula/issues/32).
+
+The board is the [Trishula Roadmap](https://github.com/orgs/trishula-dev/projects/1).
+
+## Layout ([PRD §19](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#19-reference-implementation))
 
 ```
 api/v1alpha1/     CRD types (WAFPolicy, BanPolicy, …)
 cmd/              engine, operator, shield, trishula, trishulactl, attackdemo
 bpf/              shield_xdp.c, flow_tc.c (CO-RE, bpf2go)
-internal/         engine (ingest, ladder, cel, http1, otel, botdef, positive, rateban), operator, shield
+internal/         engine (ingest, ladder, cel, http1, http2, otel, botdef, positive, rateban), operator, shield
 manifests/        install manifests (incl. CRD)
 lab/              demo.sh · dx1/ · demo-attack.sh · verify-xdp-chain.sh · tier-gate.sh
 test/             crs-differential · ban-conformance · banenforce · tier · bench
@@ -102,275 +126,61 @@ docs/             PRD, paper, academy
 bash lab/demo.sh
 ```
 
-The DX1 timed gate runs as `bash lab/dx1/dx1-gate.sh`. The gate asserts
-the M3 timing: clone → first enforced rule in ≤ 15 min. The nightly job
-([.github/workflows/lab-nightly.yml](.github/workflows/lab-nightly.yml))
-runs it and keeps the timing asserted.
+The script brings the DX1 lab up on any Docker-provider host. Needs `go`,
+`kubectl`, `helm`, `docker` and `curl`. It builds the engine and operator
+binaries, applies the policy and runs the timed apply→effect scenario. The
+exit banner reads `DEMO-OK` or `DEMO-FAIL`. The verbatim recorded output sits
+on the issue record above.
 
-The script runs on a Docker-provider host (kind or OrbStack Kubernetes)
-with `go`, `kubectl`, `helm`, `docker` and `curl`. It builds the linux
-engine and operator binaries from this tree when missing. It brings the DX1
-lab up (idempotent). It runs the timed apply→effect scenario under the M9
-budget of 5 s. It prints the hop-by-hop evidence last. Every stage ends in a
-loud marker. The script runs under `set -euo pipefail`. The exit banner
-reads `DEMO-OK` or `DEMO-FAIL`. The kernel-side artifacts (XDP attach, in-VM
-ban E2E, tier probes) run on a Linux VM per
-[`lab/dx1/README.md`](lab/dx1/README.md) and
-[`lab/verify-xdp-chain.sh`](lab/verify-xdp-chain.sh). The gate table in
-[AGENTS.md](AGENTS.md) names the checks.
+## Run the timed gate
 
-## Status — Phase 0 exit criteria (checked honestly in TR-14)
-
-| §20.2 criterion | Status | Evidence |
-|---|---|---|
-| < 10 ms inline (unoptimized) | **pending TR-24** | the benchmark harness does not exist yet — `test/bench/` is an empty placeholder. No benchmark number can honestly be reported. The M9 apply→effect figure (2618 ms / 1465 ms ≤ 5 s) is a control-plane propagation timing, NOT inline processing. |
-| 100% verdict telemetry (span + metric + log correlated) | **pass** | the OTel triad correlated by request id; [#11 evidence comment](https://github.com/trishula-dev/trishula/issues/11#issuecomment-6092518259); merge [e63d990](https://github.com/trishula-dev/trishula/commit/e63d990e4deef8e3ce9e0ed108987b80585dd47e) (#101); unit-proven (correlation + snapshot tests in-package); wire-out OTLP export not wired (above) |
-| CRD round-trip (apply → compile → load) | **pass** | sealed in-process compile→load round-trip test (0.239 s) + live M9 apply→effect 2618 ms ≤ 5 s; [#76 evidence](https://github.com/trishula-dev/trishula/issues/76#issuecomment-6093110531); merges [e221c9f](https://github.com/trishula-dev/trishula/commit/e221c9f7938b84892d2ba66aecd87f850ef967eb) (#98) · [cb60e2b](https://github.com/trishula-dev/trishula/commit/cb60e2b0cd3463f84e72acf3d07356cacda66f2a) (#104) |
-| NGF steer-to-engine proven | **pass** | DX1 hop evidence: NGF → engine → echo (`X-Trishula-Hop: engine`, echo pod id in the response body); [#6 live curl transcript](https://github.com/trishula-dev/trishula/issues/6#issuecomment-6091479891); reproduced in the [demo output](#proof-labdemosh-output-verbatim) |
-| Engine ladder end-to-end verdict logging | **pass (v0 surfaces)** | S0–S5 verdict vocabulary driving `cmd/engine` decisions — `engine: decision block (rule=DX-LAB-001)` lines in the demo output; positive gate (#102) and botdef fingerprints (#99) land as ladder slices; the in-cluster ladder on ringbuf traffic is TR-15 |
-| CRS PL1 differential parity reported (shadow) | **pass** | 19/19 corpus cases at 100% verdict parity (1 skipped, documented), CI-blocking; [#7 evidence comment](https://github.com/trishula-dev/trishula/issues/7#issuecomment-6092716820); merge [ec19346](https://github.com/trishula-dev/trishula/commit/ec1934616317d966a42156c47cb394593779bf90) (#103) |
-| Shield attaches on a node; kernel-side ban drop works | **pass (Linux VM)** | XDP attach + ban `TC_ACT_SHOT` (shot 3→4), expiry auto-lift, reconciler lift, JSONL evidence; [#10 in-VM E2E](https://github.com/trishula-dev/trishula/issues/10#issuecomment-6093609582) + [#80 tier vocabulary](https://github.com/trishula-dev/trishula/issues/80#issuecomment-6094023768). NOT evidenced on plain kind nodes: OrbStack-family pod-veth fast paths limit visibility (measured `first_packet` tier) — the loader measures and refuses an invisible shield rather than pretending |
-
-The honesty stance shows in the table above. The one pending cell is the
-TR-24 benchmark, named as unmet. No other cell hides a gap.
-
-## Proof — lab/demo.sh output (verbatim)
-
-Recorded in the TR-14 lane, main at ed9b271. Command:
-`M9_TARGET=5 bash lab/demo.sh`, run from the clone. The evidence trail sits
-on the issues: https://github.com/trishula-dev/trishula/issues/6 ([steering hop](https://github.com/trishula-dev/trishula/issues/6#issuecomment-6091479891),
-[delivery](https://github.com/trishula-dev/trishula/issues/6#issuecomment-6091986517)), https://github.com/trishula-dev/trishula/issues/76 ([M9](https://github.com/trishula-dev/trishula/issues/76#issuecomment-6093110531)), https://github.com/trishula-dev/trishula/issues/7 ([parity](https://github.com/trishula-dev/trishula/issues/7#issuecomment-6092716820)),
-https://github.com/trishula-dev/trishula/issues/10 ([ban E2E](https://github.com/trishula-dev/trishula/issues/10#issuecomment-6093609582)), https://github.com/trishula-dev/trishula/issues/80 ([tiers](https://github.com/trishula-dev/trishula/issues/80#issuecomment-6094023768)), https://github.com/trishula-dev/trishula/issues/11 ([OTel](https://github.com/trishula-dev/trishula/issues/11#issuecomment-6092518259)),
-https://github.com/trishula-dev/trishula/issues/13 ([positive](https://github.com/trishula-dev/trishula/issues/13#issuecomment-6092602177)).
-
-```text
-
-============================================================
-== Trishula v0.1 exit-gate demo (lab/demo.sh) — repo ed9b271, host arch arm64
-============================================================
-
-------------------------------------------------------------
-| STAGE 1/3 — DX1 lab setup (lab/dx1/setup.sh, idempotent)
-------------------------------------------------------------
-
-== cluster (idempotent — skipped if reachable)
-cluster already exists (context: orbstack) — kind create cluster skipped
-
-== engine image (build trishula-engine:dx1 from cmd/engine, load into the node's image store)
-Image: "trishula-engine:dx1" with ID "sha256:09a43eebf57d71f739f5ab3985b4c80d4b551390620fd899191740fd6e35029b" found to be already present on all nodes.
-
-== Gateway API CRDs (Gateway API v1.5.1 standard channel, the set NGF v2.7.2 installs)
-Gateway API CRDs already present
-
-== NGF release dx1 (helm, service.type=NodePort)
-helm release dx1 already installed (lab pins 2.7.2)
-
-== NGF images pulled anonymously and loaded (control plane + nginx data plane)
-Image: "ghcr.io/nginx/nginx-gateway-fabric:2.7.2" with ID "sha256:27f6253fc8220d0230f34b17fa7d934241bfbcc26537c94edd58f3973040f69c" found to be already present on all nodes.
-Image: "ghcr.io/nginx/nginx-gateway-fabric/nginx:2.7.2" with ID "sha256:7c271837efd1acc81f050f729a0f222e156fe3a1c1eaabc71dce67f65bd0e568" found to be already present on all nodes.
-Image: "ghcr.io/mendhak/http-https-echo:42" with ID "sha256:d1f6b5907461931fb0d3ee38d8abfee16d5922f4087696dc99875c5f60c8b153" found to be already present on all nodes.
-
-== applying lab manifests (/Users/shsingh/.hermes/profiles/satyayuga-cloud/cache/scratch/tr06-tr14/lab/dx1/manifests)
-namespace/dx1 unchanged
-deployment.apps/dx1-echo unchanged
-service/dx1-echo unchanged
-deployment.apps/dx1-engine unchanged
-service/dx1-engine unchanged
-gateway.gateway.networking.k8s.io/edge-gateway unchanged
-httproute.gateway.networking.k8s.io/dx1-direct-echo configured
-httproute.gateway.networking.k8s.io/dx1-engine-route configured
-deployment "dx1-engine" successfully rolled out
-deployment "dx1-echo" successfully rolled out
-
-== DX1 lab setup complete
-NAME                                             CLASS   ADDRESS   PROGRAMMED   AGE
-gateway.gateway.networking.k8s.io/edge-gateway   nginx             True         4h58m
-
-NAME                               TYPE       CLUSTER-IP        EXTERNAL-IP   PORT(S)                      AGE
-service/dx1-nginx-gateway-fabric   NodePort   192.168.194.218   <none>        80:31437/TCP,443:31277/TCP   4h59m
-NAME                                READY   STATUS    RESTARTS   AGE
-pod/dx1-echo-566884dfc7-9rrfq       1/1     Running   0          5h36m
-pod/dx1-engine-85bcbf998d-sqrrk     1/1     Running   0          149m
-pod/dx1-operator-7c8f6486cd-fxpnc   1/1     Running   0          152m
-
-NAME                   TYPE        CLUSTER-IP        EXTERNAL-IP   PORT(S)    AGE
-service/dx1-echo       ClusterIP   192.168.194.244   <none>        8080/TCP   5h36m
-service/dx1-engine     ClusterIP   192.168.194.202   <none>        8080/TCP   5h36m
-service/dx1-operator   ClusterIP   192.168.194.237   <none>        1936/TCP   161m
-
-NAME                           READY   UP-TO-DATE   AVAILABLE   AGE
-deployment.apps/dx1-echo       1/1     1            1           5h36m
-deployment.apps/dx1-engine     1/1     1            1           5h36m
-deployment.apps/dx1-operator   1/1     1            1           161m
-
-NAME                                      DESIRED   CURRENT   READY   AGE
-replicaset.apps/dx1-echo-566884dfc7       1         1         1       5h36m
-replicaset.apps/dx1-engine-84cd67c44c     0         0         0       5h36m
-replicaset.apps/dx1-engine-85bcbf998d     1         1         1       149m
-replicaset.apps/dx1-engine-c8ccf9886      0         0         0       151m
-replicaset.apps/dx1-operator-56b5f48dbc   0         0         0       158m
-replicaset.apps/dx1-operator-56c495d4cf   0         0         0       157m
-replicaset.apps/dx1-operator-5f48b9b674   0         0         0       152m
-replicaset.apps/dx1-operator-7855f6c8f4   0         0         0       161m
-replicaset.apps/dx1-operator-7c8f6486cd   1         1         1       152m
-replicaset.apps/dx1-operator-bb566b4d9    0         0         0       153m
-| stage 1 PASS — cluster + NGF + engine + echo up (lab left installed)
-
-------------------------------------------------------------
-| STAGE 2/3 — apply→effect, M9 timed (lab/dx1/apply-effect.sh)
-------------------------------------------------------------
-
-== (a) lab up (lab/dx1/setup.sh, idempotent)
-
-== (pre) CRD + operator image + operator deployment
-Image: "trishula-operator:dx1" with ID "sha256:16732a0b2bebf06e806f37c83862bc80f99f23f551aa1a214246d8c9ec5cd360" found to be already present on all nodes.
-
-== pre-policy baseline: the benign probe passes transparently (200)
-
-== (b) t0 — kubectl apply dx1-wafpolicy.yaml
-
-== (c) operator compiled + engine consult active
-
-== (d) effect: SQLi probe → 403
-HTTP/1.1 403 Forbidden
-Server: nginx
-Date: Sat, 10 Oct 2026 05:07:55 GMT
-
-== M9 apply→effect: 1465ms (target ≤ 5s) — PASS
-
-== failure path — apply dx1-wafpolicy-broken.yaml (uncompilable CEL rule)
-
-== operator logged the compile error
-
-== fail-closed scenario: 1102ms from apply(broken) to the logged compile error; traffic unchanged; pods Ready
-
-== TR-08c apply→effect complete — lab left running (no teardown)
-| stage 2 PASS — CRD apply → operator compile → engine hot-reload → 403, within budget
-
-------------------------------------------------------------
-| STAGE 3/3 — hop evidence (lab/dx1/verify.sh) — the demo's closing transcript
-------------------------------------------------------------
-
-== hop 1 — NGF (Gateway edge-gateway, GatewayClass nginx)
-NAME           CLASS   ADDRESS   PROGRAMMED   AGE
-edge-gateway   nginx             True         4h59m
-NAME                   TYPE        CLUSTER-IP        EXTERNAL-IP   PORT(S)    AGE
-service/dx1-echo       ClusterIP   192.168.194.244   <none>        8080/TCP   5h36m
-service/dx1-engine     ClusterIP   192.168.194.202   <none>        8080/TCP   5h36m
-service/dx1-operator   ClusterIP   192.168.194.237   <none>        1936/TCP   161m
-
-NAME                           READY   UP-TO-DATE   AVAILABLE   AGE
-deployment.apps/dx1-echo       1/1     1            1           5h36m
-deployment.apps/dx1-engine     1/1     1            1           5h36m
-deployment.apps/dx1-operator   1/1     1            1           161m
-
-== Gateway edge-gateway Accepted=True Programmed=True (§10.2: NGF steers to the engine Service as a plain backend)
-
-== hop 2 — request through NGF -> engine (path /v1/chat/completions, Host dx1-routed.dx1.example.com, http://192.168.139.2:31437)
-HTTP/1.1 200 OK
-Server: nginx
-Date: Sat, 10 Oct 2026 05:07:57 GMT
-Content-Type: application/json; charset=utf-8
-Content-Length: 846
-Connection: keep-alive
-Etag: W/"34e-RvcHtVgKdCMGVmEXaK1tBKUJEn4"
-X-Powered-By: HTTP/2 Express (http2-express)
-X-Trishula-Decision: pass
-X-Trishula-Hop: engine
-
-{
-  "path": "/v1/chat/completions",
-  "headers": {
-    "host": "dx1-routed.dx1.example.com",
-    "user-agent": "curl/8.7.1",
-    "accept": "*/*",
-    "x-forwarded-for": "192.168.194.1, 192.168.194.79",
-    "x-forwarded-host": "dx1-routed.dx1.example.com",
-    "x-forwarded-port": "80",
-    "x-forwarded-proto": "http",
-    "x-real-ip": "192.168.194.1",
-    "accept-encoding": "gzip"
-  },
-  "method": "GET",
-  "url": "/v1/chat/completions",
-  "body": "",
-  "cookies": {},
-  "fresh": false,
-  "hostname": "dx1-routed.dx1.example.com",
-  "ip": "192.168.194.1",
-  "ips": [
-    "192.168.194.1",
-    "192.168.194.79"
-  ],
-  "protocol": "http",
-  "httpVersion": "1.1",
-  "query": {},
-  "signedCookies": {},
-  "subdomains": [
-    "dx1",
-    "dx1-routed"
-  ],
-  "xhr": false,
-  "os": {
-    "hostname": "dx1-echo-566884dfc7-9rrfq"
-  },
-  "connection": {}
-}
-
-== hop 3 — the echo pod responded through the engine (hop-by-hop headers)
-
-== echo response body host (demo pod id): dx1-echo-566884dfc7-9rrfq
-
-== contrast — Host direct-echo.dx1.example.com on the same NGF NodePort lands directly on the echo pod (no X-Trishula-Hop)
-HTTP/1.1 200 OK
-Server: nginx
-Date: Sat, 10 Oct 2026 05:07:57 GMT
-Content-Type: application/json; charset=utf-8
-Content-Length: 800
-Connection: keep-alive
-X-Powered-By: HTTP/2 Express (http2-express)
-ETag: W/"320-N/NN11Q2y5Gu5Leuf8UlRsDjTRc"
-
-{
-  "path": "/anything/at/all",
-  "headers": {
-    "host": "direct-echo.dx1.example.com",
-    "x-forwarded-for": "192.168.194.1",
-
-== engine-local /healthz (readiness gate, answered by the engine itself)
-ok <- engine-local /healthz (192.168.194.91:8080)
-
-== DX1 verify: hop 1 NGF -> hop 2 engine -> hop 3 echo pod all evidenced above
-
-== §10.2 variant A reproduced live: gateway -> engine backend -> transparent forward -> demo pool
-
-== Done. The lab remains installed (no teardown).
-| stage 3 PASS — NGF → engine → echo pod hop-by-hop evidenced
-
-============================================================
-== DEMO-OK — lab/demo.sh complete: setup + M9 apply→effect + hop evidence all PASS (lab left running, no teardown)
-============================================================
+```bash
+bash lab/dx1/dx1-gate.sh
 ```
 
-## Shield visibility tiers (issue #80)
+The gate asserts: clone → first enforced rule in ≤ 15 min. The
+[nightly job](.github/workflows/lab-nightly.yml) keeps the timing asserted.
 
-The shield's guarantees depend on what the kernel hook actually SEES —
-and on OrbStack-family veth fast paths the attach altitude is not the
-effective altitude (established-flow segments skip clsact ingress; generic
-XDP misses netns-sourced UDP; ICMP invokes XDP reliably). The loader
-therefore **measures** the visibility tier at boot
-(`internal/shield.ShieldTier`: a 5-packet probe burst, classified from
-the programs' per-CPU probe counters) and emits
-`trishula.shield.visibility_tier` once per interface (tier literal; the
-shield startup attribute on the OTel pipeline — internal/shield/tier_otel.go).
-Measured in CI by `lab/tier-gate.sh` (`TIER(<iface>)=<tier>` lines; the
-tagged E2E lives in `test/tier/`).
+## Run the tests
+
+```bash
+go test ./...
+```
+
+The suite gates the bench walls, the CRS parity differential (19/19 corpus
+cases), the ban conformance set, the shield tier gate and the docs guards.
+
+## Run the bench on the dev VM
+
+[lab/bench-vm.sh](lab/bench-vm.sh) runs the
+[§17.2](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#172-benchmark-plan)
+rig in the dev VM. Start from a VM copy of the tree:
+
+```bash
+orb run -m trishula-build-dev -u root bash /mnt/mac/<path-to-clone>/lab/bench-vm.sh
+```
+
+The script prints four sections: the new CI shape, the old-shape control, the
+walls with the prefilter on and the control with it off. The VM is the A/B
+surface. Hosted CI stays the calibration surface.
+
+## Proof
+
+The verbatim `lab/demo.sh` output for the Phase 0 exit sits on the recorded
+run at main `ed9b271`. The hop, M9 and parity evidence trails link from the
+rows above.
+
+## Shield visibility tiers
+
+The shield measures what the hook sees ([#80](https://github.com/trishula-dev/trishula/issues/80#issuecomment-6094023768)).
+On OrbStack-family pod-veths the attach altitude is not the effective
+altitude.
 
 | Tier | Meaning | Enforcement posture |
 |---|---|---|
-| `full` | every packet observed at both altitudes (XDP + TC) | full payload visibility at TC |
-| `first_packet` | only the first packet of a connection reaches TC; XDP none (or ICMP-only) — OrbStack pod-veth posture | ban/ACL on first packet ONLY — enforcement correct for NEW connections (the first packet carries the verdict); payload deep-inspection degraded to sampled flows |
-| `none` | no packets visible at any altitude | loader must refuse + fail loudly (`TierRefusal`) — an invisible shield is a false sense of security |
+| `full` | every packet at both altitudes (XDP + TC) | full payload visibility at TC |
+| `first_packet` | first packet only (OrbStack pod-veth posture) | ban/ACL on new connections only; sampled flows |
+| `none` | no packets visible | loader refuses and fails loudly (`TierRefusal`) |
 
 ## License
 
