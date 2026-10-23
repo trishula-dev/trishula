@@ -194,6 +194,65 @@ nature. Keep that in mind when testing.
   splice/bump verdict chain, blocks clamd from returning a verdict (fail-open),
   or drops decision-log lines is a security bug, not a cosmetic one.
 
+## Artifact attestations and SLSA provenance
+
+Release artefacts carry signed statements about their own build. This
+section records what an attestation binds and how a consumer verifies
+one.
+
+Every asset a release publishes carries two signed attestations:
+
+- **Build provenance.** One in-toto statement with the SLSA v1.0
+  build-provenance predicate. The statement names the commit, the
+  workflow run and the builder that produced the asset.
+- **SBOM (Software Bill of Materials).** One in-toto statement with the
+  SPDX 2.3 document over the released asset set as its predicate.
+
+SLSA (Supply-chain Levels for Software Artifacts) grades these provenance
+records. The attest lane
+([.github/workflows/release-attest.yml](.github/workflows/release-attest.yml))
+writes both attestations on GitHub-hosted runners, on a release
+publication or a manual dispatch with a tag. The statement signature is a
+short-lived Sigstore certificate over the repository's OIDC identity. The
+signature binds the chain: asset digest → commit SHA → workflow run →
+signer identity. GitHub records every attestation in the public Rekor
+transparency log; the [attestations
+list](https://github.com/trishula-dev/trishula/attestations) carries the
+same store.
+
+A cut that predates the lane carries no attestations. `2026.01-rc1`
+predates the lane; attestations start with the next cut.
+
+Verify from a consumer checkout. The commands check the cryptographic
+signature, the signer identity and the transparency-log entry, per asset:
+
+```sh
+gh release download 2026.01-rc2 --repo trishula-dev/trishula --dir assets
+
+# Build provenance per asset.
+for f in assets/*; do
+  gh attestation verify "$f" --repo trishula-dev/trishula
+done
+
+# SBOM per asset.
+for f in assets/*; do
+  gh attestation verify "$f" --repo trishula-dev/trishula \
+    --predicate-type https://spdx.dev/Document/v2.3
+done
+```
+
+The in-repo verifier runs the same checks in structural form over the
+whole release: statement presence, subject-digest binding, both predicate
+types and the builder identity.
+
+```sh
+go run ./cmd/attest-verify -repo trishula-dev/trishula -tag 2026.01-rc2
+```
+
+It is the structural gate only. `gh attestation verify` holds the
+cryptographic step; release notes carry both outputs as the release's
+evidence trail.
+
 ## How this repository maintains security hygiene
 
 **Supply-chain and dependency integrity**

@@ -1,0 +1,106 @@
+# TR-81 (issue #120): artifact attestations for the release artefacts.
+#
+# The attest job runs on a release publication or a manual dispatch with a
+# tag. It downloads the release assets, generates one SPDX 2.3 SBOM over
+# the asset set, and attests every asset twice: build provenance (SLSA
+# v1.0 predicate) and the SBOM. The verify steps record the consumer-side
+# output for the release's evidence trail: `gh attestation verify` per
+# asset plus the in-repo verifier over the release-assets surface.
+#
+# The selftest job is the only leg a pull request carries: it runs the
+# verifier contract suite (the watched RED/GREEN pair over the in-toto
+# statement shapes). The attest job never runs on pull requests.
+#
+# Action pins: actions/attest-build-provenance and actions/attest-sbom are
+# v4 wrappers over actions/attest (upstream deprecation note, READMEs
+# 2026-10); the issue names both and both still function. The permissions
+# carry the id-token + attestations + artifact-metadata set the current
+# actions/attest README instructs.
+
+name: release-attest
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/release-attest.yml
+      - internal/attest/**
+      - cmd/attest-verify/**
+      - SECURITY.md
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to attest
+        required: true
+        type: string
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    name: attest verifier suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - name: Vet the attest packages
+        run: go vet ./internal/attest/... ./cmd/attest-verify/...
+      - name: Run the verifier contract suite
+        run: go test ./internal/attest/... -count=1
+
+  attest:
+    name: attest the release assets
+    if: >-
+      ${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - name: Download the release assets
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo trishula-dev/trishula --dir assets
+      - name: Generate the SBOM over the release assets
+        uses: anchore/sbom-action@f8706fc06deabb1adc34978fc92896fdcd3d17fe # v0.24.3
+        with:
+          path: assets
+          format: spdx-json
+          output-file: sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Attest every asset with build provenance
+        uses: actions/attest-build-provenance@9d57eef8c06cd9d6b433effeeb7a6a77b3ff94ad # v4.2.2
+        with:
+          subject-path: assets/*
+      - name: Attest every asset with the SBOM
+        uses: actions/attest-sbom@4c8abdcbea4a6b66f70fd1169e70af4bf5b13701 # v4.1.0
+        with:
+          sbom-path: sbom.spdx.json
+          subject-path: assets/*
+      - name: Record the consumer-side verification
+        run: |
+          set -euo pipefail
+          for f in assets/*; do
+            gh attestation verify "$f" --repo trishula-dev/trishula
+            gh attestation verify "$f" --repo trishula-dev/trishula --predicate-type https://spdx.dev/Document/v2.3
+          done
+      - name: Run the in-repo verifier
+        run: go run ./cmd/attest-verify -repo trishula-dev/trishula -tag "$TAG"
