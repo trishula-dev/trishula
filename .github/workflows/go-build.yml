@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: trishula-go-build
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
