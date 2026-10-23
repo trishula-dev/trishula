@@ -1,6 +1,8 @@
 package botdef
 
 import (
+	"slices"
+
 	"github.com/trishula-dev/trishula/internal/engine/ladder"
 )
 
@@ -66,5 +68,24 @@ func DefaultMergePolicy() MergePolicy {
 // returns the resolved action plus the contributing family set, sorted
 // (the lab render and the conformance tests read it back).
 func Merge(vs []DetectorVerdict, p MergePolicy) (ladder.Action, []Family) {
-	return ladder.ActionLog, nil // RED: GREEN rolls the §12.1 consensus rule
+	want := p.MinFamilies
+	if want < 2 {
+		want = 2 // §12.1 floor: a single family never triggers
+	}
+	seen := make(map[Family]struct{}, 3)
+	fams := make([]Family, 0, 3)
+	for _, dv := range vs {
+		if dv.Confidence < p.ConfidenceFloor {
+			continue // below the floor: a prior, not a detection
+		}
+		if _, ok := seen[dv.Family]; !ok {
+			seen[dv.Family] = struct{}{}
+			fams = append(fams, dv.Family)
+		}
+	}
+	slices.Sort(fams)
+	if len(fams) >= want && p.ConsensusAction.Decisive() {
+		return p.ConsensusAction, fams
+	}
+	return ladder.ActionLog, fams
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/netip"
 	"sync"
 	"time"
@@ -168,7 +169,167 @@ func NewBehaviorWindows(cfg BehaviorWindowConfig) *BehaviorWindows {
 // DetectorVerdicts that fired on this observe (§12.1 triple; empty = the
 // source stays quiet). Order is pinned: pace, auth-fail, spread.
 func (bw *BehaviorWindows) Observe(src netip.Addr, o BehaviorObservation) []DetectorVerdict {
-	return nil // RED: GREEN implements the three sliding-window detectors
+	bw.mu.Lock()
+	defer bw.mu.Unlock()
+	now := bw.cfg.Now()
+	s := bw.state[src]
+	if s == nil {
+		if len(bw.state) >= bw.cfg.MaxSources {
+			bw.evictOldestLocked()
+		}
+		s = &behaviorSource{}
+		bw.state[src] = s
+	}
+	s.last = now
+	s.events = append(s.events, behaviorEvent{t: now, path: o.Path, status: o.Status})
+	bw.pruneLocked(s, now)
+
+	var vs []DetectorVerdict
+	if v, ok := bw.paceVerdict(s, now); ok {
+		vs = append(vs, v)
+	}
+	if v, ok := bw.authVerdict(s, now); ok {
+		vs = append(vs, v)
+	}
+	if v, ok := bw.spreadVerdict(s, now); ok {
+		vs = append(vs, v)
+	}
+	return vs
+}
+
+// paceVerdict computes the §12.1 pacing verdict: more than
+// PaceMaxRequests inside PaceWindow breaches; the excess sets the
+// confidence (the cap keeps every confidence below 100 — a detector
+// asserts strength, never certainty).
+func (bw *BehaviorWindows) paceVerdict(s *behaviorSource, now time.Time) (DetectorVerdict, bool) {
+	cut := now.Add(-bw.cfg.PaceWindow)
+	n := 0
+	for _, ev := range s.events {
+		if !ev.t.Before(cut) {
+			n++
+		}
+	}
+	if n <= bw.cfg.PaceMaxRequests {
+		return DetectorVerdict{}, false
+	}
+	conf := 60 + 8*(n-bw.cfg.PaceMaxRequests)
+	if conf > 99 {
+		conf = 99
+	}
+	return DetectorVerdict{
+		ID:         ruleBotPace,
+		Family:     FamilyBehavioral,
+		Confidence: uint8(conf),
+		Evidence:   fmt.Sprintf("requests=%d in %v", n, bw.cfg.PaceWindow),
+	}, true
+}
+
+// authVerdict computes the §12.1 auth-failure verdict: the 401/403 share
+// of auth outcomes in the window breaches at or above the ratio, once the
+// in-window attempts clear the minimum (the surplus ratio sets the
+// confidence; the cap keeps every confidence below 100). The v1 outcome
+// pool counts 401/403 as failures and 2xx as successes without an
+// endpoint registry — the per-route allowlist arrives with the CR wiring.
+func (bw *BehaviorWindows) authVerdict(s *behaviorSource, now time.Time) (DetectorVerdict, bool) {
+	cut := now.Add(-bw.cfg.AuthWindow)
+	attempts, failures := 0, 0
+	for _, ev := range s.events {
+		if ev.t.Before(cut) {
+			continue
+		}
+		if authFailStatus(ev.status) {
+			attempts++
+			failures++
+		} else if authSuccessStatus(ev.status) {
+			attempts++
+		}
+	}
+	if attempts < bw.cfg.AuthMinAttempts {
+		return DetectorVerdict{}, false
+	}
+	ratio := float64(failures) / float64(attempts)
+	if ratio < bw.cfg.AuthFailRatio {
+		return DetectorVerdict{}, false
+	}
+	conf := 70 + int(math.Round(100*(ratio-bw.cfg.AuthFailRatio)))
+	if conf > 99 {
+		conf = 99
+	}
+	return DetectorVerdict{
+		ID:         ruleBotAuthFail,
+		Family:     FamilyBehavioral,
+		Confidence: uint8(conf),
+		Evidence:   fmt.Sprintf("failures=%d attempts=%d ratio=%.2f", failures, attempts, ratio),
+	}, true
+}
+
+// spreadVerdict computes the §12.1 endpoint-uniqueness verdict: at least
+// SpreadMinRequests in-window with SpreadMinDistinct distinct paths reads
+// as broad crawling (the surplus breadth sets the confidence; the cap
+// keeps every confidence below 100).
+func (bw *BehaviorWindows) spreadVerdict(s *behaviorSource, now time.Time) (DetectorVerdict, bool) {
+	cut := now.Add(-bw.cfg.SpreadWindow)
+	seen := make(map[string]struct{}, 32)
+	n := 0
+	for _, ev := range s.events {
+		if ev.t.Before(cut) {
+			continue
+		}
+		seen[ev.path] = struct{}{}
+		n++
+	}
+	if n < bw.cfg.SpreadMinRequests || len(seen) < bw.cfg.SpreadMinDistinct {
+		return DetectorVerdict{}, false
+	}
+	conf := 55 + 5*(len(seen)-bw.cfg.SpreadMinDistinct)
+	if conf > 99 {
+		conf = 99
+	}
+	return DetectorVerdict{
+		ID:         ruleBotSpread,
+		Family:     FamilyBehavioral,
+		Confidence: uint8(conf),
+		Evidence:   fmt.Sprintf("distinct=%d requests=%d", len(seen), n),
+	}, true
+}
+
+// pruneLocked drops events outside the largest window and keeps the
+// event log under the hard cap (bounded-state rule: expired entries
+// leave first, overflow drops the oldest).
+func (bw *BehaviorWindows) pruneLocked(s *behaviorSource, now time.Time) {
+	maxWin := bw.cfg.PaceWindow
+	if bw.cfg.AuthWindow > maxWin {
+		maxWin = bw.cfg.AuthWindow
+	}
+	if bw.cfg.SpreadWindow > maxWin {
+		maxWin = bw.cfg.SpreadWindow
+	}
+	cut := now.Add(-maxWin)
+	keep := 0
+	for _, ev := range s.events {
+		if !ev.t.Before(cut) {
+			s.events[keep] = ev
+			keep++
+		}
+	}
+	s.events = s.events[:keep]
+	if over := len(s.events) - boundEventLog; over > 0 {
+		s.events = s.events[over:]
+	}
+}
+
+// evictOldestLocked frees one source slot for a new source: the
+// oldest-touched entry goes, so the source map grows to the cap and
+// stops there (bounded-state rule).
+func (bw *BehaviorWindows) evictOldestLocked() {
+	var oldest netip.Addr
+	oldAt, found := time.Time{}, false
+	for k, s := range bw.state {
+		if !found || s.last.Before(oldAt) {
+			oldest, oldAt, found = k, s.last, true
+		}
+	}
+	delete(bw.state, oldest)
 }
 
 // LoadBehaviorVectors decodes the published behavioral test vectors from r
