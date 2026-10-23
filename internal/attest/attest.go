@@ -14,11 +14,27 @@
 // PRD ref: https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#181-assets-and-trust-boundaries
 package attest
 
+import (
+	"fmt"
+	"strings"
+)
+
 // PredProvenance is the required SLSA v1.0 build-provenance predicate type.
 const PredProvenance = "https://slsa.dev/provenance/v1"
 
 // PredSBOM is the required SPDX SBOM predicate type.
 const PredSBOM = "https://spdx.dev/Document/v2.3"
+
+// Reject reasons the verifier reports. The contract tests pin these forms.
+const (
+	reasonMissingPredicate = "missing attestation predicate"
+	reasonSubjectMismatch  = "statement subject digest does not match the asset digest"
+	reasonForeignBuilder   = "provenance builder is outside the repository identity"
+	reasonFetchFailed      = "attestation fetch failed"
+	reasonListFailed       = "release-assets list failed"
+	reasonNoAssetDigest    = "asset carries no sha256 digest on the release-assets surface"
+	reasonBadBundle        = "attestation bundle decode failed"
+)
 
 // Status names the verdict the verifier reports for one release asset.
 type Status string
@@ -79,10 +95,82 @@ type AssetResult struct {
 	Reasons    []string
 }
 
-// Verify decides every asset of the named release in order.
-//
-// TR-81 RED stub: the GREEN commit fills the decision logic. The nil
-// return makes every contract test fail on camera until then.
+// Verify decides every asset of the named release in order. A failed
+// release-assets read rejects as its own verdict: an unknown surface state
+// never passes.
 func (v *Verifier) Verify(tag string) []*AssetResult {
-	return nil
+	assets, err := v.List.Assets(tag)
+	if err != nil {
+		return []*AssetResult{{
+			Asset:   AssetSpec{Name: tag},
+			Status:  StatusReject,
+			Reasons: []string{fmt.Sprintf("%s: %v", reasonListFailed, err)},
+		}}
+	}
+	results := make([]*AssetResult, 0, len(assets))
+	for _, a := range assets {
+		results = append(results, v.verifyAsset(a))
+	}
+	return results
+}
+
+func (v *Verifier) verifyAsset(a AssetSpec) *AssetResult {
+	r := &AssetResult{Asset: a, Status: StatusReject}
+	if a.SHA256 == "" {
+		r.Reasons = []string{reasonNoAssetDigest}
+		return r
+	}
+	bundles, err := v.Fetch.Bundles(a.SHA256)
+	if err != nil {
+		r.Reasons = []string{fmt.Sprintf("%s: %v", reasonFetchFailed, err)}
+		return r
+	}
+	var provenance, sbom []Statement
+	for _, b := range bundles {
+		st, err := DecodeStatement(b)
+		if err != nil {
+			r.Reasons = append(r.Reasons, fmt.Sprintf("%s: %v", reasonBadBundle, err))
+			continue
+		}
+		switch st.PredicateType {
+		case PredProvenance:
+			provenance = append(provenance, st)
+		case PredSBOM:
+			sbom = append(sbom, st)
+		}
+	}
+	r.Provenance = v.bindStatement(provenance, a, true, &r.Reasons)
+	r.SBOM = v.bindStatement(sbom, a, false, &r.Reasons)
+	if r.Provenance && r.SBOM {
+		r.Status = StatusPass
+		r.Reasons = nil
+	}
+	return r
+}
+
+// bindStatement reports whether one candidate statement of the required
+// predicate type binds the asset: the subject digest equals the asset
+// digest and, for provenance, the builder id sits inside the repository
+// identity. It appends the reject reasons where no statement binds.
+func (v *Verifier) bindStatement(candidates []Statement, a AssetSpec, checkBuilder bool, reasons *[]string) bool {
+	predicate := PredSBOM
+	if checkBuilder {
+		predicate = PredProvenance
+	}
+	if len(candidates) == 0 {
+		*reasons = append(*reasons, fmt.Sprintf("%s: %s", reasonMissingPredicate, predicate))
+		return false
+	}
+	for _, st := range candidates {
+		if st.SubjectSHA256 != a.SHA256 {
+			*reasons = append(*reasons, fmt.Sprintf("%s: %s does not match %s", reasonSubjectMismatch, st.SubjectSHA256, a.SHA256))
+			continue
+		}
+		if checkBuilder && v.BuilderPrefix != "" && !strings.HasPrefix(st.Builder, v.BuilderPrefix) {
+			*reasons = append(*reasons, fmt.Sprintf("%s: %s", reasonForeignBuilder, st.Builder))
+			continue
+		}
+		return true
+	}
+	return false
 }

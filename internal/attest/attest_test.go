@@ -214,7 +214,7 @@ func TestVerifierRejectsForeignBuilder(t *testing.T) {
 	if r.Status != StatusReject {
 		t.Errorf("status %q, want %q for a provenance statement built outside the repository identity", r.Status, StatusReject)
 	}
-	if r.SBOM {
+	if !r.SBOM {
 		t.Errorf("sbom verdict %v, want true — the SBOM attestation stays bound on its own surface", r.SBOM)
 	}
 	for _, reason := range r.Reasons {
