@@ -9,7 +9,10 @@ package operator
 // cel.Request.Query are undefined; GREEN defines them.
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -127,6 +130,102 @@ func TestReconcileCompilesPolicyWithCustomPack(t *testing.T) {
 	}
 }
 
+// betaPack is the second tenant's rule pack: one enforced rule with its
+// own id, so the separation test checks each bundle's rule ids by tenant.
+func betaPack(t *testing.T) cel.RulePack {
+	t.Helper()
+	const yaml = `
+rules:
+  - id: TR25-001
+    name: beta-delete-gate
+    description: blocks DELETE requests in the beta tenant only
+    action: enforce
+    expression: |
+      request.method == "DELETE"
+`
+	p, err := cel.ParseRulePack([]byte(yaml))
+	if err != nil {
+		t.Fatalf("parse beta pack: %v", err)
+	}
+	return *p
+}
+
+// TestReconcilePerTenantBundlesStaySeparate (TR-25, PRD §20.1 R8): two
+// tenants' policies reconcile into separate bundles — each bundle binds
+// its own namespace and carries ONLY its own namespace's custom packs. The
+// seed pack (TR02-001) is the shared default plane, not a tenant's rule.
+func TestReconcilePerTenantBundlesStaySeparate(t *testing.T) {
+	mkPolicy := func(ns string) v1alpha1.WAFPolicy {
+		return v1alpha1.WAFPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "chat-gate", Namespace: ns},
+			Spec: v1alpha1.WAFPolicySpec{
+				DefaultAction: v1alpha1.DefaultActionBlock,
+				ModeFlags:     v1alpha1.PolicyModeFlags{Inline: true},
+				RuleSets: []v1alpha1.RuleSetRef{{
+					Name:   "sqli",
+					Source: v1alpha1.RuleSetSource{CRSVersion: "4.x", Profile: v1alpha1.CRSProfilePL2},
+				}},
+			},
+		}
+	}
+	src := srcMap{"alpha/sqli": sqliPack(t), "beta/sqli": betaPack(t)}
+	out := Reconcile(context.Background(),
+		[]v1alpha1.WAFPolicy{mkPolicy("alpha"), mkPolicy("beta")}, src)
+	if len(out) != 2 {
+		t.Fatalf("outcomes = %d, want 2 (one per tenant)", len(out))
+	}
+	byKey := map[string]Outcome{}
+	for _, o := range out {
+		if o.Err != nil {
+			t.Fatalf("outcome %s: compile error: %v", o.Key, o.Err)
+		}
+		byKey[o.Key] = o
+	}
+	oA, okA := byKey["alpha/chat-gate"]
+	oB, okB := byKey["beta/chat-gate"]
+	if !okA || !okB {
+		t.Fatalf("outcomes lack the two tenants' keys (alpha=%v beta=%v)", okA, okB)
+	}
+	if oA.Bundle.Tenant != "alpha" {
+		t.Fatalf("alpha bundle tenant = %q, want alpha", oA.Bundle.Tenant)
+	}
+	if oB.Bundle.Tenant != "beta" {
+		t.Fatalf("beta bundle tenant = %q, want beta", oB.Bundle.Tenant)
+	}
+	ids := func(b *Bundle) []string {
+		var ids []string
+		for _, p := range b.RulePacks {
+			for _, r := range p.Rules {
+				ids = append(ids, r.ID)
+			}
+		}
+		return ids
+	}
+	if !slices.Contains(ids(oA.Bundle), "TR08C-001") || slices.Contains(ids(oA.Bundle), "TR25-001") {
+		t.Errorf("alpha bundle pack ids = %v, want TR08C-001 and never beta's TR25-001", ids(oA.Bundle))
+	}
+	if !slices.Contains(ids(oB.Bundle), "TR25-001") || slices.Contains(ids(oB.Bundle), "TR08C-001") {
+		t.Errorf("beta bundle pack ids = %v, want TR25-001 and never alpha's TR08C-001", ids(oB.Bundle))
+	}
+	if _, err := Load(*oA.Bundle); err != nil {
+		t.Errorf("alpha bundle must load: %v", err)
+	}
+	if _, err := Load(*oB.Bundle); err != nil {
+		t.Errorf("beta bundle must load: %v", err)
+	}
+	wireA, err := json.Marshal(oA.Bundle)
+	if err != nil {
+		t.Fatalf("marshal alpha bundle: %v", err)
+	}
+	wireB, err := json.Marshal(oB.Bundle)
+	if err != nil {
+		t.Fatalf("marshal beta bundle: %v", err)
+	}
+	if bytes.Equal(wireA, wireB) {
+		t.Error("alpha and beta bundles are byte-identical on the wire (one artifact, not per-tenant)")
+	}
+}
+
 // TestReconcileFailClosedOnUncompilableRule (M9 failure path): a rule pack
 // that parses but does not compile, or a rule-set ref that resolves to
 // nothing, yields an error outcome with NO bundle — the policy never ships a
@@ -159,4 +258,20 @@ func TestReconcileFailClosedOnUncompilableRule(t *testing.T) {
 			t.Errorf("error should name the unresolved ref, got: %v", o.Err)
 		}
 	})
+}
+
+// TestReconcileRefResolutionIsNamespaceLocked (TR-25, PRD §20.1 R8): a
+// rule-set ref resolves in the policy's namespace ONLY. A pack present in
+// another namespace is a missing ref: the outcome fails closed.
+func TestReconcileRefResolutionIsNamespaceLocked(t *testing.T) {
+	out := Reconcile(context.Background(),
+		[]v1alpha1.WAFPolicy{fixturePolicyWithRef()},
+		srcMap{"beta/dx1-sqli": sqliPack(t)})
+	o := out[0]
+	if o.Bundle != nil {
+		t.Fatal("a pack present only under another namespace must not resolve the ref (no bundle)")
+	}
+	if o.Err == nil || !strings.Contains(o.Err.Error(), "dx1-sqli") {
+		t.Errorf("error should name the unresolved ref, got: %v", o.Err)
+	}
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/trishula-dev/trishula/api/v1alpha1"
 	"github.com/trishula-dev/trishula/internal/engine/cel"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // TR-08b acceptance (issue #75): a WAFPolicy Go object (no cluster)
@@ -23,6 +24,7 @@ const wantSeedRuleID = "TR02-001"
 
 func fixturePolicy() v1alpha1.WAFPolicy {
 	return v1alpha1.WAFPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "seed-policy", Namespace: "lab"},
 		Spec: v1alpha1.WAFPolicySpec{
 			DefaultAction: v1alpha1.DefaultActionBlock,
 			ModeFlags:     v1alpha1.PolicyModeFlags{Shadow: true},
@@ -77,6 +79,30 @@ func TestCompileLoadRoundTrip(t *testing.T) {
 	}
 }
 
+// TestCompileStampsTenantNamespace (TR-25, PRD §20.1 R8): every compiled
+// bundle binds its tenant — the WAFPolicy's namespace — so a bundle never
+// leaves the operator unqualified.
+func TestCompileStampsTenantNamespace(t *testing.T) {
+	bundle, err := Compile(fixturePolicy())
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if bundle.Tenant != "lab" {
+		t.Fatalf("bundle tenant = %q, want %q (the policy namespace)", bundle.Tenant, "lab")
+	}
+}
+
+// TestCompileRejectsTenantlessPolicy (TR-25, PRD §20.1 R8): a
+// namespace-less WAFPolicy compiles to nothing (fail closed). An
+// unqualified bundle cannot bind a tenant.
+func TestCompileRejectsTenantlessPolicy(t *testing.T) {
+	p := fixturePolicy()
+	p.Namespace = ""
+	if _, err := Compile(p); err == nil {
+		t.Fatal("Compile accepted a namespace-less WAFPolicy (no tenant binding)")
+	}
+}
+
 // TestLoadMismatchDetectsTampering closes the round trip's mismatch arm:
 // a bundle whose rule expression was altered after compile must fail to
 // load, not eval silently under tampered semantics.
@@ -91,6 +117,20 @@ func TestLoadMismatchDetectsTampering(t *testing.T) {
 
 	if _, err := Load(spoiled); err == nil {
 		t.Fatalf("Load accepted a tampered bundle (expression altered post-compile); want mismatch error")
+	}
+}
+
+// TestLoadRejectsTenantlessBundle (TR-25, PRD §20.1 R8): Load fails closed
+// on a bundle without the tenant binding. The distribution unit never
+// loads unqualified.
+func TestLoadRejectsTenantlessBundle(t *testing.T) {
+	bundle, err := Compile(fixturePolicy())
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	bundle.Tenant = ""
+	if _, err := Load(bundle); err == nil {
+		t.Fatal("Load accepted a bundle with no tenant binding")
 	}
 }
 
