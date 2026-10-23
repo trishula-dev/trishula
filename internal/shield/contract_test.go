@@ -14,9 +14,9 @@ package shield
 
 import "testing"
 
-// Kernel contract under test (PRD §9.3 + §19.1 sketch):
+// Kernel contract under test (the spec's kernel map set plus the reference-implementation sketch):
 const (
-	// Map names exactly as pinned in the §19.1 sketch.
+	// Map names exactly as pinned in the reference-implementation sketch.
 	mapACL4         = "acl4"
 	mapVerdictCache = "verdict_cache"
 	mapBanTable     = "ban_table"
@@ -30,11 +30,11 @@ func TestKernelContract(t *testing.T) {
 	if testing.Short() {
 		t.Skip("kernel contract needs the compiled object; run in VM gate")
 	}
-	// GREEN = SpecFromSource parses bpf/shield_xdp.c and every §19.1 map
+	// GREEN = SpecFromSource parses bpf/shield_xdp.c and every reference-implementation map
 	// row matches (kind + max_entries); the object-level assert is the
 	// attach test on Linux (lab/verify-xdp-chain.sh output in the PR).
 	spec := SpecFromSource(t, "../../bpf/shield_xdp.c")
-	// §19.1 scope note: flow_stats + events belong to the TC classifier
+	// Reference-implementation scope note: flow_stats + events belong to the TC classifier
 	// (flow_tc.c — classify_flow emits events); the XDP shield object
 	// carries enforcement state only: acl4, verdict_cache, ban_table.
 	cases := []struct {
@@ -51,10 +51,10 @@ func TestKernelContract(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := spec.Map(t, tc.mapSpec)
 			if m.Kind != tc.wantTyp {
-				t.Fatalf("map %s type=%q, want %q (§19.1)", tc.mapSpec, m.Kind, tc.wantTyp)
+				t.Fatalf("map %s type=%q, want %q (§19.1)", tc.mapSpec, m.Kind, tc.wantTyp) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 			}
 			if m.MaxEntries != tc.wantMax {
-				t.Fatalf("map %s max_entries=%d, want %d (§19.1)", tc.mapSpec, m.MaxEntries, tc.wantMax)
+				t.Fatalf("map %s max_entries=%d, want %d (§19.1)", tc.mapSpec, m.MaxEntries, tc.wantMax) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 			}
 		})
 	}

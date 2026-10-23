@@ -1,4 +1,4 @@
-// cmd/trishula is the PRD §19 skeleton entrypoint (TR-02): today it proves
+// cmd/trishula is the reference-implementation skeleton entrypoint (TR-02): today it proves
 // the seed rule path end-to-end via --selftest; serving modes arrive with
 // the engine/shield/operator builds (TR-03+).
 package main

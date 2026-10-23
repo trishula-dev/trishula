@@ -51,7 +51,7 @@ func SpecFromSource(t *testing.T, path string) SourceSpec {
 
 	// Maps: struct { __uint(type, BPF_MAP_TYPE_X); __uint(max_entries, N);
 	//   __type(key, K); __type(value, V); } NAME SEC(".maps");
-	// The §19.1 sketch writes type/max_entries as __uint declarations in
+	// The reference-implementation sketch writes type/max_entries as __uint declarations in
 	// any order; key/value types are captured for kind cross-checks.
 	mapRe := regexp.MustCompile(`(?s)\}\s+(\w+)\s+SEC\("\.maps"\)?;`)
 	blockRe := regexp.MustCompile(`(?s)struct\s*\{(.*?)\}\s*(\w+)\s*SEC\("\.maps"\);`)
@@ -82,7 +82,7 @@ func SpecFromSource(t *testing.T, path string) SourceSpec {
 	return spec
 }
 
-// evalShift evaluates `1 << N` / literal / sum-of-shifts (§19.1 style).
+// evalShift evaluates `1 << N` / literal / sum-of-shifts (reference-implementation style).
 func evalShift(expr string) (uint32, error) {
 	if !strings.Contains(expr, "<<") {
 		v, err := strconv.ParseUint(expr, 0, 32)

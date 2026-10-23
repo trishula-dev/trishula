@@ -17,7 +17,7 @@ import (
 // operator symbols below are undefined.
 //
 // The compile resolves a policy with no custom CEL rule sets to the seed
-// rule pack (TR-02, rules/cel/seed.yaml): exactly one rule, the §11.3
+// rule pack (TR-02, rules/cel/seed.yaml): exactly one rule, the spec's
 // rate-shape example, action=log. Every bundle embeds it as the default
 // CEL plane so a minimal v0 policy is evaluable.
 const wantSeedRuleID = "TR02-001"
@@ -32,7 +32,7 @@ func fixturePolicy() v1alpha1.WAFPolicy {
 	}
 }
 
-// fixtureRequest is the §11.3 fixture request: the boundary case above the
+// fixtureRequest is the spec's CEL fixture request: the boundary case above the
 // seed rule's > 40 request threshold inside the /v1/chat/* glob.
 func fixtureRequest() cel.Request {
 	return cel.Request{
@@ -60,7 +60,7 @@ func TestCompileLoadRoundTrip(t *testing.T) {
 		t.Fatalf("bundle CEL plane = %+v, want one rule with id %s", bundle.RulePacks, wantSeedRuleID)
 	}
 	if bundle.KernelValues == nil {
-		t.Fatalf("bundle.KernelValues = nil, want the empty §9.3 stub record")
+		t.Fatalf("bundle.KernelValues = nil, want the empty §9.3 stub record") // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 	}
 
 	eval, err := Load(bundle)
@@ -79,7 +79,7 @@ func TestCompileLoadRoundTrip(t *testing.T) {
 	}
 }
 
-// TestCompileStampsTenantNamespace (TR-25, PRD §20.1 R8): every compiled
+// TestCompileStampsTenantNamespace (TR-25, the spec's multi-tenancy requirement R8): every compiled
 // bundle binds its tenant — the WAFPolicy's namespace — so a bundle never
 // leaves the operator unqualified.
 func TestCompileStampsTenantNamespace(t *testing.T) {
@@ -92,7 +92,7 @@ func TestCompileStampsTenantNamespace(t *testing.T) {
 	}
 }
 
-// TestCompileRejectsTenantlessPolicy (TR-25, PRD §20.1 R8): a
+// TestCompileRejectsTenantlessPolicy (TR-25, the spec's multi-tenancy requirement R8): a
 // namespace-less WAFPolicy compiles to nothing (fail closed). An
 // unqualified bundle cannot bind a tenant.
 func TestCompileRejectsTenantlessPolicy(t *testing.T) {
@@ -120,7 +120,7 @@ func TestLoadMismatchDetectsTampering(t *testing.T) {
 	}
 }
 
-// TestLoadRejectsTenantlessBundle (TR-25, PRD §20.1 R8): Load fails closed
+// TestLoadRejectsTenantlessBundle (TR-25, the spec's multi-tenancy requirement R8): Load fails closed
 // on a bundle without the tenant binding. The distribution unit never
 // loads unqualified.
 func TestLoadRejectsTenantlessBundle(t *testing.T) {
@@ -135,7 +135,7 @@ func TestLoadRejectsTenantlessBundle(t *testing.T) {
 }
 
 // TestBundleRoundTripsThroughBytes pins the bundle's wire format: the
-// JSON encoding decodes to an equal bundle (§8.1: bundles are the signed
+// JSON encoding decodes to an equal bundle (the spec's architecture: bundles are the signed
 // distribution unit; the format is JSON, version 1).
 func TestBundleRoundTripsThroughBytes(t *testing.T) {
 	bundle, err := Compile(fixturePolicy())

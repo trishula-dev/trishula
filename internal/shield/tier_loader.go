@@ -9,7 +9,7 @@ package shield
 // each altitude, classifies the visibility tier (tier.go), and surfaces
 // it — as a VALUE (Loader.ShieldTier) and as the ONCE-AT-BOOT attribute
 // trishula.shield.visibility_tier (tier_otel.go) carried on the
-// startup evidence the engine's OTel pipeline forwards (§15/TR-11: the
+// startup evidence the engine's OTel pipeline forwards (the spec's observability section / TR-11: the
 // tier rides the shield startup record as an attribute; the pipeline
 // schema is unchanged).
 //

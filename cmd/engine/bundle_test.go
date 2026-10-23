@@ -3,7 +3,7 @@ package main
 // TR-08c (issue #76, M9) — the engine leg of the apply→effect round trip:
 // cmd/engine loads the operator's bundle (Compile→Load, in-process at v0)
 // via --bundle and consults it in the proxy handler before forwarding
-// (PRD §5.2 step 1). RED state: newEngineHandlerWithBundle and Decide are
+// (the spec's DX-charter consult step 1). RED state: newEngineHandlerWithBundle and Decide are
 // undefined (build failure); GREEN defines them.
 //
 // Contract: tests use only package APIs (operator, cel) — never cel-go
@@ -48,7 +48,7 @@ func compileLabBundle(t *testing.T) []byte {
 	}
 	policy := v1alpha1.WAFPolicy{
 		// The lab CR's namespace (dx1): the bundle's tenant binding at
-		// compile (TR-25, PRD §20.1 R8).
+		// compile (TR-25, the spec's multi-tenancy requirement R8).
 		ObjectMeta: metav1.ObjectMeta{Name: "dx1-wafpolicy", Namespace: "dx1"},
 		Spec: v1alpha1.WAFPolicySpec{
 			// The lab CR's default (dx1-wafpolicy.yaml): undecided requests

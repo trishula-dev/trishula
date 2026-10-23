@@ -1,20 +1,20 @@
-// cmd/operator — trishula-operator v0 (TR-08c, issue #76, PRD §8): a thin
+// cmd/operator — trishula-operator v0 (TR-08c, issue #76, the spec's architecture): a thin
 // watch loop over WAFPolicy CRs. On every event (and a resync tick) it
 // reconciles the namespace's policies (internal/operator.Reconcile:
 // rule-pack resolution + compile, fail closed) and publishes the compiled
 // bundle where the engine's --bundle leg picks it up — a ConfigMap in the
 // policy's namespace. The publish slot is per tenant: each bundle lands in
 // its policy's namespace, so tenants never share one ConfigMap and one
-// tenant's rules never overwrite another's (PRD §20.1 R8, TR-25).
+// tenant's rules never overwrite another's (the spec's multi-tenancy requirement R8, TR-25).
 //
-// Fail closed (§8, §2.3): an uncompilable/unresolvable policy logs its
+// Fail closed (the spec's architecture plus its precedence rule): an uncompilable/unresolvable policy logs its
 // compile error and publishes NO bundle — traffic keeps its previous shape,
 // the operator never crashes on it (Reconcile's error outcomes), and the
 // watch loop keeps reconciling (a later CR fix heals without a restart).
 //
 // Rule-pack source (v0): CEL rule packs ride ConfigMaps named by the
 // policy's RuleSetRef in the policy's namespace (data key pack.yaml) — the
-// §16.2 RuleSet object's content half, stubbed at ConfigMap granularity.
+// The spec's RuleSet object's content half, stubbed at ConfigMap granularity.
 // Unresolved refs fail the policy's compile.
 //
 // Deliberately NOT here yet (later TR-08 slices): informer caches, work
@@ -130,7 +130,7 @@ func watchPolicies(ctx context.Context, dc dynamic.Interface, ns string) (watch.
 
 // publishBundle lands the compiled bundle in the bundle ConfigMap of the
 // POLICY's namespace (data key bundle.json) — the per-tenant publish slot
-// (PRD §20.1 R8); the pickup the lab's engine polls.
+// (the spec's multi-tenancy requirement R8); the pickup the lab's engine polls.
 func publishBundle(ctx context.Context, dc dynamic.Interface, ns string, o operator.Outcome) error {
 	data, err := json.Marshal(o.Bundle)
 	if err != nil {
@@ -201,7 +201,7 @@ func main() {
 				log.Printf("operator: COMPILE FAILED %s: %v (no bundle published — fail closed)", o.Key, o.Err)
 				continue
 			}
-			// Per-tenant publish slot (PRD §20.1 R8): the bundle lands in
+			// Per-tenant publish slot (the spec's multi-tenancy requirement R8): the bundle lands in
 			// the policy's own namespace, never a shared slot.
 			pubNS, _, ok := splitKey(o.Key)
 			if !ok {

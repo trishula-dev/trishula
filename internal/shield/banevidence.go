@@ -1,6 +1,6 @@
 package shield
 
-// TR-10 (issue #10): the ban evidence stream (§13.5 + R11). One record per
+// TR-10 (issue #10): the ban evidence stream (the spec's ban observability plus risk row R11). One record per
 // enforcement act: the engine's R11 account carried verbatim, plus the
 // enforcement deltas the shadow path cannot know (the kernel-clock publish
 // instant, the wire reason code, the publish outcome).
@@ -17,7 +17,7 @@ import (
 	rateban "github.com/trishula-dev/trishula/internal/engine/rateban"
 )
 
-// BanRecord is the §13.5 ban-evidence row for one enforcement act. The R11
+// BanRecord is the spec's ban-evidence row for one enforcement act. The R11
 // fields (key/score/threshold/events/reasonCodes/bantimeSec) arrive
 // verbatim from the engine's BanEvidence; the enforcement deltas are the
 // source IP, the wire reason code, the kernel-clock publish instant

@@ -21,7 +21,7 @@ type BansV4Key struct {
 }
 
 // BansV4Val is the enforcement value: absolute kernel-clock milliseconds
-// (CLOCK_MONOTONIC; bpf_ktime_get_ns / 1e6), the §13.3 score at crossing
+// (CLOCK_MONOTONIC; bpf_ktime_get_ns / 1e6), the ban-algorithm score at crossing
 // as score × 100 (2 decimals), and the wire reason code. Expiry parity
 // with the engine/record: now_ms >= BanUntilMs means the ban is over.
 type BansV4Val struct {

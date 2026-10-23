@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// Ban-entry wire contract (§19.1 sketch, amended per defect #62): keys are
+// Ban-entry wire contract (the reference-implementation sketch, amended per defect #62): keys are
 // family-discriminated unions — a bare u32 address cannot represent IPv6
-// (dual-stack: §9.3 acl4/acl6, §13.3 /24 vs /48 prefix escalation).
+// (dual-stack: the spec's acl4/acl6 map pair, the /24-vs-/48 prefix escalation rule).
 //
 //	struct ban_key {
 //	    union { __be32 v4; __u8 v6[16]; } addr;
@@ -76,9 +76,9 @@ func TestBanKeyParsing(t *testing.T) {
 }
 
 func TestVerdictSemantics(t *testing.T) {
-	// §19.1: ban hit → XDP_DROP-class action in kernel; nothing else may
+	// The reference-implementation sketch: ban hit → XDP_DROP-class action in kernel; nothing else may
 	// synthesize a drop without a verdict/ban map source (kernel stays
-	// decision-free, §9.1).
+	// decision-free, the spec's two-plane principle).
 	if actionAllow != 0 || actionDrop != 1 {
 		t.Fatalf("action constants are the kernel's ABI: allow=0 drop=1, got %d/%d",
 			actionAllow, actionDrop)
