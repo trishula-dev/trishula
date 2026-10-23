@@ -73,17 +73,19 @@ the attack cell reads 0.22–0.31 ms per evaluate on the measurement host.
 CRS parity: 19/19 corpus cases at 100% verdict parity, one documented skip
 ([#7](https://github.com/trishula-dev/trishula/issues/7#issuecomment-6092716820)).
 
-## Honest gaps
+## Upcoming features
 
-- Inline `< 10 ms` walls on the lab plane — the CI harness measures engine-only cells today.
-- Verdicts on live ringbuf traffic inside cluster pods — a later engine slice.
-- HTTP/3 request-path parse — none exists; the posture evaluation tracks on [#29](https://github.com/trishula-dev/trishula/issues/29).
-- Socket-plane fast path, fast-path compiler, kTLS posture — design studies [#51](https://github.com/trishula-dev/trishula/issues/51) · [#52](https://github.com/trishula-dev/trishula/issues/52) · [#53](https://github.com/trishula-dev/trishula/issues/53).
-- trishulactl full CLI surface — the skeleton exists; the surface is a later phase.
-- OpenAPI learn mode + promotion gates — v1 pipeline, [#18](https://github.com/trishula-dev/trishula/issues/18).
-- ML scorer tier — not landed, [#21](https://github.com/trishula-dev/trishula/issues/21).
-- Wire-out OTLP export — the triad verifies in-memory today.
-- OpenShift + multi-arch + DPU port — GA-track, [#33](https://github.com/trishula-dev/trishula/issues/33) · [#32](https://github.com/trishula-dev/trishula/issues/32).
+The list pairs each not-shipped feature with its tracker.
+
+- [ ] Inline `< 10 ms` walls on the lab plane — the CI harness measures engine-only cells today.
+- [ ] Verdicts on live ringbuf traffic inside cluster pods — a later engine slice.
+- [ ] HTTP/3 request-path parse — posture evaluation on [#29](https://github.com/trishula-dev/trishula/issues/29).
+- [ ] Socket-plane fast path, fast-path compiler, kTLS posture — [#51](https://github.com/trishula-dev/trishula/issues/51) · [#52](https://github.com/trishula-dev/trishula/issues/52) · [#53](https://github.com/trishula-dev/trishula/issues/53).
+- [ ] trishulactl full CLI surface — the skeleton exists; the surface is a later phase.
+- [ ] OpenAPI learn mode + promotion gates — [#18](https://github.com/trishula-dev/trishula/issues/18).
+- [ ] ML scorer tier — [#21](https://github.com/trishula-dev/trishula/issues/21).
+- [ ] Wire-out OTLP export — the triad verifies in-memory today.
+- [ ] OpenShift + multi-arch + DPU port — [#33](https://github.com/trishula-dev/trishula/issues/33) · [#32](https://github.com/trishula-dev/trishula/issues/32).
 
 The board is the [Trishula Roadmap](https://github.com/orgs/trishula-dev/projects/1).
 
