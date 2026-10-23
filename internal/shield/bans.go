@@ -96,7 +96,7 @@ const (
 )
 
 // ShieldSpec is the compiled-object contract (reference-implementation names/sizes/types).
-// Zero-value = the PRD pin; a caller may only tighten via tests.
+// Zero-value = the spec pin; a caller may only tighten via tests.
 type ShieldSpec struct{}
 
 // MapSpec is one reference-implementation map contract row (name, kind, max_entries).

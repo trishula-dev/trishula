@@ -29,7 +29,7 @@ const (
 )
 
 // Budget encodes one budget-table stage row from the spec. P50us carries the row's secondary
-// p50 bound when the PRD states one (the end-to-end hop row states p99
+// p50 bound when the spec states one (the end-to-end hop row states p99
 // and p50); M2 marks the row the spec's adoption gates list as M2.
 type Budget struct {
 	ID         string
@@ -49,7 +49,7 @@ type Catalog struct {
 // LoadBudgets returns the spec's budget table. Rows read 1:1 off the spec
 // (the budget table's kernel-cache line encodes as its two stated regimes: the
 // direct short-circuit and the context fetch). A violated budget is a
-// recorded finding, never a silently-fudged row: the PRD marks the
+// recorded finding, never a silently-fudged row: the spec marks the
 // userspace budgets targets pending PoC validation.
 func LoadBudgets() (Catalog, error) {
 	rows := []Budget{
@@ -66,7 +66,7 @@ func LoadBudgets() (Catalog, error) {
 	c := Catalog{ByID: make(map[string]Budget, len(rows))}
 	for _, b := range rows {
 		if b.ID == "" || b.PRDRow == "" || b.EnforcedBy == "" {
-			return Catalog{}, fmt.Errorf("bench: budget row %+v: empty id, PRD row or enforcer", b)
+			return Catalog{}, fmt.Errorf("bench: budget row %+v: empty id, spec row or enforcer", b)
 		}
 		if b.Value <= 0 {
 			return Catalog{}, fmt.Errorf("bench: budget %q: non-positive value %g", b.ID, b.Value)

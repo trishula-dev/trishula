@@ -51,7 +51,7 @@ func txView(tx *ingest.TxContext) *cel.Request {
 // KernelHits is the TR-05c S0 stage: consult the shield verdict/ban state
 // for the tx's source and return a decisive fragment on a live ban.
 //
-// The dependency is INVERTED from the PRD sketch: the engine never touches
+// The dependency is INVERTED from the spec sketch: the engine never touches
 // *ebpf.Map itself — kernelHitChecker is the (linux-only) loader-API
 // adapter (shieldMapsChecker); host CI runs the pure in-memory checker.
 // Check is safe for concurrent use when the delegate is.

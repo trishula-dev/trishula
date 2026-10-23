@@ -14,8 +14,8 @@ import (
 // Contract: the three key structs carry a family-discriminated address
 // union plus an explicit family member — not a bare u32 addr.
 func TestSpecStageSketchDualStackKeys(t *testing.T) {
-	prd := readPRD(t)
-	s191 := prdSection(prd, "19.1")
+	spec := readSpec(t)
+	s191 := specSection(spec, "19.1")
 	if s191 == "" {
 		t.Fatal("§19.1 not found in spec.md") // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 	}
@@ -49,9 +49,9 @@ func TestSpecStageSketchDualStackKeys(t *testing.T) {
 	}
 }
 
-// prdSection returns the body of the numbered "### <num> " section
+// specSection returns the body of the numbered "### <num> " section
 // (heading line inclusive, up to the next same-level "### " heading).
-func prdSection(doc, num string) string {
+func specSection(doc, num string) string {
 	start := regexp.MustCompile(`(?m)^### ` + regexp.QuoteMeta(num) + ` `)
 	loc := start.FindStringIndex(doc)
 	if loc == nil {

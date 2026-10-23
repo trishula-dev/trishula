@@ -3,7 +3,7 @@
 # - direct-echo.dx1.example.com -> the echo pool directly (demonstrates the
 #   gateway steering to an ordinary backend),
 # - everything else under *.dx1.example.com -> the engine Service, which
-#   transparently forwards to the same echo pool (PRD §10.3 variant A:
+#   transparently forwards to the same echo pool (spec section10.3 variant A:
 #   gateway -> engine -> pool).
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
