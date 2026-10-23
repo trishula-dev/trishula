@@ -178,117 +178,58 @@ kis=
 
 ## Special considerations for this project
 
-Trishula is a **TLS-inspection appliance**: it sits in the path of TLS traffic and
-holds decryption material by design. Vulnerabilities in it are high-value by
-nature. Keep that in mind when testing.
+Trishula sits in the data path of Kubernetes traffic. The kernel shield loads
+XDP/TC programs on node interfaces. The userspace engine parses full request
+bodies. A defect in either plane carries high value by nature.
 
-- **This is a lab/testing appliance.** Deploy it only against networks and
-  clients you own or are authorised to test. Never point the edge at
-  third-party traffic.
-- **Interception material is sensitive.** The mitmproxy CA private key, the
-  OpenVPN CA and its PKI, and the JSONL decision log (which records hosts and
-  categories of browsed traffic) must all be treated as secret material.
-  Nothing is committed: PKI material lives in `./state/` (gitignored) or in
-  volumes. Do not commit or paste real key material in issues or PRs.
-- **Policy bypass is a vulnerability class here.** A bug that silently skips the
-  splice/bump verdict chain, blocks clamd from returning a verdict (fail-open),
-  or drops decision-log lines is a security bug, not a cosmetic one.
-
-## Artifact attestations and SLSA provenance
-
-Release artefacts carry signed statements about their own build. This
-section records what an attestation binds and how a consumer verifies
-one.
-
-Every asset a release publishes carries two signed attestations:
-
-- **Build provenance.** One in-toto statement with the SLSA v1.0
-  build-provenance predicate. The statement names the commit, the
-  workflow run and the builder that produced the asset.
-- **SBOM (Software Bill of Materials).** One in-toto statement with the
-  SPDX 2.3 document over the released asset set as its predicate.
-
-SLSA (Supply-chain Levels for Software Artifacts) grades these provenance
-records. The attest lane
-([.github/workflows/release-attest.yml](.github/workflows/release-attest.yml))
-writes both attestations on GitHub-hosted runners, on a release
-publication or a manual dispatch with a tag. The statement signature is a
-short-lived Sigstore certificate over the repository's OIDC identity. The
-signature binds the chain: asset digest → commit SHA → workflow run →
-signer identity. GitHub records every attestation in the public Rekor
-transparency log; the [attestations
-list](https://github.com/trishula-dev/trishula/attestations) carries the
-same store.
-
-A cut that predates the lane carries no attestations. `2026.01-rc1`
-predates the lane; attestations start with the next cut.
-
-Verify from a consumer checkout. The commands check the cryptographic
-signature, the signer identity and the transparency-log entry, per asset:
-
-```sh
-gh release download 2026.01-rc2 --repo trishula-dev/trishula --dir assets
-
-# Build provenance per asset.
-for f in assets/*; do
-  gh attestation verify "$f" --repo trishula-dev/trishula
-done
-
-# SBOM per asset.
-for f in assets/*; do
-  gh attestation verify "$f" --repo trishula-dev/trishula \
-    --predicate-type https://spdx.dev/Document/v2.3
-done
-```
-
-The in-repo verifier runs the same checks in structural form over the
-whole release: statement presence, subject-digest binding, both predicate
-types and the builder identity.
-
-```sh
-go run ./cmd/attest-verify -repo trishula-dev/trishula -tag 2026.01-rc2
-```
-
-It is the structural gate only. `gh attestation verify` holds the
-cryptographic step; release notes carry both outputs as the release's
-evidence trail.
+- **Lab scope.** The demo and lab surfaces run on a kind or OrbStack cluster
+  that the team owns. Drive kernel-plane tests on networks and clients the
+  team owns or is authorised to test.
+- **Verdict-path bypass is a vulnerability class.** A change that silently
+  skips a ladder stage, drops a verdict record, or weakens the CRS parity
+  differential to a non-blocking state is a security bug, not a cosmetic
+  one.
+- **Fail-open versus fail-closed is a recorded decision.** Each loader
+  states its posture: the shield tier `none` refuses with `TierRefusal` and
+  the bundle compile fails closed. A posture change rides its own recorded
+  evidence.
 
 ## How this repository maintains security hygiene
 
 **Supply-chain and dependency integrity**
 
-- Everything is built by Nix from a lockfile (`flake.lock`) — no floating image
-  bases, no Dockerfile builds; CI publishes the same digests it built
-  ([.github/workflows/release-images.yml](.github/workflows/release-images.yml)).
-- Per-image SPDX SBOMs are generated on every release and attached as release
-  assets.
-- Dependency Review — every PR is checked for license and vulnerability
-  differences versus its base (add
-  [.github/workflows/dependency-review.yml](.github/workflows/dependency-review.yml)
-  via the ai-sec-lab workflow).
-- Dependabot — dependency manifests kept current; enable alerts in repo settings.
+- Every commit on `main` carries a verified OpenPGP signature. The default
+  branch ruleset (`protect-default`, active) requires signatures and blocks
+  direct pushes.
+- Dependency Review checks every PR for licence and vulnerability deltas
+  against its base
+  ([.github/workflows/dependency-review.yml](.github/workflows/dependency-review.yml)).
+- Renovate keeps the Go module graph and CI actions current; the Dependency
+  Dashboard aggregates the queue.
+- pre-commit.ci runs the hook set on every PR: formatting, YAML/JSON
+  validity, large-file guards, secret detection
+  ([.pre-commit-config.yaml](.pre-commit-config.yaml)).
 
 **Secret hygiene**
 
-- Secret scanning and push protection — enable in repo settings (Settings →
-  Code security & analysis); blocked pushes containing credentials.
-- pre-commit runs `detect-private-key` on every change outside the legacy PKI
-  dirs ([.pre-commit-config.yaml](.pre-commit-config.yaml)).
+- Secret scanning and push protection active in repository settings; pushes
+  carrying credentials stay blocked.
+- pre-commit runs `detect-private-key` on every change.
 
 **Reproducibility controls**
 
-- pre-commit.ci runs the hook set on every PR — formatting, YAML/JSON validity,
-  large-file guards, secret detection.
-- The appliance is a pinned NixOS flake (`flake.lock`); the container images are
-  byte-identical derivations from the same nixpkgs.
+- The bench walls, the CRS parity differential and the docs guards run in CI
+  on every change (`go test ./...`). The parity differential binds the
+  embedded-Coraza reference to its corpus verdicts.
+- Release artefacts carry the attestations the section above names.
 
 **Known boundaries, stated plainly**
 
-- The committed keys under the legacy directories are lab fixtures, generated
-  for this project's own test VPN — the README marks the whole appliance
-  *do not run unmodified in production*.
-- Transparent TCP interception in container mode is out of scope by design
-  (Docker bridges break TPROXY); use the NixOS appliance for that mode.
+- The project runs a pre-alpha posture: verdicts log, the v0 ladder slices
+  stay non-enforcing by design. The README carries the component ledger and
+  the honest gaps list.
+- The CRS evaluator is the embedded-Coraza reference surface. Its
+  differential pins verdicts; enforcement lands with the later slices.
 
 Open a [general issue](https://github.com/trishula-dev/trishula/issues/new) for
 non-sensitive questions; security reports follow the channels above.
