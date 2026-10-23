@@ -96,14 +96,18 @@ func (c *fakeClock) now() time.Time       { return c.t }
 func (c *fakeClock) step(d time.Duration) { c.t = c.t.Add(d) }
 
 // wireStub is the injected WireReader: a deterministic byte stream that
-// records every armed read deadline (the parser must arm NOW+TIMEOUT) and
-// reports the reader's own deadline error after the bytes drain.
+// records every armed read deadline (the parser must arm NOW+TIMEOUT).
+// trip models a genuinely silent peer: after the bytes drain, the armed
+// window has elapsed and the reader reports its deadline error (a live
+// connection blocks in Read until then; the fake collapses that wait —
+// observable only through the deadline it armed).
 type wireStub struct {
 	buf      []byte
 	now      func() time.Time
 	armed    bool
 	deadline time.Time
 	armedAt  []time.Time
+	trip     bool
 }
 
 func newWireStub(b []byte, c *fakeClock) *wireStub {
@@ -116,9 +120,10 @@ func (w *wireStub) Read(p []byte) (int, error) {
 	if n > 0 {
 		return n, nil
 	}
-	// Bytes drained: a live connection blocks here; the fake models the
-	// deadline trip the reader reports once the armed window elapses.
-	if w.armed && !w.deadline.After(w.now()) {
+	if w.trip && w.armed {
+		// Bytes drained + window armed: the collapsed wait reports the
+		// reader's deadline trip (os.ErrDeadlineExceeded, the net.Conn
+		// shape this layer must classify).
 		return 0, os.ErrDeadlineExceeded
 	}
 	return 0, io.EOF
@@ -366,8 +371,11 @@ func TestConnectionErrorsTerminal(t *testing.T) {
 		wb.head(1, true, hf(":method", "GET", ":path", "/x", ":scheme", "http"))
 		wb.raw(append(rawFH(10, 0x0, 0x0, 1), 1, 2, 3)) // lies: 10-byte payload, 3 delivered
 		p := New(newWireStub(wb.bytes(), c), optsStd(c, time.Second, 100))
-		if _, err := p.Next(); err == nil {
-			t.Fatal("truncated wire: got nil error, want one head then ErrTruncated")
+		// The head releases first (head-release semantics); the wire's
+		// mid-frame death typifies the NEXT walk.
+		r1 := mustNext(t, p)
+		if r1.StreamID != 1 {
+			t.Errorf("head before the truncation: got %+v", r1)
 		}
 		r, err := p.Next()
 		if !errors.Is(err, ErrTruncated) {
@@ -398,6 +406,7 @@ func TestGOAwayTerminal(t *testing.T) {
 func TestReadDeadlineWindow(t *testing.T) {
 	c := &fakeClock{t: time.Unix(1_000_000, 0)}
 	stub := newWireStub(nil, c)
+	stub.trip = true // a genuinely silent peer: the armed window elapses
 	p := New(stub, optsStd(c, 30*time.Second, 100))
 	r, err := p.Next()
 	if !errors.Is(err, ErrWindow) {

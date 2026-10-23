@@ -64,8 +64,12 @@ slice lands as a watched-RED then GREEN leaf PR per [AGENTS.md](AGENTS.md).
   bundles delivered via `-receive-bundle`. The full ladder drives verdicts
   on live ringbuf traffic inside cluster pods on
   [TR-15](https://github.com/trishula-dev/trishula/issues/15).
-- **HTTP/2 + HTTP/3 request paths** — the engine parses HTTP/1.1 only. The
-  h2/h3 posture evaluation tracks as
+- **HTTP/2 + HTTP/3 request paths** — the HTTP/2 + gRPC request-head parse
+  layer exists in CI ([TR-15](https://github.com/trishula-dev/trishula/issues/15):
+  HEADERS reconstruction into the structured view, gRPC/SSE classification,
+  bounded per-connection walking; request-body and response-side reassembly
+  are later slices). The engine's proxy leg still steers HTTP/1.1 only, and
+  HTTP/3 has no parse layer yet. The h2/h3 posture evaluation tracks as
   [TR-25](https://github.com/trishula-dev/trishula/issues/25)/[TR-29](https://github.com/trishula-dev/trishula/issues/29).
 - **Socket-plane L7 fast path, prefix escalation, async semantic judge** —
   these live as design and evaluation items (the TR-41-range study trio).

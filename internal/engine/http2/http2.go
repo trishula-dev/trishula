@@ -34,14 +34,27 @@
 // packages; AGENTS.md: engine parse layers run the full gate host-side
 // in package tests).
 //
-// GREEN PENDING: Next is a RED stub — the frame walk over the injected
-// reader (x/net/http2 Framer + hpack decode) lands with the GREEN commit.
+// The frame codec is golang.org/x/net/http2's Framer with ReadMetaHeaders
+// (the maintained HPACK implementation: static + dynamic table, Huffman,
+// CONTINUATION assembly) — the connection's HPACK state lives on the one
+// Framer for the connection's life. No connection preface: the gateway leg
+// is post-negotiation h2 (h2c or ALPN), which both deliver framed traffic
+// past the preface. Duplicate regular header fields keep the LAST value —
+// the same overwrite rule the http1 view's header map uses (same-view
+// parity).
 package http2
 
 import (
 	"errors"
+	"fmt"
 	"io"
+	"net"
+	"os"
+	"strings"
 	"time"
+
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/hpack"
 )
 
 // Version is the view's version string for every h2-reconstructed head
@@ -77,6 +90,13 @@ const (
 	// DefaultReadTimeout is the per-Next read window: the clock-armed
 	// deadline on the wire reader (a silent peer yields ErrWindow).
 	DefaultReadTimeout = 30 * time.Second
+
+	// maxReadFrameSize caps one frame read: a frame claiming a larger
+	// payload is a wire violation the Framer refuses (typed below).
+	maxReadFrameSize = 1 << 20
+	// hpackDynTableBytes is the HPACK dynamic table's default size (4096
+	// bytes, the SETTINGS_HEADER_TABLE_SIZE default).
+	hpackDynTableBytes = 4096
 )
 
 // Malformed-input classification: explicit values (errors.Is-able), never
@@ -88,7 +108,8 @@ var (
 	ErrConnection = errors.New("http2: connection-level wire error")
 	// ErrBadPseudo is a request head missing a required pseudo header or
 	// carrying an empty value (the Framer passes missing-required through
-	// by contract; this layer classifies it).
+	// by contract; this layer classifies it). Per-stream: absorbed, the
+	// walk continues.
 	ErrBadPseudo = errors.New("http2: request head missing required pseudo header")
 	// ErrWindow is the read deadline elapsed (Options.ReadTimeout, armed
 	// under Options.Now) before any head reconstructed. Transient: a
@@ -108,7 +129,8 @@ var (
 // HEADERS block. Same-view contract as http1.Request (method/path/version
 // + header map; it extends the view, it does not fork it): h2 pseudo
 // headers fold into the named fields, regular fields carry their
-// lowercase wire names with duplicate fields comma-folded.
+// lowercase wire names with the last duplicate's value (the http1 header
+// map's rule, same-view parity).
 type Request struct {
 	StreamID  uint32            `json:"stream_id"`
 	Method    string            `json:"method"`
@@ -134,7 +156,8 @@ type WireReader interface {
 // defaults; a zero MaxFrames selects DefaultMaxFrames (only a positive
 // value overrides).
 type Options struct {
-	// Now is the injected clock arm read deadlines (default: time.Now).
+	// Now is the injected clock that arms read deadlines (default:
+	// time.Now).
 	Now func() time.Time
 	// ReadTimeout is the per-Next read window armed on the wire reader.
 	ReadTimeout time.Duration
@@ -144,12 +167,17 @@ type Options struct {
 
 // Parser walks one h2 connection's frames from the injected WireReader
 // (TR-15). Single-goroutine by contract (TR-04 ingest owns the
-// concurrency decision, mirroring the ladder's Rule).
+// concurrency decision, mirroring the ladder's Rule). The connection's
+// HPACK decoder state is per-Parser: one parser serves ONE connection.
 type Parser struct {
+	fr      *http2.Framer
 	w       WireReader
 	now     func() time.Time
 	timeout time.Duration
 	max     int
+	// released marks the streams whose head reconstructed (exactly-once
+	// release; a later HEADERS block on a marked stream is trailers).
+	released map[uint32]bool
 }
 
 // New builds a connection parser over w. opts may be nil (defaults apply).
@@ -169,7 +197,12 @@ func New(w WireReader, opts *Options) *Parser {
 	if max <= 0 {
 		max = DefaultMaxFrames
 	}
-	return &Parser{w: w, now: now, timeout: timeout, max: max}
+	fr := http2.NewFramer(io.Discard, w)
+	fr.ReadMetaHeaders = hpack.NewDecoder(hpackDynTableBytes, func(hpack.HeaderField) {})
+	fr.MaxHeaderListSize = DefaultHeaderListSize
+	fr.SetMaxReadFrameSize(maxReadFrameSize)
+	return &Parser{fr: fr, w: w, now: now, timeout: timeout, max: max,
+		released: map[uint32]bool{}}
 }
 
 // Next reconstructs the next request head from the wire and returns it,
@@ -184,10 +217,113 @@ func New(w WireReader, opts *Options) *Parser {
 // pseudo headers, wire-level field violations) are absorbed — the walk
 // continues so the connection's other heads still serve. Connection-level
 // errors (ErrConnection, ErrTruncated) and ErrGoAway terminate the walk
-// typed; io.EOF at a frame boundary is the clean end of the wire.
+// typed; io.EOF at a frame boundary is the clean end of the wire;
+// ErrWindow and ErrFrameBudget are transient yields (a resumed Next
+// re-arms its window and budget).
 func (p *Parser) Next() (*Request, error) {
-	// RED stub: the frame walk is the pending GREEN work (Framer-over-
-	// WireReader + HPACK meta headers + classification). The zero-value
-	// return makes every suite expectation fail on camera until it lands.
-	return &Request{}, nil
+	if err := p.w.SetReadDeadline(p.now().Add(p.timeout)); err != nil {
+		return nil, fmt.Errorf("%w: arm read window: %v", ErrConnection, err)
+	}
+	for n := 0; n < p.max; n++ {
+		f, err := p.fr.ReadFrame()
+		switch {
+		case err == nil:
+			// dispatched below
+		case errors.Is(err, io.EOF):
+			return nil, io.EOF
+		case errors.Is(err, io.ErrUnexpectedEOF):
+			return nil, fmt.Errorf("%w: %v", ErrTruncated, err)
+		case isDeadline(err):
+			return nil, ErrWindow
+		}
+		if err != nil {
+			// Remaining protocol errors split by scope (RFC 9113 §5.4.3):
+			// stream-scoped errors absorb; connection-scoped terminate.
+			if se, ok := err.(http2.StreamError); ok {
+				p.released[se.StreamID] = true
+				continue
+			}
+			return nil, fmt.Errorf("%w: %v", ErrConnection, err)
+		}
+		switch f := f.(type) {
+		case *http2.MetaHeadersFrame:
+			if p.released[f.StreamID] {
+				continue // trailers (or a repeat block): never a second release
+			}
+			r, verr := viewOf(f)
+			if verr != nil {
+				p.released[f.StreamID] = true // malformed head: stream absorbs it
+				continue
+			}
+			p.released[f.StreamID] = true
+			return r, nil
+		case *http2.GoAwayFrame:
+			return nil, fmt.Errorf("%w (last stream %d, code %v)",
+				ErrGoAway, f.LastStreamID, f.ErrCode)
+		default:
+			// DATA, SETTINGS, PING, WINDOW_UPDATE, PRIORITY, RST_STREAM,
+			// unknown types: consumed and dropped at the head-only slice.
+		}
+	}
+	return nil, fmt.Errorf("%w (%d frames walked, none a head)", ErrFrameBudget, p.max)
+}
+
+// viewOf folds one reconstructed header block into the request view. The
+// Framer has already rejected unknown pseudo headers, response/request
+// mixes, duplicate pseudo headers and invalid field names/values at the
+// stream scope; this layer classifies what passes: a head missing its
+// required :method/:path (or carrying an empty one) is ErrBadPseudo.
+func viewOf(f *http2.MetaHeadersFrame) (*Request, error) {
+	v := &Request{StreamID: f.StreamID, Version: Version, Headers: map[string]string{}}
+	for _, fl := range f.Fields {
+		name, value := strings.ToLower(fl.Name), fl.Value
+		switch name {
+		case ":method":
+			v.Method = value
+		case ":path":
+			v.Path = value
+		case ":scheme":
+			v.Scheme = value
+		case ":authority":
+			v.Authority = value
+		}
+		if strings.HasPrefix(name, ":") {
+			continue // pseudo headers fold; only regular fields join the map
+		}
+		v.Headers[name] = value
+	}
+	if v.Method == "" || v.Path == "" {
+		return nil, fmt.Errorf("%w: stream %d", ErrBadPseudo, v.StreamID)
+	}
+	v.Kind = classify(v.Headers["content-type"])
+	return v, nil
+}
+
+// classify maps the content-type media type (case-insensitive, parameters
+// tolerated) to the view's Kind. gRPC needs the exact application/grpc
+// family — the bare type or the +variant (+proto, +json, +custom);
+// grpc-web and look-alike prefixes (application/grpcfoo) are not gRPC.
+func classify(contentType string) Kind {
+	media := strings.ToLower(strings.TrimSpace(contentType))
+	if i := strings.IndexByte(media, ';'); i >= 0 {
+		media = strings.TrimSpace(media[:i])
+	}
+	switch {
+	case media == "application/grpc" || strings.HasPrefix(media, "application/grpc+"):
+		return KindGRPC
+	case media == "text/event-stream":
+		return KindSSE
+	default:
+		return KindHTTP
+	}
+}
+
+// isDeadline reports whether the read error is the armed window's deadline
+// trip (the reader's own timeout shape) rather than a transport failure.
+func isDeadline(err error) bool {
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
