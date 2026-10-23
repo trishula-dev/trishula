@@ -8,7 +8,7 @@ kernel shield · userspace engine · control plane
 [![pre-commit.ci status](https://results.pre-commit.ci/badge/github/trishula-dev/trishula/main.svg)](https://results.pre-commit.ci/latest/github/trishula-dev/trishula/main) [![go-build](https://github.com/trishula-dev/trishula/actions/workflows/go-build.yml/badge.svg)](https://github.com/trishula-dev/trishula/actions/workflows/go-build.yml) [![Dependency Review](https://github.com/trishula-dev/trishula/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/trishula-dev/trishula/actions/workflows/dependency-review.yml) [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/trishula-dev/trishula?label=OpenSSF%20Scorecard&style=flat)](https://scorecard.dev/viewer/?uri=github.com/trishula-dev/trishula) [![OpenSSF Best Practices](https://img.shields.io/badge/cii%20best%20practices-in%20progress-orange)](https://www.bestpractices.dev/projects/15183)
 
 
-**Status: Phase 0 (v0.1) delivered.** Every component below sits merged on
+**Status: Phase 0 (2026.01-rc1) delivered.** Every component below sits merged on
 `main` under its signature. The lab gates run green on a live cluster. The
 component list pairs each item with its merge commit. The gaps carry their
 own list, just as plainly. The exit-criteria table below reports pass and
@@ -78,7 +78,7 @@ slice lands as a watched-RED then GREEN leaf PR per [AGENTS.md](AGENTS.md).
 - **Production OTLP export** — the triad verifies against an in-memory
   exporter snapshot. The wire-out collector pipeline is not wired.
 - **Production-engineering breadth** — multi-arch releases, the DPU
-  (BlueField-class) port and OpenShift builds start at v0.1.0. Platform
+  (BlueField-class) port and OpenShift builds start at 2026.01-rc1. Platform
   breadth follows the GA track.
 
 The live board is the [Trishula Roadmap](https://github.com/orgs/trishula-dev/projects/1).

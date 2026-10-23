@@ -1191,6 +1191,7 @@ The shield exports this counter set:
 - **Rollback = a CRD-recorded re-pin of the previous bundle hash, with no hand edits.**
 - **CRD evolution:** conversion webhooks; two-minor deprecation windows; CRD diff in release notes.
 - **CRS baseline:** the engine pins the CRS 4.25.x LTS baseline. `RuleSet` CRs override it. Baseline bumps travel the same shadow gate as any rule change.
+- **Release names follow the calendar rc ladder:** each planned cut of the train carries a staged rc name — 2026.01-rc1, then 2026.01-rc2, then 2026.01-rc3. The bare 2026.01 name is the GA name. A material re-cut adds a third number (2026.01.N). Labels and board vocabulary carry the same names. Scheme record: [docs/adr/0003-release-naming.md](adr/0003-release-naming.md).
 
 ### 16.6 Signature and intel feed upgrades
 

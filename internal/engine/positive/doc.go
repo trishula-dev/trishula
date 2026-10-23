@@ -5,5 +5,5 @@
 //
 // v0 (TR-13a): request-body schema validation only. Response-side schema
 // (the §11.5 exfiltration guard) is Phase 2 of the roadmap (§20.2);
-// headers/query/path parameter validation are named v0.1 follow-ups.
+// headers/query/path parameter validation are named 2026.01-rc2 follow-ups.
 package positive

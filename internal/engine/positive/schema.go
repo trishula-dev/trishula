@@ -12,7 +12,7 @@
 //
 // Response-side schema (the §11.5 exfiltration guard) is Phase 2 of the
 // roadmap (§20.2); headers/query/path parameter validation are named
-// v0.1 follow-ups. See README.md for the CRD plan.
+// 2026.01-rc2 follow-ups. See README.md for the CRD plan.
 package positive
 
 import (
@@ -38,7 +38,7 @@ type Schema struct {
 }
 
 // schemaTypes is the v0 type vocabulary (anything else is a load error —
-// boolean nulls and integer discrimination are v0.1 follow-ups).
+// boolean nulls and integer discrimination are 2026.01-rc2 follow-ups).
 var schemaTypes = map[string]bool{"object": true, "array": true, "string": true, "number": true}
 
 // allowedSchemaKeys is the keyword whitelist inside a Schema node

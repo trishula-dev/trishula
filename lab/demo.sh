@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # TR-14 (issue #14, PRD §20.2 Phase 0) — lab/demo.sh: the exit-gate demo.
 #
-# One command from a fresh clone to the full v0.1 demo. Composes the DX1
+# One command from a fresh clone to the full 2026.01-rc1 demo. Composes the DX1
 # lab gates in evidence order and prints the hop evidence LAST:
 #
 #   stage 1 — lab/dx1/setup.sh        (idempotent: cluster + NGF + engine
@@ -40,7 +40,7 @@ banner() { printf '\n===========================================================
 stage_banner() { printf '\n------------------------------------------------------------\n| STAGE %d/3 — %s\n------------------------------------------------------------\n' "$1" "$2"; }
 pass_marker() { printf '| stage %d PASS — %s\n' "$1" "$2"; }
 
-banner "Trishula v0.1 exit-gate demo (lab/demo.sh) — repo $(git rev-parse --short HEAD 2>/dev/null || echo unknown), host arch ${LOCALARCH}"
+banner "Trishula 2026.01-rc1 exit-gate demo (lab/demo.sh) — repo $(git rev-parse --short HEAD 2>/dev/null || echo unknown), host arch ${LOCALARCH}"
 
 # --- stage 0: linux binaries (built from this tree when missing) -------------
 for pair in "engine:${ENGINE_BIN}:./cmd/engine" "operator:${OPERATOR_BIN}:./cmd/operator"; do
