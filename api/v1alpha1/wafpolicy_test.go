@@ -31,6 +31,7 @@ spec:
     inline: true
     shield: true
     shadow: false
+  celBudget: 5
   ruleSets:
   - name: owasp-crs
     source:
@@ -80,6 +81,9 @@ func TestWAFPolicySchemeRoundTrip(t *testing.T) {
 	}
 	if wp.Spec.ModeFlags.Shadow {
 		t.Errorf("spec.modeFlags.shadow: got %v, want false", wp.Spec.ModeFlags.Shadow)
+	}
+	if wp.Spec.CELBudget != 5 {
+		t.Errorf("spec.celBudget: got %d, want 5 (TR-17: the apply-declared budget decodes)", wp.Spec.CELBudget)
 	}
 	if len(wp.Spec.RuleSets) != 1 {
 		t.Fatalf("spec.ruleSets: got %d entries, want 1", len(wp.Spec.RuleSets))

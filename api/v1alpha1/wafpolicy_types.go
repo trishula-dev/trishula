@@ -93,6 +93,14 @@ type WAFPolicySpec struct {
 	//
 	// +kubebuilder:validation:Enum=block;challenge;log;pass
 	DefaultAction DefaultAction `json:"defaultAction"`
+	// CELBudget is the evaluation cost budget (PRD §11.3 + G4) the compile
+	// applies to every CEL rule this policy compiles that does not declare
+	// its own (the rule pack's per-rule costBudget is the more specific
+	// declaration and wins). 0 = unset = the engine's package default.
+	//
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	CELBudget uint64 `json:"celBudget,omitempty"`
 	// ModeFlags select the enforcement planes (inline, shield, shadow).
 	ModeFlags PolicyModeFlags `json:"modeFlags"`
 }

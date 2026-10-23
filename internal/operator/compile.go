@@ -161,6 +161,7 @@ func Compile(policy v1alpha1.WAFPolicy) (Bundle, error) {
 	if err != nil {
 		return Bundle{}, fmt.Errorf("compile: seed rule pack: %w", err)
 	}
+	applyPolicyBudget(pack.Rules, policy.Spec.CELBudget)
 	b.RulePacks = []cel.RulePack{*pack}
 
 	digests, err := packDigests(b.RulePacks)
@@ -211,6 +212,21 @@ func packDigests(packs []cel.RulePack) ([]string, error) {
 // Compile (the cmd/operator watch loop resolving custom rule packs).
 func PackDigests(packs []cel.RulePack) ([]string, error) {
 	return packDigests(packs)
+}
+
+// applyPolicyBudget stamps the policy's spec.celBudget (the apply-path
+// budget, PRD §11.3 + G4) onto every rule that does not declare its own
+// budget. The pack's per-rule costBudget is the more specific declaration
+// and wins; a zero budget leaves the engine's package default in place.
+func applyPolicyBudget(rules []cel.Rule, budget uint64) {
+	if budget == 0 {
+		return
+	}
+	for i := range rules {
+		if rules[i].CostBudget == 0 {
+			rules[i].CostBudget = budget
+		}
+	}
 }
 
 // seedPackData resolves the seed rule pack: the embedded copy (the

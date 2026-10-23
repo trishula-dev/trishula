@@ -94,6 +94,11 @@ func compileResolved(ctx context.Context, p *v1alpha1.WAFPolicy, src RulePackSou
 		if !ok {
 			return Bundle{}, fmt.Errorf("reconcile %s/%s: rule set %q unresolved in namespace %q (no rule-pack source entry)", p.Namespace, p.Name, rs.Name, p.Namespace)
 		}
+		// The apply-path budget stamps before the gate: validatePackRules
+		// probes under the resolved budgets, so a rule that cannot finish
+		// one evaluation under its declared ceiling fails the reconcile
+		// and NO bundle leaves the operator (fail closed, §8/§11.7).
+		applyPolicyBudget(pack.Rules, p.Spec.CELBudget)
 		if err := validatePackRules(pack); err != nil {
 			return Bundle{}, fmt.Errorf("reconcile %s/%s: rule set %q: %w", p.Namespace, p.Name, rs.Name, err)
 		}
