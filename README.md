@@ -13,7 +13,7 @@ stack: OWASP CRS, CEL rules, OpenAPI positive security, bot fingerprints and
 the ban table. The control plane compiles `WAFPolicy` CRDs into signed policy
 bundles. Every verdict is a correlated OpenTelemetry record.
 
-**Status:** the 2026.01-rc1 component set sits merged on `main`. The lab
+**Status:** the 2026.01-rc2 component set sits merged on `main`. The lab
 gates run green on a live cluster. The bench harness measures the
 [§17 walls](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage) in CI. The gaps carry their own
 list on this page.
