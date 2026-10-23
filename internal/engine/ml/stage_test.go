@@ -149,14 +149,16 @@ func TestScorerBudgetBreach(t *testing.T) {
 
 // TestScorerCachedJudgeAnnotation pins the T2 consult: the cached judge
 // verdict annotates the fragment under the judge rule id, beside (or
-// without) this request's in-band model rule.
+// without) this request's in-band model rule. The consult runs under the
+// wired judge's model tag (the tag that produced every entry).
 func TestScorerCachedJudgeAnnotation(t *testing.T) {
 	now := baseNow
-	cache := mustCache(t, fixtureClock(&now))
+	j := &fakeJudge{id: "j1"}
+	aj, cache, _ := judgeFixture(t, j, fixtureClock(&now), 8)
 	sig := sigOf(t, "POST", "/v1/chat/completions", "q=1")
 	cache.Put(sig, "j1", JudgeVerdict{Label: "prompt-injection", ModelID: "j1", Confidence: 0.7, Reason: "r"})
 	t.Run("suspicious: beside the model rule", func(t *testing.T) {
-		sc := scorerFixture(t, fixedModel{id: "ref", v: 0.9}, func(c *ScorerConfig) { c.Cache = cache })
+		sc := scorerFixture(t, fixedModel{id: "ref", v: 0.9}, func(c *ScorerConfig) { c.Judge = aj; c.Cache = cache })
 		frag := sc.Evaluate(suspiciousFixture(t))
 		if frag == nil {
 			t.Fatal("no fragment")
@@ -169,9 +171,15 @@ func TestScorerCachedJudgeAnnotation(t *testing.T) {
 		if len(frag.Rules) != 2 || frag.Rules[0] != wantModel || frag.Rules[1] != wantJudge {
 			t.Errorf("rules: got %v, want [%v %v]", frag.Rules, wantModel, wantJudge)
 		}
+		if err := aj.Close(); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+		if got := j.calls.Load(); got != 0 {
+			t.Errorf("judge calls: got %d, want 0 (a fresh cached verdict never re-judges)", got)
+		}
 	})
 	t.Run("clean: the judge rule alone", func(t *testing.T) {
-		sc := scorerFixture(t, fixedModel{id: "ref", v: 0.1}, func(c *ScorerConfig) { c.Cache = cache })
+		sc := scorerFixture(t, fixedModel{id: "ref", v: 0.1}, func(c *ScorerConfig) { c.Judge = aj; c.Cache = cache })
 		frag := sc.Evaluate(suspiciousFixture(t))
 		if frag == nil {
 			t.Fatal("no fragment")
@@ -184,6 +192,7 @@ func TestScorerCachedJudgeAnnotation(t *testing.T) {
 			t.Errorf("score: got %d, want 0 (no in-band rule fired)", frag.Score)
 		}
 	})
+	// The shared fixture judge stays closed after the subtests; no clean-up.
 }
 
 // TestScorerEscalationSubmitsJudge pins the §14.2 mini-loop: a suspicious

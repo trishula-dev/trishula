@@ -6,6 +6,8 @@ package ml
 
 import (
 	"context"
+	"fmt"
+	"math"
 )
 
 // Model is the T1 in-band model seam (§14.2 item 2: ONNX inline,
@@ -53,7 +55,10 @@ type LinearModel struct {
 // NewLinearModel builds the reference scorer. An empty id is a wiring
 // error: the id tags verdicts, cache entries and evidence records.
 func NewLinearModel(id string, w LinearWeights) (LinearModel, error) {
-	return LinearModel{}, nil // TR-21 RED stub
+	if id == "" {
+		return LinearModel{}, fmt.Errorf("linear model: empty id (the id tags verdicts + cache entries)")
+	}
+	return LinearModel{id: id, w: w}, nil
 }
 
 // ID returns the model tag.
@@ -62,5 +67,30 @@ func (m LinearModel) ID() string { return m.id }
 // Score computes sigmoid(weights over the normalized FeatureView). The
 // reference model honors a dead context up front (the budget contract).
 func (m LinearModel) Score(ctx context.Context, fv FeatureView) (float64, error) {
-	return 0, nil // TR-21 RED stub
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	z := m.w.Intercept
+	if fv.Method != "GET" {
+		z += m.w.NonGet
+	}
+	z += m.w.PathLen * linCap(float64(fv.PathLen), 256)
+	z += m.w.PathEntropy * linCap(fv.PathEntropy, 8)
+	z += m.w.SpecialCharRatio * fv.SpecialCharRatio
+	z += m.w.QueryParams * linCap(float64(fv.QueryParams), 32)
+	z += m.w.WindowRequests * linCap(float64(fv.WindowRequests), 1000)
+	z += m.w.FlowPackets * linCap(float64(fv.FlowPackets), 100)
+	return 1 / (1 + math.Exp(-z)), nil
+}
+
+// linCap normalizes a raw family value to [0, 1] by a fixed cap: values
+// at or above the cap report 1, below report v/cap, negatives report 0.
+func linCap(v, cap float64) float64 {
+	if v >= cap {
+		return 1
+	}
+	if v < 0 {
+		return 0
+	}
+	return v / cap
 }
