@@ -129,9 +129,9 @@ fi
 # --- 2. engine image: build from cmd/engine (TR-06a), load into the node ----
 log "engine image (build ${OUT_IMG} from cmd/engine, load into the node's image store)"
 test -f "${BIN}" || {
-  echo "engine binary not found at ${BIN}; build it from the repo first:" >&2
-  echo "  git checkout feat/tr06-engine-proxy && \\" >&2
+  echo "engine binary not found at ${BIN}; build it from the repo checkout first:" >&2
   echo "  CGO_ENABLED=0 GOOS=linux GOARCH=${LOCALARCH} go build -o ${BIN} ./cmd/engine" >&2
+  echo "  (run the build from the repo checkout; the DX1 gate, lab/dx1/dx1-gate.sh, builds both binaries when missing)" >&2
   exit 2
 }
 cat > "${DX1_DIR}/Dockerfile.engine" <<'YAML'
