@@ -1,9 +1,9 @@
 # lab/dx1 — DX1 lab (TR-06)
 
 Three steps from `main` to the live variant-A topology from
-[PRD §10.2](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#102-the-contract-trishula-as-a-gateway-api-citizen)
+[PRD §10.2](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#102-the-contract-trishula-as-a-gateway-api-citizen)
 and the walkthrough of
-[§10.3](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#103-the-reference-walkthrough-the-lab-every-claim-is-proven-in),
+[§10.3](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#103-the-reference-walkthrough-the-lab-every-claim-is-proven-in),
 run on a local Docker provider (kind, or the OrbStack-provided Kubernetes).
 
 ```
@@ -116,7 +116,7 @@ One command from a repo checkout. The gate builds the linux engine and
 operator binaries from the tree when missing, brings the lab up, times
 the apply→effect leg and runs the hop evidence. The gate asserts the DX1
 charter (§5 DX1) and the M3 gate
-([§21 M3](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#21-success-metrics--adoption-gates)):
+([§21 M3](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#21-success-metrics--adoption-gates)):
 **clone → first enforced rule ≤ 15 min.**
 
 - `DX1_START` (epoch seconds) — the clock anchor. The nightly job sets it

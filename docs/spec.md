@@ -4,7 +4,7 @@
 
 ## Developer-First, eBPF-Native Web Application & API Security for Kubernetes
 
-**Product Requirements Document & Project Charter**
+**Product Specification & Project Charter**
 
 *Trishula: the trident — **kernel shield**, **userspace engine**, **control plane**.*
 
@@ -1239,7 +1239,7 @@ The shield exports this counter set:
 | Kernel-cached verdict/ban short-circuit | ≈ 1 µs kernel-side; ≤ 100 µs with context fetch | shield |
 | Throughput per engine replica (4 vCPU, CRS+schema) | ≥ 10k req/s | load gate |
 
-The kernel-side numbers are literature-based envelopes, not vendor claims. The sources: Cloudflare's 10 Mpps/core drop; FAST'18's 24 Mpps/core; AF_XDP 21.5 Mpps[60][75][72]. The userspace budgets are **PRD targets pending PoC validation**, gated by the benchmark plan. §6.4 labels them targets until a measurement lands.
+The kernel-side numbers are literature-based envelopes, not vendor claims. The sources: Cloudflare's 10 Mpps/core drop; FAST'18's 24 Mpps/core; AF_XDP 21.5 Mpps[60][75][72]. The userspace budgets are **PoC-validation targets pending a measurement**, gated by the benchmark plan. §6.4 labels them targets until a measurement lands.
 
 ### 17.2 Benchmark plan
 
@@ -1651,7 +1651,7 @@ spec:
 
 ## 21. Success Metrics & Adoption Gates
 
-A developer-first PRD measures **adoption**, not just detection:
+A developer-first spec measures **adoption**, not just detection:
 
 | # | Metric | Gate |
 |---|--------|------|
@@ -1881,7 +1881,7 @@ flowchart TB
 
 | Project | What it genuinely is | What it does well | Why Trishula did not build on it (the irreducible gap) |
 |---------|---------------------|-------------------|--------------------------------------------------------|
-| **Synapse** (FoxIO/gen0sec)[F-synapse] | Active NDR: XDP kernel enforcement + optional inline proxy, JA4+ fingerprint suites, Wirefilter WAF, rate limiting, CAPTCHA, multi-backend firewall (XDP→nftables→iptables) | The closest eBPF cousin to Trishula's shield+proxy split; JA4+ as first-class blocking identity; kernel-speed enforcement with userspace fallback; Windows support | Host/edge-appliance-shaped (single binary, config files, SIEM event stream) — not a Kubernetes policy system: no CRDs, no GitOps rule lifecycle, no Gateway-API steering citizenship, no shadow-first promotion, no CRS corpus, no positive security, no per-tenant isolation. Trishula borrows its *altitudes* (kernel enforcement + inline deep inspection) and its JA4+ posture, and builds the missing CRD/gateway/parity machinery on top. A composition would still mean writing everything this PRD specifies — with a config-file core to unwind |
+| **Synapse** (FoxIO/gen0sec)[F-synapse] | Active NDR: XDP kernel enforcement + optional inline proxy, JA4+ fingerprint suites, Wirefilter WAF, rate limiting, CAPTCHA, multi-backend firewall (XDP→nftables→iptables) | The closest eBPF cousin to Trishula's shield+proxy split; JA4+ as first-class blocking identity; kernel-speed enforcement with userspace fallback; Windows support | Host/edge-appliance-shaped (single binary, config files, SIEM event stream) — not a Kubernetes policy system: no CRDs, no GitOps rule lifecycle, no Gateway-API steering citizenship, no shadow-first promotion, no CRS corpus, no positive security, no per-tenant isolation. Trishula borrows its *altitudes* (kernel enforcement + inline deep inspection) and its JA4+ posture, and builds the missing CRD/gateway/parity machinery on top. A composition would still mean writing everything this spec specifies — with a config-file core to unwind |
 | **Moat** (arxignis)[F-moat] | Rust XDP reverse proxy + full JA4+ suite + threat-intel API + CAPTCHA + ClamAV content scan | Clean XDP packet filtering; complete JA4+ capture; ACME automation | Edge proxy appliance coupled to a commercial intel API (Arxignis) for rules and bot scoring — data-plane decisions keyed to a third-party service contradict the OSS/clean-egress design rule (§18.3); same non-K8s gaps as Synapse. Borrowed idea: fingerprint-identity blocking at kernel speed |
 | **MicroWAF** (dcc-bigfred)[F-microwaf] | Host-side WAF for Linux/RPi: XDP drop rates, CEL-based rules engine, Redis-backed windows, per-MAC/IP L7 counting | Independently validated the CEL-for-WAF choice; honest small-host scope; embeds eBPF objects in the binary | Per-host, per-MAC/IP state model — no cluster policy, no multi-tenant route classes, no gateway integration, Redis as ban state (network dependency in the enforcement path, which §13.3's kernel-table design deliberately avoids). Borrowed idea: CEL as the authoring surface |
 | **Spliff** (L7 EDR sniffer)[F-spliff] | XDP + sock_ops + uprobes correlating decrypted TLS buffers to TCP flows/PIDs; full HPACK HTTP/2 parsing; no-MITM visibility | The "golden thread" correlation pattern (packets ↔ decrypted bytes ↔ process) is the best-in-class answer to §9.7's kTLS visibility gap | A visibility engine, not enforcement: no rule lifecycle, no verdicts, no policy surface. Trishula's uprobes contract (§9.2) is where this pattern plugs in *if* app-internal-TLS visibility ships — as an integration, not a base |

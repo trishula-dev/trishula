@@ -9,7 +9,7 @@
 // Exit 0: every release asset carries both attestations. Exit 1: at least
 // one asset rejects. Exit 2: a malformed call.
 //
-// PRD ref: https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#181-assets-and-trust-boundaries
+// PRD ref: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#181-assets-and-trust-boundaries
 package main
 
 import (

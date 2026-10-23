@@ -17,7 +17,7 @@
 is path traversal, in the [CRS 930120 / 930100](https://coraza.io/docs/tutorials/walkthrough) class.
 No API semantics are required. Any evaluator holding OWASP CRS rules rejects
 the request on shape alone. In Trishula this is ladder stage S2: CRS runs as
-the community correctness baseline [§11.2](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#112-crs-the-correctness-baseline).
+the community correctness baseline [§11.2](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#112-crs-the-correctness-baseline).
 The verdict joins the ladder's combined decision. The demo shows the
 reference verdict Coraza computes for the captured bytes.
 
@@ -26,18 +26,18 @@ reference verdict Coraza computes for the captured bytes.
 belongs to tenant-b. The request is *flawless HTTP*, and no CRS signature
 fires. Object-level authorization is not a signature problem; it is a
 policy question only the API's own data answers
-[§11.3](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#113-cel-as-the-developer-facing-dsl).
+[§11.3](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#113-cel-as-the-developer-facing-dsl).
 In Trishula the question is one CEL expression over the request view
 (`resource.owner == request.auth.subject`), evaluated cost-budgeted.
 The decision is emitted as a
-[`trishula.verdict.v1`](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#15-opentelemetry-observability)
+[`trishula.verdict.v1`](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#15-opentelemetry-observability)
 record.
 
 **C. Enforcement (what the attacker experiences next).** Repeat offenders
 reach the ban threshold. The shield writes a source ban to the kernel, and
 the connection dies **in TC, before userspace, before the request reaches
 the app** —
-[§13](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#13-rate-limiting-dos-response--temporary-bans)
+[§13](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#13-rate-limiting-dos-response--temporary-bans)
 on merged code: `TC_ACT_SHOT`.
 
 ## Run it
@@ -67,7 +67,7 @@ the [E2E tests](https://github.com/trishula-dev/trishula/blob/main/lab/README.md
 
 The honesty table carries the point: the demo pre-tends no enforcement
 that does not exist. Everything labelled merged is
-[tested](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#19-reference-implementation)
+[tested](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#19-reference-implementation)
 and merged.
 
 ## Under the hood (for the curious)
@@ -80,6 +80,6 @@ and merged.
 - Verdicts: the CEL engine compiles each rule once (`cel.Program`), with
   the cost budget at eval time. No rule runs unbounded.
 - Bans: `ban_key{addr,family,key_class}` / `ban_val{until_ts,tier,reason}`
-  [§19.1](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#191-stage-sketches-from-the-code-v0-poc)
+  [§19.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#191-stage-sketches-from-the-code-v0-poc)
   — dual-stack by construction (family-discriminated union), monotonic
   clock, no infinite bans (the loader refuses).

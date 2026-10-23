@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestPRDStageSketchDualStackKeys fails while the §19.1 stage sketches
+// TestSpecStageSketchDualStackKeys fails while the §19.1 stage sketches
 // declare ban_key/verdict_key/flow_key with a bare __u32 address in a
 // design that is explicitly dual-stack (§9.3 acl4/acl6, §9.2 "IPv4/IPv6",
 // §13.3 /24-vs-/48 prefix escalation): a 32-bit key cannot hold an IPv6
@@ -13,11 +13,11 @@ import (
 //
 // Contract: the three key structs carry a family-discriminated address
 // union plus an explicit family member — not a bare u32 addr.
-func TestPRDStageSketchDualStackKeys(t *testing.T) {
+func TestSpecStageSketchDualStackKeys(t *testing.T) {
 	prd := readPRD(t)
 	s191 := prdSection(prd, "19.1")
 	if s191 == "" {
-		t.Fatal("§19.1 not found in PRD.md")
+		t.Fatal("§19.1 not found in spec.md")
 	}
 	blocks := cBlocks(s191)
 	if len(blocks) == 0 {
