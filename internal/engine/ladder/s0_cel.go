@@ -146,12 +146,21 @@ type CELEval struct {
 // NewCELEval wires the S3 slot onto a loaded rule pack.
 func NewCELEval(pack *cel.RulePack) *CELEval { return &CELEval{pack: pack} }
 
-// SetPack hot-swaps the evaluated pack (controller apply lands here in
-// TR-17; nil/empty is a wiring error — an empty-walk S3 is the silent-skip
-// shape Use() exists to prevent).
+// SetPack hot-swaps the evaluated pack (the apply-driven reload seam,
+// TR-17): the incoming pack is compile-probed FIRST — the same gate Load
+// runs (load ≠ eval — an uncompilable or budget-aborted rule fails the
+// SWAP, never becomes per-request ":error" evidence), the installed pack
+// keeps serving on rejection (§11.7 per-replica atomic swap, fail closed),
+// and nil/empty is a wiring error — an empty-walk S3 is the silent-skip
+// shape Use() exists to prevent.
 func (c *CELEval) SetPack(p *cel.RulePack) error {
 	if p == nil || len(p.Rules) == 0 {
 		return fmt.Errorf("cel eval: empty rule pack (wiring error, not an empty opinion)")
+	}
+	for i := range p.Rules {
+		if _, err := p.Rules[i].Eval(cel.Request{}); err != nil {
+			return fmt.Errorf("cel eval: rule %q rejected at swap: %w", p.Rules[i].ID, err)
+		}
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
