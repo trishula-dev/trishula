@@ -93,7 +93,7 @@ func TestDriftReportKinds(t *testing.T) {
 	if m := got[key(DiffLengthOverflow, "/v1/chat/completions", "body.model")]; !strings.Contains(m.Note, "41") || !strings.Contains(m.Note, "32") {
 		t.Errorf("length_overflow note = %q, want the observed 41 against the reviewed 32", m.Note)
 	}
-	if m := got[key(DiffRequiredDrift, "/v1/chat/completions", "body.messages[].role")]; !strings.Contains(m.Note, "reviewed required") || !strings.Contains(m.Note, "live optional") {
+	if m := got[key(DiffRequiredDrift, "/v1/chat/completions", "body.messages[].role")]; !strings.Contains(m.Note, "required in the reviewed schema") || !strings.Contains(m.Note, "optional in the live window") {
 		t.Errorf("role required_drift note = %q, want both directions", m.Note)
 	}
 	if m := got[key(DiffEnumEscape, "/v1/chat/completions", "body.messages[].role")]; !strings.Contains(m.Note, `"wheel"`) {
@@ -144,6 +144,20 @@ paths:
 	}
 	if !rep.HasDrift() {
 		t.Error("HasDrift false with one divergence row")
+	}
+
+	// The empty-window case: a live side with no samples in the window
+	// reads one endpoint-unobserved row per reviewed route (and a nil
+	// live side reads the same way).
+	empty := &LearnedSpec{Routes: map[string]*LearnedRoute{}}
+	for name, live := range map[string]*LearnedSpec{"empty window": empty, "nil live": nil} {
+		rep := Drift(live, reviewed)
+		if len(rep.Diffs) != 1 || rep.Diffs[0].Kind != DiffEndpointUnobserved || rep.Diffs[0].Route != "/v1/quiet" {
+			t.Errorf("%s: rows %v, want exactly one endpoint_unobserved row", name, renderDiffs(rep.Diffs))
+		}
+		if rep.HasDrift() == false || rep.ReviewedRoutes != 1 || rep.LiveEndpoints != 0 {
+			t.Errorf("%s: report flags off (%+v)", name, rep)
+		}
 	}
 }
 
