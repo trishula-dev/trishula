@@ -11,6 +11,7 @@ decided, why, and what it supersedes.
 | [0000](0000-architecture-decision-records.md) | Architecture decision records (this process) | accepted |
 | [0001](0001-record-format.md) | ADR record format | accepted |
 | [0002](0002-asd-ste100-standard.md) | Adopt ASD-STE100 for every written text | accepted |
+| [0003](0003-release-naming.md) | Name releases on the calendar rc ladder | accepted |
 
 ## When an ADR is required
 
