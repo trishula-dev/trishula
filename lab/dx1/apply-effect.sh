@@ -173,6 +173,10 @@ if [ "${DUR_S}" -gt "${M9_TARGET}" ]; then
   fail_with "apply→effect took ${EFFECT_MS}ms — M9 budget ${M9_TARGET}s exceeded"
 fi
 log "M9 apply→effect: ${EFFECT_MS}ms (target ≤ ${M9_TARGET}s) — PASS"
+# The DX1 gate (lab/dx1/dx1-gate.sh) reads this file: t0 epoch (ns) plus
+# the measured effect latency (ms) pin the first-enforced-rule moment on
+# its M3 clock (clone → first enforced rule, ≤ 15 min).
+printf '%s %s\n' "${T0_NS}" "${EFFECT_MS}" > "${DX1_TIMING_FILE:-/tmp/dx1-apply-effect-timing.txt}"
 
 # --- failure path: uncompilable rule → logged, no effect, fail closed -------
 log "failure path — apply dx1-wafpolicy-broken.yaml (uncompilable CEL rule)"
