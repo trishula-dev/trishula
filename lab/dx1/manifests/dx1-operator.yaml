@@ -28,8 +28,6 @@ spec:
           args:
             - --namespace
             - dx1
-            - --publish-namespace
-            - dx1
           ports:
             - name: probe
               containerPort: 1936

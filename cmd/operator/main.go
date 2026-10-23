@@ -3,7 +3,9 @@
 // reconciles the namespace's policies (internal/operator.Reconcile:
 // rule-pack resolution + compile, fail closed) and publishes the compiled
 // bundle where the engine's --bundle leg picks it up — a ConfigMap in the
-// operator namespace (the v0 bundle transport).
+// policy's namespace. The publish slot is per tenant: each bundle lands in
+// its policy's namespace, so tenants never share one ConfigMap and one
+// tenant's rules never overwrite another's (PRD §20.1 R8, TR-25).
 //
 // Fail closed (§8, §2.3): an uncompilable/unresolvable policy logs its
 // compile error and publishes NO bundle — traffic keeps its previous shape,
@@ -126,8 +128,9 @@ func watchPolicies(ctx context.Context, dc dynamic.Interface, ns string) (watch.
 	return dc.Resource(gvr).Namespace(ns).Watch(ctx, metav1.ListOptions{})
 }
 
-// publishBundle lands the compiled bundle in the bundle ConfigMap (data
-// key bundle.json) — the pickup the lab's engine polls.
+// publishBundle lands the compiled bundle in the bundle ConfigMap of the
+// POLICY's namespace (data key bundle.json) — the per-tenant publish slot
+// (PRD §20.1 R8); the pickup the lab's engine polls.
 func publishBundle(ctx context.Context, dc dynamic.Interface, ns string, o operator.Outcome) error {
 	data, err := json.Marshal(o.Bundle)
 	if err != nil {
@@ -170,7 +173,6 @@ func markAnnotated(ctx context.Context, dc dynamic.Interface, ns, name string) {
 func main() {
 	kubeconfig := flag.String("kubeconfig", "", "kubeconfig path (default: env/in-cluster)")
 	watchNS := flag.String("namespace", "dx1", "namespace whose WAFPolicies reconcile (\"\": all)")
-	publishNS := flag.String("publish-namespace", "dx1", "namespace of the bundle ConfigMap")
 	resync := flag.Duration("resync", 250*time.Millisecond, "reconcile tick (the M9 pickup budget)")
 	flag.Parse()
 
@@ -199,11 +201,18 @@ func main() {
 				log.Printf("operator: COMPILE FAILED %s: %v (no bundle published — fail closed)", o.Key, o.Err)
 				continue
 			}
-			if err := publishBundle(ctx, dc, *publishNS, o); err != nil {
+			// Per-tenant publish slot (PRD §20.1 R8): the bundle lands in
+			// the policy's own namespace, never a shared slot.
+			pubNS, _, ok := splitKey(o.Key)
+			if !ok {
+				log.Printf("operator: outcome key %q splits to no namespace (no publish)", o.Key)
+				continue
+			}
+			if err := publishBundle(ctx, dc, pubNS, o); err != nil {
 				log.Printf("operator: publish %s: %v", o.Key, err)
 				continue
 			}
-			log.Printf("operator: compiled %s → %s/%s (bundle.json)", o.Key, *publishNS, bundleCMName)
+			log.Printf("operator: compiled %s → %s/%s (bundle.json, tenant publish)", o.Key, pubNS, bundleCMName)
 			if ns, name, ok := splitKey(o.Key); ok {
 				markAnnotated(ctx, dc, ns, name)
 			}
