@@ -99,7 +99,7 @@ func bodyReq(n int) *extprocv3.ProcessingRequest {
 }
 
 // TestProcessStageMapping is the verdict-mapping home table: every stage
-// the service receives maps to its §19.1 response, and the decisive
+// the service receives maps to its reference-implementation response, and the decisive
 // vocabulary maps to immediate responses (block 403, ban 429 with the
 // injected Retry-After window), while non-decisive verdicts and the
 // non-evaluated stages continue.
@@ -282,7 +282,7 @@ func TestProcessStageMapping(t *testing.T) {
 	}
 }
 
-// TestMetadataNamespaceContract pins the §19.1 metadata discipline over
+// TestMetadataNamespaceContract pins the reference-implementation metadata discipline over
 // one stream carrying three stages: exactly one top-level namespace key
 // per response, the verdict/rules/anomaly/ban shape inside, and no header
 // mutation ever naming an EPP metadata key.

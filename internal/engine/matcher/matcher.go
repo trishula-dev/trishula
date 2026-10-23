@@ -1,16 +1,16 @@
-// Package matcher implements PRD §11.4, the compiled fast path: the hot
+// Package matcher implements the spec's Vectorscan section, the compiled fast path: the hot
 // subset of CRS + CEL patterns compiles to one block-mode scan database
-// (TR-16). One scan covers the pattern set over the §11.3 request view
+// (TR-16). One scan covers the pattern set over the spec's request view
 // segments (uri, headers, query, body).
 //
-// R2b pressure valve (PRD §20.1): subset selection by frequency carries the
+// R2b pressure valve (the spec's matcher-memory risk row R2b): subset selection by frequency carries the
 // memory budget — patterns that fall outside the budget stay reference-path
-// only (never compiled). The differential gate (PRD §11.4/§11.8) compares
+// only (never compiled). The differential gate (the spec's Vectorscan and differential-parity sections) compares
 // matcher verdicts against the reference evaluator per pattern; a pattern
 // that diverges is demoted to reference-path-only (self-healing parity).
 //
 // Slice boundary (TR-16): the selection, compile, scan and demotion seam in
-// pure Go (stdlib RE2: no catastrophic backtracking, PRD §18.2). The native
+// pure Go (stdlib RE2: no catastrophic backtracking, the spec's threat model). The native
 // Vectorscan compile behind this seam and the S1 ladder wiring are later
 // slices; the reference verdicts arrive injected (no evaluator dependency).
 package matcher
@@ -66,7 +66,7 @@ type Set struct {
 
 // DB is the compiled block-mode scan database (the hot subset): one pass
 // per declared surface covers the whole pattern set (the Vectorscan seam;
-// the RE2 engine keeps the scan backtracking-free, PRD §18.2).
+// the RE2 engine keeps the scan backtracking-free, the spec's threat model).
 type DB struct {
 	byPhase map[int][]int
 	res     map[int]*regexp.Regexp
@@ -149,7 +149,7 @@ func (s *Set) ReferenceOnly() []Pattern {
 }
 
 // Demote moves the named rules to PathReference (the self-healing parity
-// action, PRD §11.8). An unknown rule id is an error: demotion never
+// action, the spec's differential-parity gate). An unknown rule id is an error: demotion never
 // removes a phantom. Re-demoting a reference-only rule is a no-op.
 func (s *Set) Demote(rules ...int) error {
 	for _, rule := range rules {

@@ -12,7 +12,7 @@ import (
 	"github.com/trishula-dev/trishula/internal/engine/ladder"
 )
 
-// behaviorVectors loads the published vector set (the §12.1 behavioral
+// behaviorVectors loads the published vector set (the spec's behavioral
 // contract walks through the injectable loader).
 func behaviorVectors(t *testing.T) []BehaviorVector {
 	t.Helper()
@@ -54,10 +54,10 @@ func TestBehaviorWindowsVectors(t *testing.T) {
 			for _, dv := range got {
 				gotIDs = append(gotIDs, dv.ID)
 				if dv.Confidence == 0 {
-					t.Errorf("detector %v fired with confidence 0 — §12.1 wants a real confidence", dv.ID)
+					t.Errorf("detector %v fired with confidence 0 — §12.1 wants a real confidence", dv.ID) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 				}
 				if dv.Evidence == "" {
-					t.Errorf("detector %v fired with no evidence ref — §12.1 wants (id, confidence, evidence)", dv.ID)
+					t.Errorf("detector %v fired with no evidence ref — §12.1 wants (id, confidence, evidence)", dv.ID) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 				}
 				if dv.Family != FamilyBehavioral {
 					t.Errorf("behavioral windows emitted family %q, want behavioral", dv.Family)
@@ -73,7 +73,7 @@ func TestBehaviorWindowsVectors(t *testing.T) {
 	}
 }
 
-// TestMergePolicyConsensus is the §12.1 merge table: the rule counts
+// TestMergePolicyConsensus is the spec's merge table: the rule counts
 // DISTINCT families above the confidence floor; consensus is decisive,
 // a single family keeps the log tier. It is a new table because Merge is
 // a new decision surface (the existing tables pin fragments, not merges).
@@ -158,7 +158,7 @@ func TestMergePolicyConsensus(t *testing.T) {
 	}
 }
 
-// TestDetectorBehavioralWiring pins the §12.1 S5 wiring: behavioral
+// TestDetectorBehavioralWiring pins the spec's S5 wiring: behavioral
 // windows observe through the detector; a one-family source keeps the
 // log tier; a two-family source resolves the decisive challenge on the
 // breach observe; a zero policy holds the log tier. It is a new test
@@ -220,7 +220,7 @@ func TestDetectorBehavioralWiring(t *testing.T) {
 			t.Errorf("burst verdict rules = %v, want %v present", v.Rules, ruleBotPace)
 		}
 		if v.Action != ladder.ActionLog {
-			t.Errorf("single-family burst action = %q, want log (one family never triggers, §12.1)", v.Action)
+			t.Errorf("single-family burst action = %q, want log (one family never triggers, §12.1)", v.Action) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 		}
 		if v.Score < botScorePace {
 			t.Errorf("burst verdict score = %d, want >= %d (the pace contribution)", v.Score, botScorePace)
@@ -236,7 +236,7 @@ func TestDetectorBehavioralWiring(t *testing.T) {
 		tx := mkTx(t, "192.0.2.71", 40002, true, true)
 		v := walkN(t, d, tx, paceBreachLoop())
 		if v.Action != ladder.ActionChallenge {
-			t.Errorf("two-family consensus action = %q, want challenge (§12.1)", v.Action)
+			t.Errorf("two-family consensus action = %q, want challenge (§12.1)", v.Action) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 		}
 		if !hasRule(v.Rules, ruleBotPace) || !hasRule(v.Rules, ruleBotHeaders) {
 			t.Errorf("consensus verdict rules = %v, want both %v and %v", v.Rules, ruleBotHeaders, ruleBotPace)

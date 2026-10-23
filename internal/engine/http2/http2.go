@@ -1,7 +1,7 @@
 // Package http2 reconstructs an HTTP/2 (h2c) request HEAD from wire frames
 // into the structured request view the rules operate on — the h2 sibling of
-// the http1 head parse (TR-15; PRD §8.2 parser row "Parser: HTTP/1.1,
-// HTTP/2, gRPC, WS"; §8.3 h2c leg; §11.3 view shape).
+// the http1 head parse (TR-15; the spec's component-map parser row "Parser: HTTP/1.1,
+// HTTP/2, gRPC, WS"; the spec's request-lifecycle h2c leg; its view shape).
 //
 // Slice boundary (mirrors the http1 slice, TR-05b): the parser reads the
 // request HEAD ONLY — HEADERS (+ CONTINUATION) frames. DATA, trailers,
@@ -17,7 +17,7 @@
 // text/event-stream = an SSE head — classification is content-based and
 // direction-agnostic at this slice.
 //
-// Bounded-parse discipline (§9.4 mirrored in userspace, R7b): every Next
+// Bounded-parse discipline (the spec's kernel bounds mirrored in userspace, risk row R7b): every Next
 // walks at most MaxFrames frames and arms a read deadline (the injected
 // clock) on the wire reader, so a silent peer or a housekeeping frame flood
 // can never pin the engine's parse loop. The HPACK header-list budget is
@@ -77,7 +77,7 @@ const (
 	KindSSE Kind = "sse"
 )
 
-// Bounds for the bounded-parse discipline (§9.4 mirrored; the wire budget
+// Bounds for the bounded-parse discipline (the spec's kernel bounds mirrored; the wire budget
 // is explicit, never ambient).
 const (
 	// DefaultHeaderListSize is the HPACK header-list budget (bytes summed
@@ -125,7 +125,7 @@ var (
 	ErrTruncated = errors.New("http2: wire ended mid-frame")
 )
 
-// Request is the §11.3 view head scope reconstructed from one h2 stream's
+// Request is the spec's view head scope reconstructed from one h2 stream's
 // HEADERS block. Same-view contract as http1.Request (method/path/version
 // + header map; it extends the view, it does not fork it): h2 pseudo
 // headers fold into the named fields, regular fields carry their
@@ -237,7 +237,7 @@ func (p *Parser) Next() (*Request, error) {
 			return nil, ErrWindow
 		}
 		if err != nil {
-			// Remaining protocol errors split by scope (RFC 9113 §5.4.3):
+			// Remaining protocol errors split by scope (RFC 9113 section 5.4.3):
 			// stream-scoped errors absorb; connection-scoped terminate.
 			if se, ok := err.(http2.StreamError); ok {
 				p.released[se.StreamID] = true

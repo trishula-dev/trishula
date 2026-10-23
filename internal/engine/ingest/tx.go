@@ -1,5 +1,5 @@
 // Package ingest consumes shield events and assembles transactions
-// (PRD §19.1 ingest sketch; TR-04). Kernel-free: the ringbuf reader is
+// (the reference-implementation ingest sketch; TR-04). Kernel-free: the ringbuf reader is
 // injected (TR-04b), maps come from the shield loader (TR-03).
 package ingest
 
@@ -38,7 +38,7 @@ type TxContext struct {
 	Metadata map[string]string // event extras (path hints etc.), TR-04b fills
 }
 
-// TxManager owns the flow→tx table (§19.1 NoteFlow).
+// TxManager owns the flow→tx table (the reference-implementation NoteFlow).
 type TxManager struct {
 	mu   sync.RWMutex
 	txes map[FlowKey]*TxContext

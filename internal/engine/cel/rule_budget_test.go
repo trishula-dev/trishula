@@ -4,15 +4,15 @@ import (
 	"testing"
 )
 
-// TR-17 (issue #17, PRD §11.3 + G4): a cost budget declared on an applied
+// TR-17 (issue #17, the spec's CEL DSL + goal G4): a cost budget declared on an applied
 // pack's rule rides the apply → compile → load chain and enforces at
-// evaluation. The pack (configmap pack.yaml, the §16.2 RuleSet content
+// evaluation. The pack (configmap pack.yaml, the spec's RuleSet content
 // half) is the authoring surface the apply chain resolves; the budget is
 // part of its wire, so the rule cannot be re-authored under the bundle
 // without the budget riding every digest.
 
 // budgetedSeedRuleYaml is the seed rule shape with a declared budget (one
-// in-pack field added; the expression is the §11.3 example verbatim).
+// in-pack field added; the expression is the spec's CEL example verbatim).
 const budgetedSeedRuleYaml = `rules:
   - id: TR02-001-budget
     name: chat-completions-rate-shape
@@ -24,6 +24,8 @@ const budgetedSeedRuleYaml = `rules:
       path.matches("/v1/chat/*") &&
       request.rate_windows["5m"].requests > 40
 `
+
+// TR-91 census: spec citation inside the raw string above; kept (conversion would change behavior)
 
 // TestPackDeclaredCostBudgetAborts: an evaluation that cannot fit the
 // pack-declared budget reports the error verdict — never a silent

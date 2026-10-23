@@ -6,7 +6,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// RequestCase is one fixture case: a §11.3 request sample plus the expected
+// RequestCase is one fixture case: a spec CEL request sample plus the expected
 // verdict for the seed rule. JSON tags rule the decode (see Request).
 type RequestCase struct {
 	Name     string      `yaml:"name" json:"name"`

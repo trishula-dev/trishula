@@ -9,7 +9,7 @@ import (
 
 // rateArrival is one table row: an arrival script step plus the verdict
 // values the row pins. A nil slice field asserts nothing, but the runner
-// checks the §13.4 invariants on every row regardless: a throttle carries
+// checks the enforcement-tier invariants on every row regardless: a throttle carries
 // a Retry-After and names one breached key; an allow carries neither.
 type rateArrival struct {
 	name    string
@@ -56,7 +56,7 @@ func runRateRows(t *testing.T, setup func(*RatePlane), rows []rateArrival) {
 			t.Errorf("%s: Allowed=%v with BreachedKeys=%v: the flag and the breach list disagree", name, v.Allowed, v.BreachedKeys)
 		}
 		if !v.Allowed && v.RetryAfterSec <= 0 {
-			t.Errorf("%s: throttle without a Retry-After (§13.4 L1: always present)", name)
+			t.Errorf("%s: throttle without a Retry-After (§13.4 L1: always present)", name) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 		}
 		if v.Allowed && v.RetryAfterSec != 0 {
 			t.Errorf("%s: allow carries a Retry-After %d", name, v.RetryAfterSec)
@@ -115,9 +115,9 @@ func ewmaPol(halfLife, limit float64) RatePolicy {
 	return RatePolicy{Algorithm: AlgoEWMARate, EWMA: EWMAPolicy{HalfLifeSec: halfLife, LimitPerSec: limit}}
 }
 
-// TestTokenBucketRows pins the §13.2 token-bucket row: refill rate r,
+// TestTokenBucketRows pins the spec's token-bucket row: refill rate r,
 // burst b, reject when empty. The rejected arrival consumes nothing, and
-// its Retry-After is the wait for the next token (§13.4 L1/DX5: always
+// its Retry-After is the wait for the next token (the spec's L1 enforcement tier plus the DX5 charter row: always
 // present on a throttle).
 func TestTokenBucketRows(t *testing.T) {
 	for _, tc := range []struct {
@@ -158,9 +158,9 @@ func TestTokenBucketRows(t *testing.T) {
 	}
 }
 
-// TestSlidingWindowRows pins the §13.2 sliding-window row: exact count
+// TestSlidingWindowRows pins the spec's sliding-window row: exact count
 // over the window, no boundary spike. The count records every arrival,
-// refused ones included — that is the only reading under which the §15.2
+// refused ones included — that is the only reading under which the spec's verdict-record
 // rate-stage evidence (requests over limit, breach: true) is reachable.
 // Breach = post-arrival count > limit. A refused arrival's Retry-After
 // is the wait until the count can fall below the limit (no further
@@ -271,8 +271,8 @@ func ewmaBurstRows() []rateArrival {
 	)
 }
 
-// TestEWMARateRows pins the §13.2 EWMA-rate row: an exponentially weighted
-// arrival rate per composed key, at the same decay family as §13.3's
+// TestEWMARateRows pins the spec's EWMA-rate row: an exponentially weighted
+// arrival rate per composed key, at the same decay family as the ban algorithm's
 // score. R = (ln2/h)·Σ 2^(−age/h) reads in req/s. The arrival records,
 // the post-arrival rate evaluates, and breach = R > limit.
 func TestEWMARateRows(t *testing.T) {
@@ -317,7 +317,7 @@ func TestEWMARateRows(t *testing.T) {
 	}
 }
 
-// TestKeyCompositionRows pins §13.2's key contract: sourceIp is the
+// TestKeyCompositionRows pins the spec's rate-key contract: sourceIp is the
 // default; a route may limit per-IP and per-identity simultaneously; an
 // identity that does not exist skips its key.
 func TestKeyCompositionRows(t *testing.T) {

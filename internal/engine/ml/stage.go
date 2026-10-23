@@ -1,9 +1,9 @@
-// stage.go carries the S7 ladder stage (§19.1, TR-21): the in-band ML
+// stage.go carries the S7 ladder stage (the reference-implementation sketch, TR-21): the in-band ML
 // scorer. FeatureView extraction, the normalized signature, the
 // cache-gated judge annotation and the budget-gated in-band score fold
-// into ONE log-only fragment; the §20.1 R6 contract is structural here —
+// into ONE log-only fragment; the spec's R6 risk-row contract is structural here —
 // the hard budget gate never waits past the deadline, and the fragment is
-// never decisive (verdicts are never LLM-only, §14.2 item 4).
+// never decisive (verdicts are never LLM-only, the spec's hand-off item 4).
 package ml
 
 import (
@@ -16,7 +16,7 @@ import (
 	"github.com/trishula-dev/trishula/internal/engine/ladder"
 )
 
-// Band is the v0 score-band vocabulary (§14.2: the escalation tau cuts
+// Band is the v0 score-band vocabulary (the spec's hand-off rule: the escalation tau cuts
 // the in-band score).
 type Band string
 
@@ -45,11 +45,11 @@ func judgeRuleID(jv JudgeVerdict) ladder.RuleID {
 type ScorerConfig struct {
 	// Model is the required in-band scorer.
 	Model Model
-	// Budget is the hard in-band budget (§20.1 R6: ONNX hard budget;
-	// §17.1: the ML local scorer budget is 1 ms p99).
+	// Budget is the hard in-band budget (the spec's R6 risk row: ONNX hard budget;
+	// the spec's performance budgets: the ML local scorer budget is 1 ms p99).
 	Budget time.Duration
 	// EscalateTau is the escalation threshold: a score at or above it
-	// submits to the judge (§14.2: score >= escalation tau).
+	// submits to the judge (the spec's hand-off rule: score >= escalation tau).
 	EscalateTau float64
 	// Judge is the optional async judge (nil = no escalation).
 	Judge *AsyncJudge
@@ -57,7 +57,7 @@ type ScorerConfig struct {
 	Cache *VerdictCache
 }
 
-// Scorer is the §14 ML scorer on ladder stage S7 (TR-21): budget-gated
+// Scorer is the spec's ML scorer on ladder stage S7 (TR-21): budget-gated
 // in-band scoring + the suspicious-band escalation to the async judge.
 // The counters are plain counts (the TR-11 exporter owns rates); the
 // scorer is safe for concurrent use through the atomics.
@@ -72,7 +72,7 @@ type Scorer struct {
 	Scored atomic.Int64
 	// Suspicious counts scorings at or above the escalation threshold.
 	Suspicious atomic.Int64
-	// Breaches counts in-band budget breaches (§20.1 R6: hard budget).
+	// Breaches counts in-band budget breaches (the spec's R6 risk row: hard budget).
 	Breaches atomic.Int64
 }
 
@@ -97,13 +97,13 @@ func NewScorer(cfg ScorerConfig) (*Scorer, error) {
 	}, nil
 }
 
-// Stage pins the fixed §19.1 ladder position: S7.
+// Stage pins the fixed reference-implementation ladder position: S7.
 func (s *Scorer) Stage() ladder.Stage { return ladder.StageML }
 
 // Evaluate folds the tx's ML tier into one fragment (always log-only at
 // this slice):
 //
-//   - no parsed §11.3 view: no opinion (the parse stages own the tx);
+//   - no parsed CEL view (the spec's request view): no opinion (the parse stages own the tx);
 //   - an in-band score at or above tau: the fragment logs the model rule
 //     and the submission goes to the async judge;
 //   - a below-tau score with no cached verdict: NO fragment (the
@@ -111,7 +111,7 @@ func (s *Scorer) Stage() ladder.Stage { return ladder.StageML }
 //   - the cached judge verdict for the signature: the fragment annotates
 //     with the judged label (a recorded artifact, never fabricated);
 //   - a budget breach (the model's context error): no in-band rule, no
-//     fabricated verdict — the counter carries the event (§20.1 R6).
+//     fabricated verdict — the counter carries the event (the spec's R6 risk row).
 //
 // The in-band deadline rides the context (the Model contract); the
 // evaluation goroutine never waits past it for a conforming model.
@@ -124,7 +124,7 @@ func (s *Scorer) Evaluate(tx *ingest.TxContext) *ladder.Verdict {
 	sig := Signature(view)
 	frag := s.baseFragment()
 
-	// In-band scoring under the hard budget (§20.1 R6).
+	// In-band scoring under the hard budget (the spec's R6 risk row).
 	ctx, cancel := context.WithTimeout(context.Background(), s.budget)
 	defer cancel()
 	val, err := s.model.Score(ctx, fv)
@@ -135,7 +135,7 @@ func (s *Scorer) Evaluate(tx *ingest.TxContext) *ladder.Verdict {
 		s.Breaches.Add(1)
 	} else {
 		s.Scored.Add(1)
-		if val >= s.tau { // §14.2: score >= escalation tau
+		if val >= s.tau { // the spec's hand-off rule: score >= escalation tau
 			s.Suspicious.Add(1)
 			frag.Rules = append(frag.Rules, modelRuleID(s.model.ID(), BandSuspicious))
 			frag.Score += int64(val * 100) // hundredths: the ladder's score vocabulary
@@ -144,7 +144,7 @@ func (s *Scorer) Evaluate(tx *ingest.TxContext) *ladder.Verdict {
 			}
 		}
 		// A below-tau score fires no rule: the Scored/Suspicious counters
-		// carry the telemetry (the §14.2 drift watch reads rates, not
+		// carry the telemetry (the spec's hand-off: the drift watch reads rates, not
 		// per-tx fragments).
 	}
 
@@ -162,7 +162,7 @@ func (s *Scorer) Evaluate(tx *ingest.TxContext) *ladder.Verdict {
 	return frag
 }
 
-// baseFragment is the log-only S7 fragment shell (§14.2 item 4: verdicts
+// baseFragment is the log-only S7 fragment shell (the spec's hand-off item 4: verdicts
 // are never LLM-only — this slice's fragment never carries a decisive
 // action; pinned by the fragment tests).
 func (s *Scorer) baseFragment() *ladder.Verdict {

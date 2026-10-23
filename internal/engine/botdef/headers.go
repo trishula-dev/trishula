@@ -15,7 +15,7 @@ import (
 // (AttachHeaderView; http1 itself parses into the map for rule
 // evaluation and keeps no order).
 //
-// §11.3's request.header_names carries this same concept as a []string of
+// The spec's request.header_names carries this same concept as a []string of
 // lowercased names; TR-04's FlowEvent has no header plane yet, so the
 // summary byte supply again arrives with TR-15. Until a view is attached,
 // the S5 stage emits no fragment.
@@ -115,10 +115,10 @@ func headerFingerprint(hv *HeaderView) HeaderFingerprint {
 		fp.Casing = "empty"
 	}
 
-	// --- classification (§12.1 header-plane family): evidence, not identity.
+	// --- classification (the spec's header-plane detector family): evidence, not identity.
 	// UA taxonomy: a tool prefix (curl/wget/python/go-http/…) is direct tool
 	// evidence; a Mozilla-family UA is browser evidence; browser UA WITHOUT
-	// any client-hint/AL backing is the masquerade tell (§12.1: "detects
+	// any client-hint/AL backing is the masquerade tell (the spec's header-family rule: "detects
 	// curl/python/bot-framework masquerades").
 	browserUA := strings.Contains(lower(fp.UserAgent), "mozilla/5")
 	toolUA := toolUAPrefix(fp.UserAgent)

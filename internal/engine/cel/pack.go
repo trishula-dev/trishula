@@ -1,8 +1,8 @@
-// Package cel implements PRD §11.3 (the developer-facing DSL): rule packs
-// compile to cost-budgeted CEL programs over the §11.3 structured request
+// Package cel implements the spec's CEL section (the developer-facing DSL): rule packs
+// compile to cost-budgeted CEL programs over the spec's structured request
 // view and evaluate to log/enforce/none verdicts.
 //
-// Seed contract (TR-02): exactly one rule, the §11.3 rate-shape example,
+// Seed contract (TR-02): exactly one rule, the spec's CEL rate-shape example,
 // expression verbatim, action=log. v0 verdicts are log-only — enforcement
 // lands with the ScoredWindowBan engine (TR-09/TR-10).
 package cel
@@ -16,7 +16,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// Action is the §11.3 per-rule action (log|enforce|none today; the full
+// Action is the spec's per-rule action (log|enforce|none today; the full
 // ladder vocabulary lands with TR-05's short-circuit ladder).
 type Action string
 

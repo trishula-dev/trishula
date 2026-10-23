@@ -57,7 +57,7 @@ func NewEngine() *Engine {
 
 // DrainShield drains the shield's ring into the tx table. The context
 // bounds the drain (engine shutdown); v0 drains in batches between ctx
-// checks (§9.4 batching note).
+// checks (the spec's batching note).
 func (e *Engine) DrainShield(rd RecordSource) error {
 	for {
 		raw, ok := rd.Recv()
@@ -70,7 +70,7 @@ func (e *Engine) DrainShield(rd RecordSource) error {
 		}
 		ev, err := DecodeFlowEvent(raw)
 		if err != nil {
-			// §9.4: malformed = log + drop into the skipped counter
+			// Ring-loss discipline: malformed = log + drop into the skipped counter
 			atomic.AddUint64(&e.stats.SkippedTotal, 1)
 			continue
 		}

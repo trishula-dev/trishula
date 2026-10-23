@@ -1,4 +1,4 @@
-// Package otel implements the §15 verdict observability pipeline v0 (TR-11):
+// Package otel implements the spec's verdict observability pipeline v0 (TR-11):
 // one call, three correlated signals — a span, a metric datapoint and a log
 // record — all keyed by the request id, emitted in-process through the
 // OpenTelemetry Go SDK (no collector, no network exporters; the collector
@@ -34,7 +34,7 @@
 //	Span `trishula.verdict` + same attrs on the log record:
 //	  request.id     = string   (the correlation key)
 //	  verdict.action = string   → "allow"|"log"|"block"|"challenge"|"ban"
-//	                             (ladder.Action vocabulary, §19.1)
+//	                             (ladder.Action vocabulary, the reference-implementation sketch)
 //	  verdict.phase  = string   → ladder.Phase ("request_headers", …)
 //	  verdict.route  = string   → tx metadata hint key "http.path" (TR-04b),
 //	                             "-" when absent
@@ -142,7 +142,7 @@ type Correlation struct {
 }
 
 // Pipeline emits the three correlated verdict signals per request+verdict
-// (§15 v0, in-process SDK only): one call, one span + one metric datapoint
+// (the spec's observability v0, in-process SDK only): one call, one span + one metric datapoint
 // + one log record, all wired to the same in-memory exporter.
 type Pipeline struct {
 	exp    *Exporter

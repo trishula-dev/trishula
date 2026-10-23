@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// TR-02 seed acceptance (issue #2): one CEL rule from PRD §11.3, compiled and
-// evaluated over the §11.3 structured request view, cost-budgeted from day one.
+// TR-02 seed acceptance (issue #2): one CEL rule from the spec's CEL section, compiled and
+// evaluated over the spec's structured request view, cost-budgeted from day one.
 //
 // Test contract: tests import ONLY our package API (never cel-go directly).
 // RED state = every symbol below is undefined; GREEN = the API exists and the
@@ -43,7 +43,7 @@ func TestLoadRulePack(t *testing.T) {
 				t.Fatalf("seed = %d rules, want 1 (TR-02: exactly one seed rule)", len(pack.Rules))
 			}
 			r := pack.Rules[0]
-			// §11.3 expression lands in the pack verbatim; log-only seed.
+			// The spec's expression lands in the pack verbatim; log-only seed.
 			if r.Action != ActionLog {
 				t.Fatalf("seed action = %q, want %q", r.Action, ActionLog)
 			}

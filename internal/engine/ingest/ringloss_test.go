@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// TR-04c (issue #68, child of TR-04): the ring-loss path — PRD §9.4
+// TR-04c (issue #68, child of TR-04): the ring-loss path — the spec's ring-loss budget
 // (R1b): "loss is a telemetry-quality issue, surfaced as
 // trishula_shield_ring_dropped_total". The OTel metric binding lands
 // with TR-11; THIS leaf pins the drain-loop counter contract.
@@ -35,7 +35,7 @@ func TestDrainCountsLossOnOverrun(t *testing.T) {
 }
 
 func TestDrainLossIsNotError(t *testing.T) {
-	// §9.4 contract: loss is telemetry-quality — the drain MUST NOT fail
+	// The ring-loss contract: loss is telemetry-quality — the drain MUST NOT fail
 	// or unwind on loss markers; stats surface it.
 	rd := newLossyRing(lossMarker{}, lossMarker{}, lossMarker{})
 	res := Drain(NewTxManager(), rd)

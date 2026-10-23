@@ -14,7 +14,7 @@ import (
 	"github.com/google/cel-go/ext"
 )
 
-// Request is the §11.3 structured request view, seed scope: the view grows
+// Request is the spec's structured request view, seed scope: the view grows
 // field-by-field as the rules that need it land (no speculative fields).
 // JSON tags rule the decode: sigs.k8s.io/yaml converts YAML→JSON and decodes
 // via encoding/json — json-name matching is case-insensitive but NOT
@@ -27,8 +27,8 @@ type Request struct {
 }
 
 // RateWindow is one precomputed rate-accounting window value
-// (§11.3's request.rate_windows; keyed by window size, e.g. "5m").
-// The cel tag exposes the §11.3 field name (requests, lowercase) through the
+// (the spec's request.rate_windows; keyed by window size, e.g. "5m").
+// The cel tag exposes the spec's field name (requests, lowercase) through the
 // native-type registry (ext.NativeTypes with ParseStructTag); the json tag
 // keeps the fixture decode aligned with the same name.
 type RateWindow struct {
@@ -46,12 +46,12 @@ type Verdict struct {
 	Detail string // failure detail (budget abort, compile failure)
 }
 
-// evalBudget is the default per-evaluation cost budget (§11.3: cost-budgeted
+// evalBudget is the default per-evaluation cost budget (the spec's CEL DSL: cost-budgeted
 // from day one). The seed rule's expression is well inside it.
 const evalBudget uint64 = 100_000
 
 // Rule is one declarative CEL entry: pack metadata plus a compile-once,
-// eval-many program under a per-evaluation cost budget (§11.3, H-1).
+// eval-many program under a per-evaluation cost budget (the spec's CEL requirements, H-1).
 // CostBudget rides the pack's wire (TR-17: a rule authored in an applied
 // pack declares its own ceiling and the pack digest covers it; 0 = unset =
 // the policy's budget or the package default) and SetCostBudget is the
@@ -121,7 +121,7 @@ func (r *Rule) Eval(req Request) (Verdict, error) {
 	return v, nil
 }
 
-// activation builds the eval-time bindings. Top-level `path` is the §11.3
+// activation builds the eval-time bindings. Top-level `path` is the spec's
 // shorthand for request.path (the PRD's own example uses it verbatim).
 func (r *Rule) activation(req Request) map[string]any {
 	return map[string]any{
@@ -165,24 +165,24 @@ func (r *Rule) compile() error {
 		return errors.New("rule has no expression")
 	}
 	env, err := cel.NewCustomEnv(
-		// Seed view (§11.3): request.method / request.path strings and
+		// Seed view (the spec's CEL section): request.method / request.path strings and
 		// request.rate_windows keyed by window size. Map values stay dyn at
 		// check time; selector/index mistakes surface as eval errors.
 		cel.Variable("request", cel.MapType(cel.StringType, cel.DynType)),
-		// §11.3 shorthand: path == request.path.
+		// The spec's shorthand: path == request.path.
 		cel.Variable("path", cel.StringType),
 		// Drop the stdlib RE2 `matches` family entirely (global + member
 		// overloads): the seed's glob semantics must not collide with it,
-		// and §9.5 later gates any RE2 surface behind an input-length
+		// and the spec's kernel rate-accounting section later gates any RE2 surface behind an input-length
 		// budget under a distinct name.
 		cel.StdLib(cel.StdLibSubset(withoutRE2Matches())),
-		// path.matches(glob): §11.3 example syntax with FILE-GLOB semantics
+		// path.matches(glob): the spec's example syntax with FILE-GLOB semantics
 		// (* crosses "/"): "/v1/chat/*" matches /v1/chat/a/b but not
 		// /v1/chat or /v1/chatabc. Declared here because stdlib RE2
 		// matches is excluded above; seed decision recorded for the
-		// §11.3 DSL pin.
+		// The spec's DSL pin.
 		matchesGlobOption(),
-		// Register the native RateWindow type (cel: struct tag → the §11.3
+		// Register the native RateWindow type (cel: struct tag → the spec's
 		// lowercase field name) so check+eval resolve
 		// request.rate_windows[..].requests via reflection on the Go
 		// struct rather than proto descriptors.

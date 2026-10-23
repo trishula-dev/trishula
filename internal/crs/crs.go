@@ -16,7 +16,7 @@ import (
 // a SecLang directive file (CRS ruleset: crs-setup.conf.example + the
 // PL1 profile) loaded once, CRS requests evaluated into shadow verdicts
 // (per-phase match projections + interruption evidence). Verdicts are
-// logged, NEVER enforced (PRD §5.15 shadow-first; §11 Coraza).
+// logged, NEVER enforced (the spec's shadow-first posture; the rule-engine section names Coraza).
 
 // PhaseRequestHeaders / PhaseRequestBody are the CRS request phases this
 // slice evaluates (Coraza phase-1 / phase-2); response phases land with
@@ -225,7 +225,7 @@ func splitHostPort(host string) (string, int) {
 // Evaluate runs the walk and projects the evidence into the shadow
 // Verdict: per-phase Match lists (match order preserved) plus the
 // interruption. Phase-2 denies surface as Verdict.Interrupted — an
-// enforcement-shaped outcome is DATA here (the §5.15 shadow posture),
+// enforcement-shaped outcome is DATA here (the spec's shadow-first posture),
 // never a call error.
 func (e *fileEvaluator) Evaluate(o Options) (Verdict, error) {
 	matched, interrupted, intRule, intStat, err := e.walk(o)

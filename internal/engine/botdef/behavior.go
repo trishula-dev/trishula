@@ -13,7 +13,7 @@ import (
 	"github.com/trishula-dev/trishula/internal/engine/ladder"
 )
 
-// ruleBotPace, ruleBotAuthFail and ruleBotSpread are the §12.1 behavioral
+// ruleBotPace, ruleBotAuthFail and ruleBotSpread are the behavioral-family
 // detector ids the S5 fragment carries (ladder.Rules, walk order); each is
 // one detector of the behavioral family.
 const (
@@ -24,7 +24,7 @@ const (
 
 // botScorePace, botScoreAuthFail and botScoreSpread are the v1 score
 // contributions (log-tier evidence accumulation feeding the ban engine per
-// §12; values v1-pinned, tunable when the CR wiring lands).
+// the spec's bot-defense section; values v1-pinned, tunable when the CR wiring lands).
 const (
 	botScorePace     = 4 // request pacing breach
 	botScoreAuthFail = 4 // auth-failure ratio breach
@@ -35,7 +35,7 @@ const (
 // bounded-state rule; expired events prune first, overflow drops oldest).
 const boundEventLog = 512
 
-// BehaviorObservation is one request's behavioral surface (§12.1: pacing,
+// BehaviorObservation is one request's behavioral surface (the spec's detector families: pacing,
 // auth-failure ratios, endpoint uniqueness). The ingest plane knows the
 // request line and the response status — it attaches one observation per
 // request it wants scored, before the walk.
@@ -62,7 +62,7 @@ func BehaviorObservationOf(tx *ingest.TxContext) *BehaviorObservation {
 	return o
 }
 
-// BehaviorWindowConfig is the §12.1 window geometry (v1-pinned; the values
+// BehaviorWindowConfig is the detector-family window geometry (v1-pinned; the values
 // ride the policy layer the same way the merge constants do).
 type BehaviorWindowConfig struct {
 	PaceWindow        time.Duration    // sliding window for the pacing detector
@@ -94,10 +94,10 @@ func DefaultBehaviorWindowConfig() BehaviorWindowConfig {
 	}
 }
 
-// BehaviorWindows holds the §12.1 behavioral family for per-source state
+// BehaviorWindows holds the spec's behavioral detector family for per-source state
 // (kernel counters feed userspace scoring): three sliding windows per
 // source — pacing, auth-failure ratio, endpoint uniqueness — each emitting
-// a DetectorVerdict on breach. A detector verdict carries the §12.1
+// a DetectorVerdict on breach. A detector verdict carries the spec's detector-triple
 // triple, never a bare boolean.
 type BehaviorWindows struct {
 	cfg   BehaviorWindowConfig
@@ -120,7 +120,7 @@ type behaviorEvent struct {
 }
 
 // authFailStatus reports whether a response status is an auth failure
-// (the §12.1 credential-stuffing posture counts 401/403).
+// (the spec's credential-stuffing posture counts 401/403).
 func authFailStatus(status int) bool { return status == 401 || status == 403 }
 
 // authSuccessStatus reports whether a response status is an auth success
@@ -166,7 +166,7 @@ func NewBehaviorWindows(cfg BehaviorWindowConfig) *BehaviorWindows {
 }
 
 // Observe feeds one request into the source's windows and returns the
-// DetectorVerdicts that fired on this observe (§12.1 triple; empty = the
+// DetectorVerdicts that fired on this observe (the spec's detector triple; empty = the
 // source stays quiet). Order is pinned: pace, auth-fail, spread.
 func (bw *BehaviorWindows) Observe(src netip.Addr, o BehaviorObservation) []DetectorVerdict {
 	bw.mu.Lock()
@@ -197,7 +197,7 @@ func (bw *BehaviorWindows) Observe(src netip.Addr, o BehaviorObservation) []Dete
 	return vs
 }
 
-// paceVerdict computes the §12.1 pacing verdict: more than
+// paceVerdict computes the behavioral pacing verdict: more than
 // PaceMaxRequests inside PaceWindow breaches; the excess sets the
 // confidence (the cap keeps every confidence below 100 — a detector
 // asserts strength, never certainty).
@@ -224,7 +224,7 @@ func (bw *BehaviorWindows) paceVerdict(s *behaviorSource, now time.Time) (Detect
 	}, true
 }
 
-// authVerdict computes the §12.1 auth-failure verdict: the 401/403 share
+// authVerdict computes the behavioral auth-failure verdict: the 401/403 share
 // of auth outcomes in the window breaches at or above the ratio, once the
 // in-window attempts clear the minimum (the surplus ratio sets the
 // confidence; the cap keeps every confidence below 100). The v1 outcome
@@ -263,7 +263,7 @@ func (bw *BehaviorWindows) authVerdict(s *behaviorSource, now time.Time) (Detect
 	}, true
 }
 
-// spreadVerdict computes the §12.1 endpoint-uniqueness verdict: at least
+// spreadVerdict computes the behavioral endpoint-uniqueness verdict: at least
 // SpreadMinRequests in-window with SpreadMinDistinct distinct paths reads
 // as broad crawling (the surplus breadth sets the confidence; the cap
 // keeps every confidence below 100).
@@ -355,7 +355,7 @@ func LoadBehaviorVectors(r io.Reader) ([]BehaviorVector, error) {
 	return out.Vectors, nil
 }
 
-// BehaviorVector is one published §12.1 behavioral test vector: a scripted
+// BehaviorVector is one published behavioral test vector from the spec: a scripted
 // single-source request stream, and the detector ids the FINAL Observe of
 // the stream must emit (the expectation pins threshold shape and decay).
 type BehaviorVector struct {

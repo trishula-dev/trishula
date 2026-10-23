@@ -1,4 +1,4 @@
-// ratewindows.go carries the three §13.2 algorithm bodies behind the
+// ratewindows.go carries the three bodies of the spec's rate algorithms behind the
 // plane's dispatch: the token bucket, the exact multi-window sliding
 // count and the EWMA rate accumulator. Each body takes its policy values
 // and the injected clock's second as arguments — no globals, no timers.
@@ -12,7 +12,7 @@ type windowLog struct {
 	at []int64
 }
 
-// record appends the arrival second. Every arrival records (§15.2's
+// record appends the arrival second. Every arrival records (the spec's verdict-record
 // rate-stage evidence shape reads counts above a limit, so a refused
 // request also counts).
 func (w *windowLog) record(now int64) {
@@ -20,7 +20,7 @@ func (w *windowLog) record(now int64) {
 }
 
 // count returns the post-arrival count for one width. The window
-// boundary follows the §13.3 convention: an event stays valid while
+// boundary follows the ban algorithm's convention: an event stays valid while
 // its age is at most the width.
 func (w *windowLog) count(width, now int64) int {
 	n := 0
@@ -78,7 +78,7 @@ type bucketState struct {
 }
 
 // take checks before it spends: the rejected arrival consumes nothing
-// (§13.2: reject when empty). The wait is the ceil of the time to the
+// (the spec's rate-algorithm rule: reject when empty). The wait is the ceil of the time to the
 // next token at the refill rate.
 func (b *bucketState) take(pol TokenBucketPolicy, now int64) (bool, int64) {
 	elapsed := float64(now - b.lastSec)
@@ -97,9 +97,9 @@ func (b *bucketState) take(pol TokenBucketPolicy, now int64) (bool, int64) {
 	return false, wait
 }
 
-// ewmaState is the smoothed-rate accumulator per composed key (§13.2
+// ewmaState is the smoothed-rate accumulator per composed key (the spec's rate-algorithm
 // EWMA row): a decayed arrival count. The rate estimate multiplies the
-// count by ln2 over the half-life, the same decay family as §13.3's
+// count by ln2 over the half-life, the same decay family as the ban algorithm's
 // score, and so reads in requests per second.
 type ewmaState struct {
 	count   float64

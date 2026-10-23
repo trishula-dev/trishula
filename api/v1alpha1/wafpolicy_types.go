@@ -1,6 +1,6 @@
 // Package v1alpha1 holds the trishula.security/v1alpha1 API types: the v0
 // CRD surface compiling into operator bundles and kernel maps. TR-08a
-// carries the minimal WAFPolicy only; the remaining §16.2 CRDs (APISpec,
+// carries the minimal WAFPolicy only; the remaining CRDs of the spec's CRD set (APISpec,
 // RuleSet, BanPolicy, MLModel) arrive with later TR-08 slices.
 package v1alpha1
 
@@ -9,14 +9,14 @@ import (
 )
 
 // DefaultAction is the default verdict for a route class when no rule set
-// fires (§16.2 WAFPolicy). The values are the §19.1 WAFPolicy sketch's
+// fires (the spec's WAFPolicy CRD). The values are the reference-implementation WAFPolicy sketch's
 // vocabulary: block | challenge | log | pass.
 //
 // +kubebuilder:validation:Enum=block;challenge;log;pass
 type DefaultAction string
 
 const (
-	// DefaultActionBlock stops the request (decisive, §2.3).
+	// DefaultActionBlock stops the request (decisive, the spec's first-decisive precedence rule).
 	DefaultActionBlock DefaultAction = "block"
 	// DefaultActionChallenge responds with the challenge flow.
 	DefaultActionChallenge DefaultAction = "challenge"
@@ -34,7 +34,7 @@ type CRSProfile string
 const (
 	// CRSProfilePL1 is the low-noise paranoia level.
 	CRSProfilePL1 CRSProfile = "PL1"
-	// CRSProfilePL2 is the reference profile (§17.2 benchmark mix).
+	// CRSProfilePL2 is the reference profile (the spec's benchmark-plan mix).
 	CRSProfilePL2 CRSProfile = "PL2"
 	// CRSProfilePL3 is the strict paranoia level.
 	CRSProfilePL3 CRSProfile = "PL3"
@@ -93,7 +93,7 @@ type WAFPolicySpec struct {
 	//
 	// +kubebuilder:validation:Enum=block;challenge;log;pass
 	DefaultAction DefaultAction `json:"defaultAction"`
-	// CELBudget is the evaluation cost budget (PRD §11.3 + G4) the compile
+	// CELBudget is the evaluation cost budget (the spec's CEL DSL plus goal G4) the compile
 	// applies to every CEL rule this policy compiles that does not declare
 	// its own (the rule pack's per-rule costBudget is the more specific
 	// declaration and wins). 0 = unset = the engine's package default.
@@ -106,7 +106,7 @@ type WAFPolicySpec struct {
 }
 
 // WAFPolicy is the v0 CRD binding rule sets, the default action and the
-// mode flags to a route class (PRD §16.2). Route selectors and failure
+// mode flags to a route class (the spec's CRD set). Route selectors and failure
 // semantics arrive with later TR-08 slices.
 //
 // +kubebuilder:object:root=true

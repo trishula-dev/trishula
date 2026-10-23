@@ -1,12 +1,12 @@
-// Package botdef implements the §12 bot-detector family: JA4 TLS client
+// Package botdef implements the spec's bot-detector family: JA4 TLS client
 // fingerprinting (terminated-hop ClientHello summary in, FoxIO JA4 string
 // out), the h1-style header-plane fingerprint (ordered normalized
 // header-name vector + presence vector + casing/UA/AL evidence, stable hash
-// + tool-vs-browser classification), the §12.1 behavioral family
+// + tool-vs-browser classification), the spec's behavioral family
 // (behavior.go: per-source sliding windows — pacing, auth-failure ratio,
-// endpoint uniqueness) and the §12.1 merge policy (verdict.go: per-detector
+// endpoint uniqueness) and the spec's merge policy (verdict.go: per-detector
 // verdicts, consensus over distinct families), glued to the ladder as
-// §19.1 S5 StageBots evaluators over the ingest transaction context.
+// reference-implementation S5 StageBots evaluators over the ingest transaction context.
 //
 // TR-12 v0 SLICE BOUNDARIES (deliberate):
 //
@@ -15,7 +15,7 @@
 //     capture. The ingest path MUST supply the summary below; until then
 //     the ladder's S5 stage sees no fragment (never a fabricated verdict).
 //   - No fingerprint "known-tooling DB" matching (FoxIO's JA4+ database is
-//     a separate digest-pinned feed per PRD §12.3): v0 emits verdicts on
+//     a separate digest-pinned feed per the spec's honest-limits note): v0 emits verdicts on
 //     the computed fingerprints + header-plane contradiction evidence.
 //   - JA4H (FoxIO's HTTP client fingerprint) is deliberately NOT claimed:
 //     FoxIO's published JA4H hash vectors lack reconstructible inputs
@@ -37,7 +37,7 @@ import (
 )
 
 // ClientHelloSummary is the input contract for JA4Fingerprint: exactly what
-// the §11.3 view's TLS scope can supply per a terminated hop. The extract
+// the spec's view's TLS scope can supply per a terminated hop. The extract
 // side (TR-15/29: kernel capture → userspace extract) owes:
 //
 //   - Transport: 't' (TLS over TCP), 'q' (QUIC Initial), 'd' (DTLS).

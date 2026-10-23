@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// loadHeaderPair loads the curl-vs-browser §11.3 header-plane pair
+// loadHeaderPair loads the curl-vs-browser header-plane pair from the spec's CEL view
 // (testdata/curl_vs_browser.json).
 func loadHeaderPair(t *testing.T) (browser, tool *HeaderView) {
 	t.Helper()

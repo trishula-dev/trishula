@@ -26,7 +26,7 @@ func (r *Result) Decisive() bool { return r.Action.Decisive() }
 // concurrent use when the Policy's read-only maps are (they are: loaded
 // once, never mutated after LoadPolicy returns).
 //
-// The §11.3 view arrives through RequestBodyView — the body-carrying
+// The spec's request view arrives through RequestBodyView — the body-carrying
 // view wrapper this slice reads instead of cel.Request (whose body
 // fields land with the typed engine plumbing, not this stage).
 type RequestEvaluator struct {
@@ -76,7 +76,7 @@ func (e *RequestEvaluator) Evaluate(tx *ingest.TxContext) *Result {
 	}
 }
 
-// bodyView is the body-carrying §11.3 view this slice evaluates (head
+// bodyView is the body-carrying spec request view this slice evaluates (head
 // fields + the raw encoded body; the JSON-tag decode matches the
 // AttachView convention — sigs.k8s.io/yaml/json decode rules).
 type bodyView struct {
@@ -91,7 +91,7 @@ type bodyView struct {
 // corrupt the S0 consumers' decode).
 const bodyViewMetaKey = "request_body_view_json"
 
-// AttachRequestBodyView stores a body-carrying §11.3 view on the tx
+// AttachRequestBodyView stores a body-carrying spec request view on the tx
 // (engine plumbing + tests; JSON keeps ingest decoupled from positive,
 // mirroring ladder.AttachView).
 func AttachRequestBodyView(tx *ingest.TxContext, v *bodyView) error {

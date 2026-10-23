@@ -10,12 +10,12 @@ import (
 	"github.com/trishula-dev/trishula/internal/engine/ingest"
 )
 
-// viewMetaKey is the tx-Metadata slot carrying the parsed §11.3 view (the
+// viewMetaKey is the tx-Metadata slot carrying the parsed spec request view (the
 // HTTP/1 parse product, JSON-encoded). The typed engine plumbing lands
 // with the parity walk; the key is the attachment contract until then.
 const viewMetaKey = "request_view_json"
 
-// AttachView stores a parsed §11.3 request on the tx (engine plumbing +
+// AttachView stores a parsed spec request view on the tx (engine plumbing +
 // tests; JSON keeps ingest decoupled from cel).
 func AttachView(tx *ingest.TxContext, r *cel.Request) error {
 	if tx == nil || r == nil {
@@ -32,7 +32,7 @@ func AttachView(tx *ingest.TxContext, r *cel.Request) error {
 	return nil
 }
 
-// txView reads the attached §11.3 view back (nil = none attached).
+// txView reads the attached spec request view back (nil = none attached).
 func txView(tx *ingest.TxContext) *cel.Request {
 	if tx == nil {
 		return nil
@@ -73,7 +73,7 @@ func NewKernelHits(kernelHitChecker func(src netip.Addr, nowNS uint64) (khit, er
 	return &KernelHits{kernelHitChecker: kernelHitChecker}
 }
 
-// Stage pins S0 (ladder position 0: the µs cache consult — §19.1).
+// Stage pins S0 (ladder position 0: the µs cache consult — the reference-implementation sketch).
 func (k *KernelHits) Stage() Stage { return StageKernel }
 
 // Evaluate probes kernel state once per tx. The tx's source address
@@ -134,7 +134,7 @@ func clockOrZero(tx *ingest.TxContext) uint64 {
 	return tx.LastNS
 }
 
-// TxView reads the attached §11.3 view back from a tx (nil = none
+// TxView reads the attached spec request view back from a tx (nil = none
 // attached). Exported read half of AttachView: cross-package consumers
 // (the S7 ML extractor, TR-21) share this key literally instead of
 // duplicating the attachment constant.
@@ -158,7 +158,7 @@ func NewCELEval(pack *cel.RulePack) *CELEval { return &CELEval{pack: pack} }
 // TR-17): the incoming pack is compile-probed FIRST — the same gate Load
 // runs (load ≠ eval — an uncompilable or budget-aborted rule fails the
 // SWAP, never becomes per-request ":error" evidence), the installed pack
-// keeps serving on rejection (§11.7 per-replica atomic swap, fail closed),
+// keeps serving on rejection (the spec's per-replica atomic swap, fail closed),
 // and nil/empty is a wiring error — an empty-walk S3 is the silent-skip
 // shape Use() exists to prevent.
 func (c *CELEval) SetPack(p *cel.RulePack) error {

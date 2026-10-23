@@ -12,7 +12,7 @@ import (
 )
 
 // requestFixture is one named request sample (testdata/requests.yaml):
-// the §11.3 head fields plus the raw encoded body the validator reads.
+// the spec's head fields plus the raw encoded body the validator reads.
 type requestFixture struct {
 	Name        string          `json:"name" yaml:"name"`
 	Method      string          `json:"method" yaml:"method"`
@@ -22,7 +22,7 @@ type requestFixture struct {
 }
 
 // testState bundles the S4 evaluator and the engine walking it, plus the
-// tx carrying the attached body-carrying §11.3 view for the fixture case.
+// tx carrying the attached body-carrying spec request view for the fixture case.
 type testState struct {
 	ev  *RequestEvaluator
 	eng *ladder.Engine
