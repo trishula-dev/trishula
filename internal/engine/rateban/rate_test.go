@@ -244,6 +244,33 @@ func TestSlidingWindowRows(t *testing.T) {
 	}
 }
 
+// burstArrivals builds n same-second same-key burst rows: arrivals 1..n
+// at dt 0 (the runner's per-row arrival is one request, so a burst of 20
+// needs 20 rows).
+func burstArrivals(n int) []rateArrival {
+	rows := make([]rateArrival, 0, n)
+	for i := 1; i <= n; i++ {
+		rows = append(rows, rateArrival{name: fmt.Sprintf("arrival %d", i), route: "auth", ip: "1.2.3.4", ok: true})
+	}
+	return rows
+}
+
+// ewmaBurstRows is the 20-arrival instant burst at t=0: rows 1..14 stay
+// under the limit-1 smoothed rate, rows 15..20 refuse. The refusal
+// rows' Retry-After comes from the half-life decay: h·log2(C/Ctarget)
+// with Ctarget = limit·h/ln2.
+func ewmaBurstRows() []rateArrival {
+	rows := burstArrivals(14)
+	return append(rows,
+		rateArrival{name: "15 breaches the smoothed rate", route: "auth", ip: "1.2.3.4", rAssert: true, retry: 1, br: []string{"auth/sourceIp/1.2.3.4"}, rateOn: true, rate: 1.039721},
+		rateArrival{name: "16", route: "auth", ip: "1.2.3.4", rAssert: true, retry: 2},
+		rateArrival{name: "17", route: "auth", ip: "1.2.3.4", rAssert: true, retry: 3},
+		rateArrival{name: "18", route: "auth", ip: "1.2.3.4", rAssert: true, retry: 4},
+		rateArrival{name: "19", route: "auth", ip: "1.2.3.4", rAssert: true, retry: 4},
+		rateArrival{name: "20 refuses with the longest retry", route: "auth", ip: "1.2.3.4", rAssert: true, retry: 5, br: []string{"auth/sourceIp/1.2.3.4"}, rateOn: true, rate: 1.386294},
+	)
+}
+
 // TestEWMARateRows pins the §13.2 EWMA-rate row: an exponentially weighted
 // arrival rate per composed key, at the same decay family as §13.3's
 // score. R = (ln2/h)·Σ 2^(−age/h) reads in req/s. The arrival records,
@@ -257,27 +284,13 @@ func TestEWMARateRows(t *testing.T) {
 		{
 			name: "instant burst crosses the limit",
 			pol:  ewmaPol(10, 1),
-			rows: []rateArrival{
-				{name: "burst 1..14 stay at the limit", route: "auth", ip: "1.2.3.4", ok: true},
-				{name: "15 breaches the smoothed rate", route: "auth", ip: "1.2.3.4", rAssert: true, retry: 1, rateOn: true, rate: 1.03972},
-				{name: "16", route: "auth", ip: "1.2.3.4", rAssert: true, retry: 2},
-				{name: "17", route: "auth", ip: "1.2.3.4", rAssert: true, retry: 3},
-				{name: "18", route: "auth", ip: "1.2.3.4", rAssert: true, retry: 4},
-				{name: "19", route: "auth", ip: "1.2.3.4", rAssert: true, retry: 4},
-				{name: "20 refuses with the longest retry", route: "auth", ip: "1.2.3.4", rAssert: true, retry: 5, rateOn: true, rate: 1.386294},
-			},
+			rows: ewmaBurstRows(),
 		},
 		{
 			name: "half-life decay releases the key",
 			pol:  ewmaPol(10, 1),
-			rows: []rateArrival{
-				{name: "burst to C=20", route: "auth", ip: "1.2.3.4", ok: true},
-				{name: "14 more keep the smoothed rate at 9.7/s of... under the limit", route: "auth", ip: "1.2.3.4", ok: true},
-				{name: "12 more, still pre-breach", route: "auth", ip: "1.2.3.4", ok: true},
-				{name: "5 more, now over", route: "auth", ip: "1.2.3.4"},
-				{name: "4 more", route: "auth", ip: "1.2.3.4"},
-				{name: "one half-life of silence later the key reopens", dt: 15, route: "auth", ip: "1.2.3.4", ok: true, rateOn: true, rate: 0.559444},
-			},
+			rows: append(ewmaBurstRows(),
+				rateArrival{name: "one half-life of silence later the key reopens", dt: 15, route: "auth", ip: "1.2.3.4", ok: true, rateOn: true, rate: 0.559444}),
 		},
 		{
 			name: "steady sub-limit rate never breaches",
