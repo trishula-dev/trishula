@@ -1,7 +1,7 @@
-# Sample request fixture (TR-02; PRD v4 §11.3 structured request view, seed scope).
+# Sample request fixture (TR-02; spec v4 section 11.3 structured request view, seed scope).
 # Fields beyond rate_windows stay out of v0: the seed rule binds
 # request.method / request.path / request.rate_windows only; future rules
-# extend this file when their fields land (§11.3 view, declared on use).
+# extend this file when their fields land (section 11.3 view, declared on use).
 # rate_windows keys: quoted so YAML emits string keys (CEL map[string]).
 cases:
   - name: rate-shape-match-post-chat-boundary

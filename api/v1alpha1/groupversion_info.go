@@ -12,7 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-// GroupName is the contract API group (PRD: trishula.security is
+// GroupName is the contract API group (spec: trishula.security is
 // contractual for downstream consumers).
 const GroupName = "trishula.security"
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# TR-06 (issue #6, PRD v4 §10.3) — DX1 lab verification.
+# TR-06 (issue #6, spec v4 section 10.3) — DX1 lab verification.
 #
 # Drives the live topology end to end and prints hop-by-hop header evidence:
 #
@@ -9,7 +9,7 @@
 #          -> cmd/engine transparent ReverseProxy (X-Trishula-Hop)
 #          -> dx1/dx1-echo Service    (the demo pod)
 #
-# Proves the §10.2 variant-A contract live: NGF steers weighted traffic to
+# Proves the section 10.2 variant-A contract live: NGF steers weighted traffic to
 # the engine as it would to any Service; the engine forwards transparently
 # to the pool; readiness/health stays engine-local (/healthz).
 
@@ -44,7 +44,7 @@ kubectl -n "${ENGINE_NS}" get svc,deploy 2>/dev/null || true
 
 GW_ACCEPTED="$(kubectl -n "${NGF_NS}" get gateway "${GATEWAY_NAME}" -o jsonpath='{.status.conditions[?(@.type=="Accepted")].status}' 2>/dev/null || true)"
 GW_PROGRAMMED="$(kubectl -n "${NGF_NS}" get gateway "${GATEWAY_NAME}" -o jsonpath='{.status.conditions[?(@.type=="Programmed")].status}' 2>/dev/null || true)"
-log "Gateway ${GATEWAY_NAME} Accepted=${GW_ACCEPTED:-<absent>} Programmed=${GW_PROGRAMMED:-<absent>} (§10.2: NGF steers to the engine Service as a plain backend)"
+log "Gateway ${GATEWAY_NAME} Accepted=${GW_ACCEPTED:-<absent>} Programmed=${GW_PROGRAMMED:-<absent>} (section 10.2: NGF steers to the engine Service as a plain backend)"
 
 # --- hop 2: through NGF to the engine ----------------------------------------
 log "hop 2 — request through NGF -> engine (path ${ROUTED_PATH}, Host ${HOST_HDR}, http://${NODE_IP}:${NODE_HTTP_PORT})"
@@ -97,5 +97,5 @@ else
 fi
 
 log "DX1 verify: hop 1 NGF -> hop 2 engine -> hop 3 echo pod all evidenced above"
-log "§10.2 variant A reproduced live: gateway -> engine backend -> transparent forward -> demo pool"
+log "section 10.2 variant A reproduced live: gateway -> engine backend -> transparent forward -> demo pool"
 log "Done. The lab remains installed (no teardown)."

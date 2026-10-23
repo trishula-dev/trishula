@@ -1,4 +1,4 @@
-# TR-23 (issue #23, PRD §5 DX1 + §21 M3) — the nightly DX1 timing run.
+# TR-23 (issue #23, spec section 5 DX1 + section 21 M3) — the nightly DX1 timing run.
 #
 # kind + NGF + one enforced CEL rule on a hosted runner. The DX1 gate
 # (lab/dx1/dx1-gate.sh) anchors the clock at the job start and asserts

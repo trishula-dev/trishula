@@ -1,6 +1,6 @@
 # positive
 
-PRD §11.5 positive security — ladder stage **S4**: validate what a request
+spec §11.5 positive security — ladder stage **S4**: validate what a request
 IS before spending rungs on what it DOES. An allowlist, not another
 signature set: a request the schema cannot describe is rejected, so an
 attacker's novelty is an error, not a challenge to parse.
@@ -16,7 +16,7 @@ attacker's novelty is an error, not a challenge to parse.
   `pattern` — on `body.model`, `body.messages[i]`, etc. Diagnostics name
   the exact violated field path (`body.messages[2].role: …`).
 - **Policy**: route-pattern → schema mapping plus the default action for
-  unmatched routes (v0 passes them through — fail-open default per PRD
+  unmatched routes (v0 passes them through — fail-open default per spec
   §0.1; enforcement flips per policy in v1).
 - Verdicts are **shadow**: fragments in the ladder vocabulary
   (`ladder.ActionLog` on violations — decisive `block` arrives with

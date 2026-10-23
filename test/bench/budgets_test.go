@@ -14,15 +14,15 @@ func TestBudgetsEncode17_1(t *testing.T) {
 	// The spec's budget-table row set, read off the spec (line 7 splits into its two
 	// stated regimes: direct short-circuit vs context-fetch).
 	want := []Budget{
-		{ID: "xdp-hot-path", PRDRow: "XDP shield (ACL/flood/cache/ban-hit path)", Kind: CeilingP99, Value: 10, EnforcedBy: "shield DaemonSet, node NIC"},
-		{ID: "tc-classifier-emit", PRDRow: "TC classifier + ringbuf emit", Kind: CeilingP99, Value: 20, EnforcedBy: "shield DaemonSet"},
-		{ID: "engine-inspect-8k", PRDRow: "Engine parse + deep inspect (CRS+CEL+schema, 8KB body)", Kind: CeilingP99, Value: 600, EnforcedBy: "engine"},
-		{ID: "engine-inspect-64k", PRDRow: "Engine parse + deep inspect (64KB JSON body)", Kind: CeilingP99, Value: 1200, EnforcedBy: "engine"},
-		{ID: "ml-scorer-local", PRDRow: "ML local scorer (in-band, parallel with rules)", Kind: CeilingP99, Value: 1000, EnforcedBy: "engine ML tier"},
-		{ID: "e2e-inline-hop-8k", PRDRow: "Total inline hop added vs direct (8KB, full CRS)", Kind: CeilingP99, Value: 1500, P50us: 300, EnforcedBy: "end-to-end gate", M2: true},
-		{ID: "kernel-cache-direct", PRDRow: "Kernel-cached verdict/ban short-circuit (direct)", Kind: CeilingP99, Value: 1, EnforcedBy: "shield"},
-		{ID: "kernel-cache-context", PRDRow: "Kernel-cached verdict/ban short-circuit (context fetch)", Kind: CeilingP99, Value: 100, EnforcedBy: "shield"},
-		{ID: "engine-throughput-replica", PRDRow: "Throughput per engine replica (4 vCPU, CRS+schema)", Kind: FloorReqPS, Value: 10000, EnforcedBy: "load gate"},
+		{ID: "xdp-hot-path", SpecRow: "XDP shield (ACL/flood/cache/ban-hit path)", Kind: CeilingP99, Value: 10, EnforcedBy: "shield DaemonSet, node NIC"},
+		{ID: "tc-classifier-emit", SpecRow: "TC classifier + ringbuf emit", Kind: CeilingP99, Value: 20, EnforcedBy: "shield DaemonSet"},
+		{ID: "engine-inspect-8k", SpecRow: "Engine parse + deep inspect (CRS+CEL+schema, 8KB body)", Kind: CeilingP99, Value: 600, EnforcedBy: "engine"},
+		{ID: "engine-inspect-64k", SpecRow: "Engine parse + deep inspect (64KB JSON body)", Kind: CeilingP99, Value: 1200, EnforcedBy: "engine"},
+		{ID: "ml-scorer-local", SpecRow: "ML local scorer (in-band, parallel with rules)", Kind: CeilingP99, Value: 1000, EnforcedBy: "engine ML tier"},
+		{ID: "e2e-inline-hop-8k", SpecRow: "Total inline hop added vs direct (8KB, full CRS)", Kind: CeilingP99, Value: 1500, P50us: 300, EnforcedBy: "end-to-end gate", M2: true},
+		{ID: "kernel-cache-direct", SpecRow: "Kernel-cached verdict/ban short-circuit (direct)", Kind: CeilingP99, Value: 1, EnforcedBy: "shield"},
+		{ID: "kernel-cache-context", SpecRow: "Kernel-cached verdict/ban short-circuit (context fetch)", Kind: CeilingP99, Value: 100, EnforcedBy: "shield"},
+		{ID: "engine-throughput-replica", SpecRow: "Throughput per engine replica (4 vCPU, CRS+schema)", Kind: FloorReqPS, Value: 10000, EnforcedBy: "load gate"},
 	}
 	if len(cat.ByID) != len(want) {
 		t.Errorf("budget rows = %d, want %d (one per §17.1 line; line 7 splits into two regimes)", len(cat.ByID), len(want)) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)

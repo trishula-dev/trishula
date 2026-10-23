@@ -57,6 +57,6 @@ Records keep the old names verbatim (the D-set exemption list):
 - Merged squash-subject lines on `main`.
 - The `design-docs-2026-10` tag and its release.
 
-The PRD carries the pointer row:
-[§16.5 Versioning, upgrades, rollback](../PRD.md#165-versioning-upgrades-rollback).
+The spec carries the pointer row:
+[§16.5 Versioning, upgrades, rollback](../spec.md#165-versioning-upgrades-rollback).
 Nothing is deferred.

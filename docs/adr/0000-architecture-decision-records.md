@@ -16,7 +16,7 @@ decided, why, and what it supersedes.
 ## When an ADR is required
 
 Most changes are leaf-sized slices whose design record is the roadmap
-issue's PRD reference (`TR-XXn`); they do **not** need an ADR. Write one
+issue's spec reference (`TR-XXn`); they do **not** need an ADR. Write one
 only when the change **introduces a new persistent artifact** or **removes
 or changes one** — a wire format, a kernel map layout, a CRD field, a gate
 script, or the removal/change of any of these. Bug fixes, dependency

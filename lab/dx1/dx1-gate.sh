@@ -54,7 +54,7 @@ CURRENT=0
 LEG_NAMES=("binaries" "setup (lab up, idempotent)" "apply→effect (the M9 leg, timed)" "verify (hop evidence)")
 trap 'printf "\n== DX1-FAIL — leg %s (%s) failed; full output above ==\n" "${CURRENT:-?}" "${LEG_NAMES[${CURRENT}]:-?}" >&2; exit 1' ERR
 
-banner "DX1 timed gate (TR-23, PRD §21 M3) — anchor ${DX1_START} (epoch s), budget ${DX1_TARGET} s"
+banner "DX1 timed gate (TR-23, spec section 21 M3) — anchor ${DX1_START} (epoch s), budget ${DX1_TARGET} s"
 
 # --- leg 0: linux binaries from this tree (the clone, never a stale one) ----
 CURRENT=1

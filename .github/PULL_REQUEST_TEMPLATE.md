@@ -11,7 +11,7 @@ Writing: the new prose follows ASD-STE100. One thought per sentence, at or under
 
 ## Why
 
-<!-- the TR-XX issue this implements; the PRD section in the issue body is the design source -->
+<!-- the TR-XX issue this implements; the spec section in the issue body is the design source -->
 
 Closes TR-__
 

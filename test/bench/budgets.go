@@ -33,7 +33,7 @@ const (
 // and p50); M2 marks the row the spec's adoption gates list as M2.
 type Budget struct {
 	ID         string
-	PRDRow     string // the budget-table stage label this row encodes
+	SpecRow    string // the budget-table stage label this row encodes
 	Kind       BudgetKind
 	Value      float64 // µs for ceilings; req/s for floors
 	P50us      float64 // optional p50 ceiling; 0 = the row states none
@@ -53,19 +53,19 @@ type Catalog struct {
 // userspace budgets targets pending PoC validation.
 func LoadBudgets() (Catalog, error) {
 	rows := []Budget{
-		{ID: "xdp-hot-path", PRDRow: "XDP shield (ACL/flood/cache/ban-hit path)", Kind: CeilingP99, Value: 10, EnforcedBy: "shield DaemonSet, node NIC"},
-		{ID: "tc-classifier-emit", PRDRow: "TC classifier + ringbuf emit", Kind: CeilingP99, Value: 20, EnforcedBy: "shield DaemonSet"},
-		{ID: "engine-inspect-8k", PRDRow: "Engine parse + deep inspect (CRS+CEL+schema, 8KB body)", Kind: CeilingP99, Value: 600, EnforcedBy: "engine"},
-		{ID: "engine-inspect-64k", PRDRow: "Engine parse + deep inspect (64KB JSON body)", Kind: CeilingP99, Value: 1200, EnforcedBy: "engine"},
-		{ID: "ml-scorer-local", PRDRow: "ML local scorer (in-band, parallel with rules)", Kind: CeilingP99, Value: 1000, EnforcedBy: "engine ML tier"},
-		{ID: "e2e-inline-hop-8k", PRDRow: "Total inline hop added vs direct (8KB, full CRS)", Kind: CeilingP99, Value: 1500, P50us: 300, EnforcedBy: "end-to-end gate", M2: true},
-		{ID: "kernel-cache-direct", PRDRow: "Kernel-cached verdict/ban short-circuit (direct)", Kind: CeilingP99, Value: 1, EnforcedBy: "shield"},
-		{ID: "kernel-cache-context", PRDRow: "Kernel-cached verdict/ban short-circuit (context fetch)", Kind: CeilingP99, Value: 100, EnforcedBy: "shield"},
-		{ID: "engine-throughput-replica", PRDRow: "Throughput per engine replica (4 vCPU, CRS+schema)", Kind: FloorReqPS, Value: 10000, EnforcedBy: "load gate"},
+		{ID: "xdp-hot-path", SpecRow: "XDP shield (ACL/flood/cache/ban-hit path)", Kind: CeilingP99, Value: 10, EnforcedBy: "shield DaemonSet, node NIC"},
+		{ID: "tc-classifier-emit", SpecRow: "TC classifier + ringbuf emit", Kind: CeilingP99, Value: 20, EnforcedBy: "shield DaemonSet"},
+		{ID: "engine-inspect-8k", SpecRow: "Engine parse + deep inspect (CRS+CEL+schema, 8KB body)", Kind: CeilingP99, Value: 600, EnforcedBy: "engine"},
+		{ID: "engine-inspect-64k", SpecRow: "Engine parse + deep inspect (64KB JSON body)", Kind: CeilingP99, Value: 1200, EnforcedBy: "engine"},
+		{ID: "ml-scorer-local", SpecRow: "ML local scorer (in-band, parallel with rules)", Kind: CeilingP99, Value: 1000, EnforcedBy: "engine ML tier"},
+		{ID: "e2e-inline-hop-8k", SpecRow: "Total inline hop added vs direct (8KB, full CRS)", Kind: CeilingP99, Value: 1500, P50us: 300, EnforcedBy: "end-to-end gate", M2: true},
+		{ID: "kernel-cache-direct", SpecRow: "Kernel-cached verdict/ban short-circuit (direct)", Kind: CeilingP99, Value: 1, EnforcedBy: "shield"},
+		{ID: "kernel-cache-context", SpecRow: "Kernel-cached verdict/ban short-circuit (context fetch)", Kind: CeilingP99, Value: 100, EnforcedBy: "shield"},
+		{ID: "engine-throughput-replica", SpecRow: "Throughput per engine replica (4 vCPU, CRS+schema)", Kind: FloorReqPS, Value: 10000, EnforcedBy: "load gate"},
 	}
 	c := Catalog{ByID: make(map[string]Budget, len(rows))}
 	for _, b := range rows {
-		if b.ID == "" || b.PRDRow == "" || b.EnforcedBy == "" {
+		if b.ID == "" || b.SpecRow == "" || b.EnforcedBy == "" {
 			return Catalog{}, fmt.Errorf("bench: budget row %+v: empty id, spec row or enforcer", b)
 		}
 		if b.Value <= 0 {

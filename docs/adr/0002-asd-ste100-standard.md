@@ -4,8 +4,8 @@ Status: accepted
 
 ## Context
 
-The project's written surface grew past the PRD. The README, the
-CONTRIBUTING guide, the PRD prose, the site pages, the issue bodies and the
+The project's written surface grew past the spec. The README, the
+CONTRIBUTING guide, the spec prose, the site pages, the issue bodies and the
 PR bodies all speak to one reader: a developer or platform engineer who
 adopts the tool. Voice drift showed the cost. Some prose carries idioms and
 metaphors. Some prose speaks in the second person. Some sentences carry 2
@@ -20,7 +20,7 @@ recorded; the record cites the operator directive of that date.
 
 Every written text in the two repos follows ASD-STE100:
 
-1. The repo documents: `README.md`, `CONTRIBUTING.md` and the PRD prose. The
+1. The repo documents: `README.md`, `CONTRIBUTING.md` and the spec prose. The
    contract tables and the requirement rows stay.
 2. The site pages: index, roadmap, building, contributing, security and
    code-of-conduct.
@@ -43,5 +43,5 @@ tracked references in the rendered text.
   TR-82 in this repo, TR-WS-4 in `trishula-website` — and lands as PRs the
   operator reviews and merges.
 - Headings, tables, code blocks and captured transcripts stay byte-identical:
-  `go test ./docs/` holds the PRD invariants, and `site-check` holds the
+  `go test ./docs/` holds the spec invariants, and `site-check` holds the
   render gate on the site.
