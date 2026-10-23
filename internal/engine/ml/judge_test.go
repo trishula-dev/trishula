@@ -15,6 +15,7 @@ import (
 type fakeJudge struct {
 	id      string
 	release chan struct{} // nil = answer immediately
+	entered chan struct{} // nil = no signal; a send inside Judge marks the call entry
 	err     error
 	label   string
 
@@ -28,6 +29,9 @@ func (f *fakeJudge) Judge(fv FeatureView) (JudgeVerdict, error) {
 	f.calls.Add(1)
 	cp := fv
 	f.last.Store(&cp)
+	if f.entered != nil {
+		f.entered <- struct{}{}
+	}
 	if f.release != nil {
 		<-f.release
 	}
@@ -72,18 +76,35 @@ func judgeFixture(t *testing.T, j *fakeJudge, now func() time.Time, cap int) (*A
 
 // TestAsyncJudgeNeverBlocks is the §20.1 R6 pin: a full queue refuses the
 // submission (counts a drop) and returns without waiting for the worker.
+// Sequence is timer-free: the worker consumes the first submission and
+// blocks inside Judge (the entered signal proves it), then the queue
+// refills and the drop is deterministic.
 func TestAsyncJudgeNeverBlocks(t *testing.T) {
 	release := make(chan struct{})
-	j := &fakeJudge{id: "j1", release: release, label: "benign"}
+	j := &fakeJudge{id: "j1", release: release, entered: make(chan struct{}, 1), label: "benign"}
 	now := baseNow
-	a, _, _ := judgeFixture(t, j, fixtureClock(&now), 1)
+	a, cache, sink := judgeFixture(t, j, fixtureClock(&now), 1)
 
-	a.Submit(FeatureView{Method: "POST"}, "sigA") // fills the queue; worker blocked in Judge
-	a.Submit(FeatureView{Method: "GET"}, "sigB")  // queue full: dropped
+	a.Submit(FeatureView{Method: "POST"}, "sigB")
+	<-j.entered                                   // the worker is now blocked inside Judge: the queue slot is free
+	a.Submit(FeatureView{Method: "GET"}, "sigA")  // refills the queue (full)
+	a.Submit(FeatureView{Method: "HEAD"}, "sigC") // queue full: dropped
 	if got := a.Dropped.Load(); got != 1 {
 		t.Errorf("Dropped: got %d, want 1 (the full queue must refuse, never block)", got)
 	}
-	close(release) // unblock: the queued work finishes in the background
+	close(release)
+	if err := a.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if got := j.calls.Load(); got != 2 {
+		t.Errorf("judge calls: got %d, want 2 (the dropped task must never judge)", got)
+	}
+	if got := sink.sigs.Load(); got != 2 {
+		t.Errorf("sink records: got %d, want 2", got)
+	}
+	if _, ok := cache.Get("sigC", "j1"); ok {
+		t.Error("cache: the dropped submission must not judge or cache")
+	}
 }
 
 // TestAsyncJudgeDedupAndDrain pins the oracle rate-limit (§14.2 item 4):
@@ -111,8 +132,8 @@ func TestAsyncJudgeDedupAndDrain(t *testing.T) {
 	if got := sink.dups.Load(); got != 0 {
 		t.Errorf("sink duplicate deliveries: got %d, want 0", got)
 	}
-	if j.last.Load() == nil || j.last.Load().Method != "POST" {
-		t.Errorf("judge input: got %+v, want the submitted FeatureView", j.last.Load())
+	if j.last.Load() == nil || j.last.Load().Method != "PUT" {
+		t.Errorf("judge input: got %+v, want the last queued submission (fvB)", j.last.Load())
 	}
 	got, ok := cache.Get("sigA", "j1")
 	if !ok || got.Label != "prompt-injection" || got.ModelID != "j1" {
