@@ -1,7 +1,7 @@
 # lab/dx1 — DX1 lab (TR-06)
 
 Three steps from `main` to the live variant-A topology from
-[PRD §10.2](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#102-the-contract-trishula-as-a-gateway-api-citizen)
+[spec §10.2](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#102-the-contract-trishula-as-a-gateway-api-citizen)
 and the walkthrough of
 [§10.3](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#103-the-reference-walkthrough-the-lab-every-claim-is-proven-in),
 run on a local Docker provider (kind, or the OrbStack-provided Kubernetes).

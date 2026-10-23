@@ -196,7 +196,7 @@ corpus corrections must re-verify live against the reference evaluator
 
 ## TR-16 — the compiled fast path: matcher differential gate
 
-The compiled fast path (PRD §11.4) adds its gate to this package.
+The compiled fast path (spec §11.4) adds its gate to this package.
 `TestMatcherParityGate` runs the compiled hot-subset scan against the
 live reference projection on every corpus case, per phase.
 
@@ -205,7 +205,7 @@ live reference projection on every corpus case, per phase.
 - Package: `internal/engine/matcher`. One concern per part: `Set` carries
   the hot-subset management, `DB` carries the block-mode scan. One scan
   covers the pattern set over the §11.3 view segments per phase.
-- R2b pressure valve (PRD §20.1): `SelectHot` ranks by frequency,
+- R2b pressure valve (spec §20.1): `SelectHot` ranks by frequency,
   descending, under a budget cap. Patterns outside the budget stay
   reference-path-only (never compiled).
 - Seed set: 9 patterns, one per reference rule id the corpus exercises.

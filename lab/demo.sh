@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# TR-14 (issue #14, PRD §20.2 Phase 0) — lab/demo.sh: the exit-gate demo.
+# TR-14 (issue #14, the Phase-0 exit per spec section 20.2 — lab/demo.sh: the exit-gate demo.
 #
 # One command from a fresh clone to the full 2026.01-rc1 demo. Composes the DX1
 # lab gates in evidence order and prints the hop evidence LAST:

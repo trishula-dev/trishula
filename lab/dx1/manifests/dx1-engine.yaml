@@ -1,7 +1,7 @@
 ---
 # The engine runs the cmd/engine transparent reverse proxy (TR-06a) built
 # into the trishula-engine:dx1 image by lab/dx1/setup.sh. The gateway
-# steers to its Service as a plain Gateway API backend (PRD §10.2
+# steers to its Service as a plain Gateway API backend (spec section10.2
 # steering term); the engine forwards transparently to the echo pool.
 apiVersion: apps/v1
 kind: Deployment

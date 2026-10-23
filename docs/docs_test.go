@@ -35,7 +35,7 @@ var reH2 = regexp.MustCompile(`(?m)^## (.+)$`)
 var reH3Num = regexp.MustCompile(`(?m)^### 2\.(\d+) `)
 var reTocLink = regexp.MustCompile(`\]\(#([^)]+)\)`)
 
-func readPRD(t *testing.T) string {
+func readSpec(t *testing.T) string {
 	t.Helper()
 	b, err := os.ReadFile("spec.md")
 	if err != nil {
@@ -47,8 +47,8 @@ func readPRD(t *testing.T) string {
 // TestSpecSection2Contiguity fails while the D-ladder skips a rung (each
 // later decision lands one section past its D-number). See issue #60.
 func TestSpecSection2Contiguity(t *testing.T) {
-	prd := readPRD(t)
-	ms := reH3Num.FindAllStringSubmatch(prd, -1)
+	spec := readSpec(t)
+	ms := reH3Num.FindAllStringSubmatch(spec, -1)
 	if len(ms) == 0 {
 		t.Fatal("no numbered §2.x headings found") // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 	}
@@ -78,11 +78,11 @@ func seq(ms [][]string) string {
 // single-dash slugs for headings containing & or — (GitHub slugger
 // renders those as --). See issue #60.
 func TestSpecTableOfContentsAnchors(t *testing.T) {
-	prd := readPRD(t)
+	spec := readSpec(t)
 
 	anchor := map[string]string{} // slug -> heading text
 	seen := map[string]int{}
-	for _, m := range reH2.FindAllStringSubmatch(prd, -1) {
+	for _, m := range reH2.FindAllStringSubmatch(spec, -1) {
 		text := strings.TrimSpace(m[1])
 		s := githubSlug(text)
 		if prev, dup := seen[s]; dup {
@@ -93,7 +93,7 @@ func TestSpecTableOfContentsAnchors(t *testing.T) {
 	}
 
 	failed := 0
-	for _, m := range reTocLink.FindAllStringSubmatch(prd, -1) {
+	for _, m := range reTocLink.FindAllStringSubmatch(spec, -1) {
 		target := m[1]
 		if _, ok := anchor[target]; !ok {
 			failed++
@@ -101,7 +101,7 @@ func TestSpecTableOfContentsAnchors(t *testing.T) {
 		}
 	}
 	if failed > 0 {
-		t.Fatalf("%d of %d TOC links unresolved", failed, len(reTocLink.FindAllString(prd, -1)))
+		t.Fatalf("%d of %d TOC links unresolved", failed, len(reTocLink.FindAllString(spec, -1)))
 	}
 	if len(anchor) < 20 {
 		t.Fatalf("suspiciously few H2 headings parsed: %d", len(anchor))
@@ -132,25 +132,25 @@ func itoa(n int) string {
 //  2. docs/academy/README.md links the DX1 lab path.
 //  3. README.md names the gate script and the nightly workflow, and the
 //     workflow file exists.
-//  4. Every PRD anchor cite on the touched pages resolves against the
-//     PRD's real heading set; every relative link points at a real repo
+//  4. Every spec-anchor cite on the touched pages resolves against the
+//     spec's real heading set; every relative link points at a real repo
 //     file.
 
 var reH3 = regexp.MustCompile(`(?m)^### (.+)$`)
 
-var rePRDAnchorLink = regexp.MustCompile(
-	`\]\(https://github\.com/trishula-dev/trishula/blob/main/docs/PRD\.md#([^)]+)\)`)
+var reSpecAnchorLink = regexp.MustCompile(
+	`\]\(https://github\.com/trishula-dev/trishula/blob/main/docs/spec\.md#([^)]+)\)`)
 
 var reMdLink = regexp.MustCompile(`\]\(([^)]+)\)`)
 
-// prdHeadingAnchors returns every heading anchor spec.md exposes — ## and
+// specHeadingAnchors returns every heading anchor spec.md exposes — ## and
 // ### headings slugged with the verified GitHub algorithm and deduped the
 // GitHub way — as slug → heading text.
-func prdHeadingAnchors(prd string) map[string]string {
+func specHeadingAnchors(spec string) map[string]string {
 	seen := map[string]int{}
 	anchors := map[string]string{}
 	for _, re := range []*regexp.Regexp{reH2, reH3} {
-		for _, m := range re.FindAllStringSubmatch(prd, -1) {
+		for _, m := range re.FindAllStringSubmatch(spec, -1) {
 			text := strings.TrimSpace(m[1])
 			slug := githubSlug(text)
 			if prev, dup := seen[slug]; dup {
@@ -207,17 +207,17 @@ func TestDX1GateDocs(t *testing.T) {
 	}
 
 	// 4. Cite + link integrity on the touched pages.
-	prd := prdHeadingAnchors(readPRD(t))
+	spec := specHeadingAnchors(readSpec(t))
 	unresolved := 0
 	for _, page := range []struct{ name, body string }{
 		{"README.md", readme},
 		{"docs/academy/README.md", academy},
 		{"lab/dx1/README.md", labReadme},
 	} {
-		for _, m := range rePRDAnchorLink.FindAllStringSubmatch(page.body, -1) {
-			if _, ok := prd[m[1]]; !ok {
+		for _, m := range reSpecAnchorLink.FindAllStringSubmatch(page.body, -1) {
+			if _, ok := spec[m[1]]; !ok {
 				unresolved++
-				t.Errorf("%s cites PRD anchor #%s — no PRD heading resolves to it", page.name, m[1])
+				t.Errorf("%s cites spec anchor #%s — no spec heading resolves to it", page.name, m[1])
 			}
 		}
 		for _, m := range reMdLink.FindAllStringSubmatch(page.body, -1) {

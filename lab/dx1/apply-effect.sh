@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # TR-08c (issue #76, M9) — DX1 lab apply→effect timed scenario.
 #
-# The cluster round trip (PRD §8, §10.3; TR-08 acceptance M9): kubectl apply
+# The cluster round trip (spec section 8, section 10.3; TR-08 acceptance M9): kubectl apply
 # of a WAFPolicy CR → the operator pod compiles it (internal/operator.
 # Reconcile: rule-pack resolution + compile, fail closed) → the engine pod
 # picks the bundle up (the operator publishes bundle.json to a configmap,

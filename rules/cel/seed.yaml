@@ -1,13 +1,13 @@
-# Trishula seed CEL rule pack (TR-02; PRD v4 §19 `rules/cel/` + §11.3 examples).
-# Exactly one rule at v0: the §11.3 rate-shape example, expression verbatim,
-# action=log. Ladder position (§11.3): evaluation is a scoring input to the
-# §13 ladder — v0 verdicts are log-only; enforcement lands with the
+# Trishula seed CEL rule pack (TR-02; spec v4 section 19 `rules/cel/` + section 11.3 examples).
+# Exactly one rule at v0: the section 11.3 rate-shape example, expression verbatim,
+# action=log. Ladder position (section 11.3): evaluation is a scoring input to the
+# section 13 ladder — v0 verdicts are log-only; enforcement lands with the
 # ScoredWindowBan engine (TR-09/TR-10).
 rules:
   - id: TR02-001
     name: chat-completions-rate-shape
     description: >-
-      Feeds the §13 ladder: POST chat-completions above 40 requests per 5 min
+      Feeds the section 13 ladder: POST chat-completions above 40 requests per 5 min
       window scores toward the ban decision.
     action: log
     expression: |

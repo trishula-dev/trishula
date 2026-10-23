@@ -13,7 +13,7 @@ section), the issue evidence trail (#6, #7, #10, #11, #13, #76, #80), and the
 CI gates. What is NOT delivered is in the README "What does not exist yet"
 section — the <10 ms inline benchmark is **pending TR-24** (the harness does
 not exist yet; the only timing recorded is the apply→effect control-plane
-round trip, 2618 ms ≤ 5 s PRD §8 M9 budget).
+round trip, 2618 ms ≤ 5 s spec §8 M9 budget).
 
 ## What ships (per component)
 
@@ -51,7 +51,7 @@ Evidence trail: #6 (steering hop + delivery) · #7 (parity 19/19) · #10
 #80 (visibility tiers) — each cited from README; the exit-gate demo output is
 pasted verbatim in README "Proof".
 
-## Release assets (PRD §9.2 — byte-identical bpf2go objects per arch)
+## Release assets (spec §9.2 — byte-identical bpf2go objects per arch)
 
 The bpf2go objects are committed per arch and are byte-identical between
 arm64 and amd64 builds (same clang IR emitted for both target keys; sha256
@@ -102,7 +102,7 @@ into the release's `checksums.txt` asset.
 
 ## Honesty note (must stay in the release notes verbatim)
 
-Unoptimized inline-processing numbers (<10 ms, PRD §20.2) are **not** in this
+Unoptimized inline-processing numbers (<10 ms, spec §20.2) are **not** in this
 release: the benchmark harness is TR-24 and `test/bench/` is a placeholder.
 The recorded timing is the apply→effect control-plane round trip (2618 ms,
 M9 ≤ 5 s budget — #76). Shield kernel-leg evidence is Linux-VM-based (#10,

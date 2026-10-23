@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# TR-23 (issue #23, PRD §5 DX1 + §21 M3) — the DX1 timed gate.
+# TR-23 (issue #23, the DX1 lab gate per spec sections 5 and 21) — the DX1 timed gate.
 #
 # Asserts the M3 timing, one command from a checkout:
 #
@@ -18,7 +18,7 @@
 # Anchor: DX1_START (epoch seconds). The nightly job sets it right after
 # checkout, so the measured window covers the full clone → rule path. A
 # plain run anchors at script start. Budget: DX1_TARGET seconds, default
-# 900 (15 min, PRD §21 M3). The gate FAILs above the budget; a red run is
+# 900 (15 min, the M3 timed gate per spec section 21). The gate FAILs above the budget; a red run is
 # the gate working — the lab exceeded the budget, read the table below.
 #
 # Timing files (overridable so concurrent gates on one host stay apart):
@@ -54,7 +54,7 @@ CURRENT=0
 LEG_NAMES=("binaries" "setup (lab up, idempotent)" "apply→effect (the M9 leg, timed)" "verify (hop evidence)")
 trap 'printf "\n== DX1-FAIL — leg %s (%s) failed; full output above ==\n" "${CURRENT:-?}" "${LEG_NAMES[${CURRENT}]:-?}" >&2; exit 1' ERR
 
-banner "DX1 timed gate (TR-23, PRD §21 M3) — anchor ${DX1_START} (epoch s), budget ${DX1_TARGET} s"
+banner "DX1 timed gate (TR-23, spec section 21 M3) — anchor ${DX1_START} (epoch s), budget ${DX1_TARGET} s"
 
 # --- leg 0: linux binaries from this tree (the clone, never a stale one) ----
 CURRENT=1

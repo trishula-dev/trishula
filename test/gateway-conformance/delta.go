@@ -30,7 +30,7 @@
 //
 // The delta record is also the R12 per-release review artifact: the
 // nine honest-delta rows stand in typed data, with each row's leg, expected
-// reference/secondary behaviour and honest degradation from the PRD
+// reference/secondary behaviour and honest degradation from the spec
 // table verbatim.
 package gatewayconformance
 
@@ -56,7 +56,7 @@ const (
 // Row encodes one spec portability honest-delta row with the
 // table's wording verbatim: Reference and Secondary carry the table's
 // expectation cells, Degradation its degradation cell, Leg the plane
-// the capability lives on, PerGatewayVerify the rows the PRD marks
+// the capability lives on, PerGatewayVerify the rows the spec marks
 // "verify per gateway" (an implementation-class row the lane must not
 // auto-claim).
 type Row struct {
@@ -75,7 +75,7 @@ type Delta struct {
 }
 
 // LoadDelta returns the spec's honest-delta table. Rows are verbatim
-// from the PRD table (nine rows). LoadDelta fails on any malformed or
+// from the spec table (nine rows). LoadDelta fails on any malformed or
 // double id — the record never ships a silently-fudged row.
 func LoadDelta() (Delta, error) {
 	rows := []Row{

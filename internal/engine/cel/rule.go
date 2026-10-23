@@ -122,7 +122,7 @@ func (r *Rule) Eval(req Request) (Verdict, error) {
 }
 
 // activation builds the eval-time bindings. Top-level `path` is the spec's
-// shorthand for request.path (the PRD's own example uses it verbatim).
+// shorthand for request.path (the spec's own example uses it verbatim).
 func (r *Rule) activation(req Request) map[string]any {
 	return map[string]any{
 		"request": map[string]any{

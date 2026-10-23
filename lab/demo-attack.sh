@@ -124,7 +124,7 @@ banner "kernel wire evidence for both attacks (merged ingest decoder)"
 # after a 1s drain window so the demo never blocks on a short ring.
 "$DEMO_BIN" ring "$PIN_DIR/events" 12 || echo "ring: (drain returned)"
 
-banner "ATTACK C — enforcement (§13): repeat offender banned, kernel drops"
+banner "ATTACK C — enforcement (section 13): repeat offender banned, kernel drops"
 echo "story:    the attacker source crosses the ban threshold (TR-09 decides);
            the shield enforces (merged TR-03 loader ABI)"
 # loadall pinned ban_table under $PIN_DIR (loadall pins every map it

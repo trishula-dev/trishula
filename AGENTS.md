@@ -9,7 +9,7 @@ Read the [Testing](#testing), [Kernel evidence](#kernel-evidence-and-the-lab),
 [Pull requests](#pull-requests) and [Security](#security) sections before
 changing anything. The rest is a map of the codebase.
 
-Read the [PRD](docs/PRD.md) before any non-trivial change. The PRD is the design
+Read the [spec](docs/spec.md) before any non-trivial change. The spec is the design
 source: every issue cites its sections, and every claim it makes is proven in
 the lab, not asserted.
 
@@ -27,7 +27,7 @@ altitudes" pipeline).
 
 The delivery unit is an **hour-scale slice** with a watchable RED→GREEN
 commit pair ("leaf PR"): [TR-01 … TR-41](https://github.com/orgs/trishula-dev/projects/1)
-map the [PRD](docs/PRD.md)'s design sections to runnable artefacts — every claim
+map the [spec](docs/spec.md)'s design sections to runnable artefacts — every claim
 is proven in the [DX1 lab](lab/dx1/README.md), not asserted.
 
 Other documents worth knowing:
@@ -35,7 +35,7 @@ Other documents worth knowing:
 - [`README.md`](README.md): status, badge rows, layout, the §20.2 exit checklist.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md): the working agreement (ground rules, PR template).
 - [`SECURITY.md`](SECURITY.md): vulnerability reporting policy. See [Security](#security).
-- [`docs/PRD.md`](docs/PRD.md): the design (v4) — **the** design source for every issue.
+- [`docs/spec.md`](docs/spec.md): the design (v4) — **the** design source for every issue.
 - [`docs/academy/`](docs/academy/): teach-the-web curriculum artifacts.
 - [`docs/paper.md`](docs/paper.md): research paper source.
 
@@ -52,7 +52,7 @@ Other documents worth knowing:
 | `internal/shield/` | Go loaders for the eBPF objects (XDP/TC attach, ban map publish/reconcile, evidence sink) |
 | `lab/` | Everything runnable in the lab: `dx1/` (NGF steering + apply→effect + verify.sh), `demo-attack.sh` (TR-43), `verify-xdp-chain.sh` (kernel env gate), `tier-gate.sh` (visibility tier gate) |
 | `test/` | Cross-cutting gates: `crs-differential/` (CI-blocking CRS parity harness), `ban-conformance/` (TR-09 oracle suite), `bench/` (TR-24 harness) |
-| `docs/` | PRD, paper, academy |
+| `docs/` | spec, paper, academy |
 | `.github/workflows/` | CI: `go-build.yml` (build + vet+ test across the module incl. the differential), `dependency-review.yml`, `scorecards.yml` |
 
 ## Architecture: request processing pipeline
@@ -88,11 +88,11 @@ CEL rule wire: `rules/cel/seed.yaml` carries the seed pack (TR02-001), the
 byte-identity test `internal/operator/seedpack_test.go` guards it. New rules
 extend the pack; a rule's `id` doubles as the rule-pack digest input.
 
-## Kernel plane (bpf/, PRD §9)
+## Kernel plane (bpf/, spec §9)
 
 - **Objects are committed** (`bpf2go` generated `*_bpfel.o`); regenerate via
   `go generate ./...` and commit both arch objects; tagged releases ship
-  byte-identical objects ([§9.2](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#92-hook-inventory)).
+  byte-identical objects ([§9.2](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#92-hook-inventory)).
 - TR-03's `shield_xdp.c` contract is **frozen by test**: new kernel programs are
   **sibling .c files** (see `bpf/ban_xdp.c` from TR-10), never edits of a
   contract-frozen program.
@@ -110,7 +110,7 @@ extend the pack; a rule's `id` doubles as the rule-pack digest input.
 
 ## Kernel evidence and the lab
 
-The lab is where the [PRD](docs/PRD.md)'s claims are proven. **Every kernel
+The lab is where the [spec](docs/spec.md)'s claims are proven. **Every kernel
 claim needs an in-VM run** (`trishula-build-dev`: `orb run -m trishula-build-dev
 bash -cl '...'`), never a mac-only assertion.
 
@@ -133,7 +133,7 @@ record. A claim without a traceable run is not a claim.
 
 Read this whole section before writing a single test. The repo follows the
 [hypothesis-first TDD standard](https://github.com/trishula-dev/trishula/issues/42):
-**spec (from the PRD) → RED (watched, committed) → GREEN → PR → merge closes the
+**spec (from the spec) → RED (watched, committed) → GREEN → PR → merge closes the
 issue.** The watched-RED discipline is what makes every GREEN commit honest: a
 failing test must exist, visibly, before the implementation lands.
 
@@ -207,7 +207,7 @@ Release tags are signed tags; `git tag -v` is part of the release checklist.
 
 Structural changes (a new subsystem, a public API change, a
 performance-characteristic change) carry an ADR in the same PR. Most
-slices are leaf-sized — the issue's PRD reference IS the design record,
+slices are leaf-sized — the issue's spec reference IS the design record,
 no ADR needed — write one only when **the change introduces a new
 persistent artifact** (a wire format, a kernel map layout, a CRD field,
 a gate script) or **removes/changes one**.
@@ -304,7 +304,7 @@ verified, not copied; AI involvement is disclosed in the advisory itself.
 
 - `gofmt`/`goimports` clean; standard Go idioms; package-level doc comments on
   every package (the repo's voice: package comment = the design claim + its
-  PRD link + the slice boundary).
+  spec link + the slice boundary).
 - camelCase unexported; PascalCase exported; descriptive collection names.
 - Errors: `fmt.Errorf("context: %w", err)`; never panic in library code;
   never silently drop an error.
@@ -317,8 +317,8 @@ verified, not copied; AI involvement is disclosed in the advisory itself.
 
 ### Adding a feature
 
-1. The issue exists first (the PRD cites it) — no feature without an issue.
+1. The issue exists first (the spec cites it) — no feature without an issue.
 2. Establish the slice: RED→GREEN pair; a lab gate if it changes the pipeline.
-3. Update the PRD-facing docs (README status block, lab README) if the feature
+3. Update the spec-facing docs (README status block, lab README) if the feature
    adds a runnable claim.
 4. Keep backward compatibility for anything merged.

@@ -1,6 +1,6 @@
 ---
 # TR-08c (issue #76, M9) — the WAFPolicy CR the lab compiles and enforces,
-# on the dx1-engine-route route class (PRD §16.2 v0 surface; the CRD is
+# on the dx1-engine-route route class (spec section16.2 v0 surface; the CRD is
 # manifests/crd/wafpolicy-crd.yaml, TR-08a).
 #
 # Effects in the lab (verified by lab/dx1/apply-effect.sh):

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# lab/verify-xdp-chain.sh — TR-03 environment gate (PRD §19.1, issue #3).
+# lab/verify-xdp-chain.sh — TR-03 environment gate (spec section 19.1, issue #3).
 #
 # Proves the Linux test host can compile CO-RE eBPF, load it under the
 # verifier, pin it, attach it to an interface as XDP, and detach cleanly.

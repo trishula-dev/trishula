@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# TR-06 (issue #6, PRD v4 §10.3) — DX1 lab setup.
+# TR-06 (issue #6, spec v4 section 10.3) — DX1 lab setup.
 #
 # Provisions, idempotently, on the local Docker provider (kind or
 # OrbStack-provided Kubernetes):

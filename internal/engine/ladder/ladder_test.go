@@ -49,7 +49,7 @@ func TestActionVocabulary(t *testing.T) {
 }
 
 // TestStageSlots locks the reference-implementation S0–S7 numbering (a renumbered ladder is
-// a wire-level contract break: board issues, PRD sketch and kernel maps
+// a wire-level contract break: board issues, the spec sketch and kernel maps
 // all name these positions).
 func TestStageSlots(t *testing.T) {
 	if StageKernel != 0 || StageMatcher != 1 || StageCRS != 2 || StageCEL != 3 ||

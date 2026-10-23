@@ -1,4 +1,4 @@
-# internal/engine/otel — verdict observability pipeline (TR-11, PRD §15)
+# internal/engine/otel — verdict observability pipeline (TR-11, spec §15)
 
 Three signals per request+verdict — span `trishula.verdict`, counter
 `verdicts_total`, log record `trishula.verdict` — emitted in-process through

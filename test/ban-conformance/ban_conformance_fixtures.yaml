@@ -1,10 +1,10 @@
-# ScoredWindowBan v1 spec-reproduction fixtures (PRD §13.3: "implementations
+# ScoredWindowBan v1 spec-reproduction fixtures (spec section 13.3: "implementations
 # must reproduce it from this spec alone (a conformance test does exactly
 # that)").
 #
 # The YAML carries fixture STRUCTURE only — integer times, event kinds,
 # booleans. Every numeric expectation (score windows, would-ban, until,
-# backoff schedule) is recomputed from the §13.3 formulas by the runner
+# backoff schedule) is recomputed from the section 13.3 formulas by the runner
 # and cross-checked by testdata/recompute.py; nothing here is hand-tuned.
 #
 # Clock convention: monotonic integer seconds t = 0, 1, 2 ... injected via
@@ -15,20 +15,20 @@
 #   evaluate {at, key, want*}         run Observe/Assess; assertions:
 #     wantWouldBan  bool              shadow decision at this instant
 #     state         CLEAR | ACTIVE_BAN
-#     wantScoreSum  implicit          observed score must equal the §13.3
+#     wantScoreSum  implicit          observed score must equal the section 13.3
 #                                   formula Σ w·e^(−λ·age) over this key's
 #                                   ingests at `at` (runner-computed)
 #   banAt {at, key, wantUntil}        run Assess at `at` and assert the
 #                                   shadow would-ban record's until
 #   expectNoEnforcement (fixture)     fail if anything but the evidence sink
-#                                   was touched (shadow §13.3)
+#                                   was touched (shadow section 13.3)
 #
 # `wantUntil` semantics: Assess at time a with recidivism r returns
 # until = a + min(bantime·backoff^r, maxBantime). The r for each banAt is
 # the count of PRIOR ban transitions for the key.
 schema: trishula.ban-conformance.v1
 policy:
-  # §19.1 BanPolicy CRD sketch — constants + weight names verbatim.
+  # section 19.1 BanPolicy CRD sketch — constants + weight names verbatim.
   constants: { findtime: 10m, threshold: 10, bantime: 10m, backoff: 2, maxBantime: 24h }
   weights:
     crsCritical: 5
@@ -41,7 +41,7 @@ policy:
     kernelBurstFlag: 3
   decayHalfLifePct: 20        # % of findtime -> half-life 120 s, λ = ln2/120
   prefixEscalation: { enabled: false, minKeys: 8, window: 10m }
-  mode: shadow                # shadow-first (§13.3); the whole suite asserts shadow
+  mode: shadow                # shadow-first (section 13.3); the whole suite asserts shadow
 fixtures:
   # --- score accumulation from weighted events ----------------------------
   - id: F01
@@ -290,7 +290,7 @@ fixtures:
       bantime: [600, 1200, 2400, 4800, 9600, 19200, 38400, 76800, 86400]  # min(600·2^k, 86400) — recomputed by the oracle
     steps: []
     evidenceChecks: []
-  # --- reserved: TR-10 kernel hand-off (score parity with §8) -------------
+  # --- reserved: TR-10 kernel hand-off (score parity with section 8) -------------
   - id: TR10-15
     name: reserved slot for TR-10's kernel-side score parity walk
     reserved: true

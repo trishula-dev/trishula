@@ -30,7 +30,7 @@ func init() {
 
 // ---- ban-algorithm constants: the byte-mirror of the BanPolicy CRD sketch (the reference-implementation sketch).
 // The fixtures YAML's policy block is asserted EQUAL to this table; both are
-// asserted equal to the PRD sketch by testdata/recompute.py (independent
+// asserted equal to the spec sketch by testdata/recompute.py (independent
 // implementation, run in CI next to this suite).
 const (
 	findtimeSec   int64 = 600   // 10m — evidence window
@@ -227,7 +227,7 @@ func TestScoredWindowBanConformance(t *testing.T) {
 		}
 	})
 
-	t.Run("policy-matches-PRD-sketch", func(t *testing.T) {
+	t.Run("policy-matches-spec-sketch", func(t *testing.T) {
 		// testdata/recompute.py is the independent oracle: fail if it
 		// disagrees with this suite's recomputation of the same YAML.
 		// The test binary's cwd IS the package dir — run it there.
