@@ -39,13 +39,13 @@ type RunResult struct {
 }
 
 // benchClient and benchPort are the fixed peer scope the CRS evaluator
-// keys transactions on (§17.2 cells share one stable peer).
+// keys transactions on (the spec's benchmark-plan cells share one stable peer).
 var benchClient = netip.MustParseAddr("10.0.0.7")
 
 const benchPort = 8080
 
 // Percentile returns the nearest-rank percentile of xs: rank
-// ceil(p*n) with 1-indexing, matching the p50/p99 reporting the §17.1
+// ceil(p*n) with 1-indexing, matching the p50/p99 reporting the spec's budget table
 // rows state. Input stays unsorted for the caller; empty input
 // returns 0.
 func Percentile(xs []float64, p float64) float64 {

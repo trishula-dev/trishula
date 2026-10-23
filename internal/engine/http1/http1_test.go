@@ -16,7 +16,7 @@ func mustParse(t *testing.T, wire string) *Request {
 	return r
 }
 
-// TestCleanRequestParses is the §11.3-view happy path: the seed rule's own
+// TestCleanRequestParses is the spec-view happy path: the seed rule's own
 // request shape (POST /v1/chat/completions) reconstructed from wire bytes.
 func TestCleanRequestParses(t *testing.T) {
 	wire := "POST /v1/chat/completions HTTP/1.1\r\n" +

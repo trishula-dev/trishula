@@ -1,8 +1,8 @@
-// cache.go carries the §14.2 verdict cache (TR-21 v0 = the judge-verdict
+// cache.go carries the spec's ML-hand-off verdict cache (TR-21 v0 = the judge-verdict
 // cache): an LRU keyed on the normalized request signature, TTL'd and
-// judge-model tagged (§14.2 item 4: "always async and suspicious-only,
+// judge-model tagged (the spec's hand-off item 4: "always async and suspicious-only,
 // with verdicts cached (TTL 24 h default)"). High-confidence verdicts
-// write back to kernel maps in a later slice (§13.3 loop closure) — v0
+// write back to kernel maps in a later slice (the spec's ban-algorithm loop closure) — v0
 // keeps the cache userspace-only.
 package ml
 
@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// VerdictCache is the §14.2 verdict cache: LRU, TTL'd, model-tagged.
+// VerdictCache is the spec's ML-hand-off verdict cache: LRU, TTL'd, model-tagged.
 type VerdictCache struct {
 	mu   sync.Mutex
 	max  int

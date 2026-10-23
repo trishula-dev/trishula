@@ -77,7 +77,7 @@ func sigOf(t *testing.T, method, path, query string) string {
 
 // --- S7 stage tests ---------------------------------------------------------
 
-// TestScorerSuspiciousFragmentLogOnly pins the score path of the §20.1 R6
+// TestScorerSuspiciousFragmentLogOnly pins the score path of the spec's R6
 // contract: the S7 fragment is LOG-only (never decisive), names the model
 // + band, carries the score in hundredths, and stamps the phase.
 func TestScorerSuspiciousFragmentLogOnly(t *testing.T) {
@@ -121,7 +121,7 @@ func TestScorerCleanNoFragment(t *testing.T) {
 }
 
 // TestScorerNoViewNil pins the no-fabrication rule: a tx with no parsed
-// §11.3 view gets no S7 opinion.
+// A parsed CEL view from the spec's request view gets no S7 opinion.
 func TestScorerNoViewNil(t *testing.T) {
 	sc := scorerFixture(t, fixedModel{id: "m", v: 0.99}, nil)
 	tx := &ingest.TxContext{}
@@ -130,7 +130,7 @@ func TestScorerNoViewNil(t *testing.T) {
 	}
 }
 
-// TestScorerBudgetBreach is the §20.1 R6 hard-budget pin: a model parked
+// TestScorerBudgetBreach is the spec's R6 hard-budget pin: a model parked
 // past the deadline reports through its context; the stage skips (no
 // fragment, no fabricated verdict), counts the breach, and never waits
 // beyond the budget.
@@ -195,7 +195,7 @@ func TestScorerCachedJudgeAnnotation(t *testing.T) {
 	// The shared fixture judge stays closed after the subtests; no clean-up.
 }
 
-// TestScorerEscalationSubmitsJudge pins the §14.2 mini-loop: a suspicious
+// TestScorerEscalationSubmitsJudge pins the spec's hand-off mini-loop: a suspicious
 // in-band score submits to the wired judge exactly once (cache-deduped on
 // repeats), the judged verdict lands in the cache + sink, and a repeat
 // evaluation annotates from the cache.

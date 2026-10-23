@@ -1,11 +1,11 @@
 // Package http1 reconstructs an HTTP/1 request from wire bytes into the
-// §11.3 structured request view (TR-05b; PRD §11.3 request.method/path and
+// The spec's structured request view (TR-05b; its request.method/path and
 // the view grown field-by-field — no speculative fields).
 //
 // This slice reads the request HEAD ONLY — no body reads (TR-05b
 // acceptance: allocation-bounded, malformed-input cases explicit). The
 // parser is strictly bounded: every step consumes from a fixed-size read
-// budget so a hostile peer cannot grow allocations (§9.4 kernel discipline
+// budget so a hostile peer cannot grow allocations (the spec's kernel bounded-parse discipline
 // mirrored in userspace: the engine never trusts unbounded input).
 package http1
 
@@ -15,7 +15,7 @@ import (
 	"strings"
 )
 
-// Bounds (RFC 9112 §2.2 sane minimums, tightened: a v0 WAF slice never
+// Bounds (RFC 9112 section 2.2 sane minimums, tightened: a v0 WAF slice never
 // needs the full server maxima).
 const (
 	MaxLineBytes     = 8 * 1024  // request line + each header line
@@ -42,7 +42,7 @@ var (
 	ErrNULInLine      = errors.New("http1: NUL byte in request line")
 )
 
-// Request is the §11.3 view head scope for this slice: method/path/version
+// Request is the spec's view head scope for this slice: method/path/version
 // plus the header map at S0-relevant cardinality. JSON tags rule the
 // decode path (sigs.k8s.io/yaml = json-tag rules) matching cel.Request
 // (TR-02) — this struct extends the same view, it does not fork it.
@@ -117,7 +117,7 @@ type lineResult struct {
 // nextLine consumes one CRLF-terminated line (max budget applies to the
 // raw line, CRLF included). A bare LF anywhere before the first LF is
 // tolerated only as the line terminator when no CR precedes it? — no: the
-// wire is CRLF per RFC 9112 §2.2; a bare-LF line is malformed (ErrNoCRLF).
+// wire is CRLF per RFC 9112 section 2.2; a bare-LF line is malformed (ErrNoCRLF).
 func nextLine(wire []byte, consumed int) (lineResult, []byte, error) {
 	for i := 0; i < len(wire); i++ {
 		if wire[i] == 0x00 {
@@ -181,7 +181,7 @@ func parseRequestLine(line string) (method, target, version string, err error) {
 	return method, target, version, nil
 }
 
-// validMethod checks the RFC 9110 §9.1 token grammar (tchar set).
+// validMethod checks the RFC 9110 section 9.1 token grammar (tchar set).
 func validMethod(m string) bool {
 	if m == "" || len(m) > maxMethodTokens {
 		return false
@@ -198,7 +198,7 @@ func validMethod(m string) bool {
 	return true
 }
 
-// parseHeaderField splits "Name: value" (RFC 9112 §5.1) and validates the
+// parseHeaderField splits "Name: value" (RFC 9112 section 5.1) and validates the
 // field-name token grammar. Value is OWS-trimmed once (no fold handling —
 // obs-fold is rejected at the line level).
 func parseHeaderField(line string) (name, value string, err error) {
@@ -214,7 +214,7 @@ func parseHeaderField(line string) (name, value string, err error) {
 	return name, value, nil
 }
 
-// validFieldName checks the RFC 9110 §5.6.2 token grammar for header
+// validFieldName checks the RFC 9110 section 5.6.2 token grammar for header
 // names (same tchar set as methods).
 func validFieldName(n string) bool { return validMethod(n) }
 

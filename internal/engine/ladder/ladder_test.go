@@ -7,7 +7,7 @@ import (
 )
 
 // stubStage is a recording test double: counts calls, returns a fixed
-// fragment. Stands in for the not-yet-wired detectors (§19.1 slots).
+// fragment. Stands in for the not-yet-wired detectors (the reference-implementation slots).
 type stubStage struct {
 	st    Stage
 	calls int
@@ -25,8 +25,8 @@ func fixtureTx() *ingest.TxContext {
 	return &ingest.TxContext{Key: ingest.FlowKey{Family: ingest.FamilyV4}}
 }
 
-// TestActionVocabulary locks the §19.1 Action values and the decisive
-// classification (§2.3: only block/challenge/ban stop the walk).
+// TestActionVocabulary locks the reference-implementation Action values and the decisive
+// classification (the spec's precedence rule: only block/challenge/ban stop the walk).
 func TestActionVocabulary(t *testing.T) {
 	for _, tc := range []struct {
 		a        Action
@@ -48,13 +48,13 @@ func TestActionVocabulary(t *testing.T) {
 	}
 }
 
-// TestStageSlots locks the §19.1 S0–S7 numbering (a renumbered ladder is
+// TestStageSlots locks the reference-implementation S0–S7 numbering (a renumbered ladder is
 // a wire-level contract break: board issues, PRD sketch and kernel maps
 // all name these positions).
 func TestStageSlots(t *testing.T) {
 	if StageKernel != 0 || StageMatcher != 1 || StageCRS != 2 || StageCEL != 3 ||
 		StageSchema != 4 || StageBots != 5 || StageRateBan != 6 || StageML != 7 {
-		t.Fatal("ladder slot numbering moved — S0–S7 positions are fixed by §19.1")
+		t.Fatal("ladder slot numbering moved — S0–S7 positions are fixed by §19.1") // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 	}
 	if Stage(8).Valid() || Stage(-1).Valid() {
 		t.Error("stage range check: only S0–S7 are valid slots")
@@ -99,7 +99,7 @@ func TestResolveDecisiveStops(t *testing.T) {
 }
 
 // TestResolveLogAccumulates pins the log semantics: never stops, rules and
-// score accumulate in walk order, action upgrades allow→log (§2.3: log
+// score accumulate in walk order, action upgrades allow→log (the spec's precedence rule: log
 // outranks pass).
 func TestResolveLogAccumulates(t *testing.T) {
 	acc := &Verdict{Action: ActionAllow, Phase: PhaseRequestHeaders}

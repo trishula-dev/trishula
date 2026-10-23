@@ -39,7 +39,7 @@ var (
 	ErrEventTooLarge = errors.New("flow event too large")
 )
 
-// FlowEvent is the decoded form (§19.1 sketch, dual-stack #62).
+// FlowEvent is the decoded form (the reference-implementation sketch, dual-stack #62).
 type FlowEvent struct {
 	Timestamp  uint64
 	SrcIP4     [4]byte

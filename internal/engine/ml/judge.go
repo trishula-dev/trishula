@@ -1,10 +1,10 @@
-// judge.go carries the T4 async judge contract (§14.2 item 4 + §20.1 R6):
+// judge.go carries the T4 async judge contract (the spec's hand-off item 4 plus risk row R6):
 // the expensive/remote classifier seam, its non-blocking submission queue,
 // and the verdict delivery/caching shape. The judge is suspicious-only,
 // never blocks the request path, and its verdicts are cached (TTL +
 // model tag). JudgeVerdict carries no enforcement action on purpose — a
 // judge result annotates and evidences, never decides alone (verdicts are
-// never LLM-only, §14.2 item 4).
+// never LLM-only, the spec's hand-off item 4).
 package ml
 
 import (
@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// Judge is the T4 async judge contract's classifier seam (§14.2 item 4):
+// Judge is the T4 async judge contract's classifier seam (the spec's hand-off item 4):
 // Judge answers one semantic verdict over the extracted FeatureView. ID
 // names the judge model — it tags both the cache and each verdict.
 // Judge runs inside the worker goroutine only; it may block freely (the
@@ -26,7 +26,7 @@ type Judge interface {
 
 // JudgeVerdict is one judged verdict. It carries NO enforcement action on
 // purpose: the type cannot express a decision, so a judge result can
-// annotate, never decide (the §14.2 item-4 rule, pinned by the log-only
+// annotate, never decide (the spec's item-4 hand-off rule, pinned by the log-only
 // fragment test on the S7 stage).
 type JudgeVerdict struct {
 	// Label is the judge's model-dependent semantic label (a free string:
@@ -37,7 +37,7 @@ type JudgeVerdict struct {
 	ModelID string `json:"modelId"`
 	// Confidence is the judge's self-reported confidence in [0, 1].
 	Confidence float64 `json:"confidence"`
-	// Reason is the analyst-loop explanation (§14.2: every ML verdict
+	// Reason is the analyst-loop explanation (the spec's hand-off rule: every ML verdict
 	// carries an explanation).
 	Reason string `json:"reason,omitempty"`
 }
@@ -52,7 +52,7 @@ type JudgeRecord struct {
 	AtSec       int64        `json:"atSec"` // judge clock seconds
 }
 
-// JudgeSink receives each delivered verdict record (the §14.2 analyst
+// JudgeSink receives each delivered verdict record (the spec's analyst
 // loop; the TR-11 OTel pipeline implements it, tests collect).
 type JudgeSink interface {
 	Record(JudgeRecord) error
@@ -88,7 +88,7 @@ type judgeTask struct {
 
 // AsyncJudge is the T4 async judge: a single worker draining a bounded
 // queue, caching + delivering each verdict. Dropped counts refused
-// submissions (§20.1 R6: the async judge never blocks); Failures counts
+// submissions (the spec's R6 risk row: the async judge never blocks); Failures counts
 // judge-call errors; SinkErrors counts failed record deliveries. All
 // three are plain counters — the TR-11 exporter owns rates.
 //
@@ -141,9 +141,9 @@ func NewAsyncJudge(cfg JudgeConfig) (*AsyncJudge, error) {
 // ID names the judge model (the verdict-cache tag).
 func (a *AsyncJudge) ID() string { return a.judge.ID() }
 
-// Submit queues one suspicious submission NON-BLOCKING (§20.1 R6): a full
+// Submit queues one suspicious submission NON-BLOCKING (the spec's R6 risk row): a full
 // queue drops and counts; a signature already in flight or freshly judged
-// is skipped (the §14.2 oracle rate-limit).
+// is skipped (the spec's ML-hand-off oracle rate-limit).
 func (a *AsyncJudge) Submit(fv FeatureView, sig string) {
 	a.mu.Lock()
 	if _, ok := a.inFlight[sig]; ok {
@@ -162,7 +162,7 @@ func (a *AsyncJudge) Submit(fv FeatureView, sig string) {
 		a.mu.Lock()
 		delete(a.inFlight, sig)
 		a.mu.Unlock()
-		a.Dropped.Add(1) // §20.1 R6: the async judge never blocks
+		a.Dropped.Add(1) // the spec's R6 risk row: the async judge never blocks
 	}
 }
 

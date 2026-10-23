@@ -6,11 +6,11 @@ import (
 	"sync"
 )
 
-// BanEvidence is the R11/§13.5 ban-evidence record: the shadow run's
+// BanEvidence is the R11 ban-evidence record of the spec's ban-observability section: the shadow run's
 // account of one would-ban, shaped so a false positive is diagnosable in
 // minutes — what happened, which events contributed at which weights, the
 // score trajectory, the would-be ban window and tier. JSON-serializable by
-// contract (the OTLP log record (§15)/trishulactl ban list --output json
+// contract (the OTLP log record (the spec's observability section)/trishulactl ban list --output json
 // consumers), so every field is a JSON-native type and struct tags are
 // lowerCamel stable wire names.
 //
@@ -25,19 +25,19 @@ type BanEvidence struct {
 	// Verdict is what the algorithm determined: "would-ban" (shadow) —
 	// an enforcement run (TR-10) writes "ban".
 	Verdict string `json:"verdict"`
-	// Tier is the §13.4 ladder tier this would-ban maps to: "scored-window"
-	// (§13.3 step 3 fixes the tier name).
+	// Tier is the spec's enforcement-tier ladder name this would-ban maps to: "scored-window"
+	// (the spec's ban algorithm, step 3, fixes the tier name).
 	Tier string `json:"tier"`
-	// Score is the decayed §13.3 score at the crossing (T at minimum).
+	// Score is the decayed ban-algorithm score at the crossing (T at minimum).
 	Score float64 `json:"score"`
 	// Threshold is the T the score crossed (redundant by design: the
 	// reader of one record must not need the CRD to diagnose it).
 	Threshold float64 `json:"threshold"`
 	// Events is the contributing evidence: the window's weighted events,
-	// oldest first — the §13.5 "score trajectory (the contributing events
+	// oldest first — the spec's ban-observability "score trajectory (the contributing events
 	// with weights)".
 	Events []EvidenceEvent `json:"events"`
-	// ReasonCodes names the weight contributors (§13.3 step 3:
+	// ReasonCodes names the weight contributors (the spec's ban algorithm, step 3:
 	// reason_codes = weight contributors) — deduped event kinds, in
 	// first-seen order.
 	ReasonCodes []string `json:"reasonCodes"`
@@ -61,16 +61,16 @@ type BanEvidence struct {
 
 // EvidenceEvent is one contributing event in a BanEvidence record.
 type EvidenceEvent struct {
-	// Kind is the §13.3 event kind (BanPolicy weights-table name).
+	// Kind is the spec's ban-algorithm event kind (BanPolicy weights-table name).
 	Kind string `json:"kind"`
-	// Weight is the §13.3 weight the kind contributed.
+	// Weight is the spec's ban-algorithm weight the kind contributed.
 	Weight float64 `json:"weight"`
 	// AtSec is when the event was ingested (monotonic seconds).
 	AtSec int64 `json:"atSec"`
 }
 
 // EvidenceSink receives one record per would-ban determination. In shadow
-// this is the ONLY side effect an Engine produces (§13.3 shadow-first:
+// this is the ONLY side effect an Engine produces (the spec's shadow-first ban loop:
 // verdicts + logs without enforcement). TR-11's OTLP pipeline implements
 // it; tests collect.
 type EvidenceSink interface {
@@ -84,22 +84,22 @@ type EvidenceSinkFunc func(BanEvidence) error
 func (f EvidenceSinkFunc) Record(r BanEvidence) error { return f(r) }
 
 // BanRateAboveBudget is the exported metric counter TR-11 wires (M6/
-// BanRateAboveBudget alert, §21; R11 mitigation row in the PRD). Plain
+// BanRateAboveBudget alert, the spec's adoption-gate metrics; R11 mitigation row). Plain
 // *int64 so this leaf stays free of prometheus/otel — the TR-11 exporter
 // owns rates/alarms; here it is incremented once per would-ban the shadow
 // path emits.
 var BanRateAboveBudget = new(int64)
 
-// ScoredEvent is one weighted event as ingested (the §13.3 evidence atom:
+// ScoredEvent is one weighted event as ingested (the spec's ban-algorithm evidence atom:
 // offender key + event kind + the weight the kind carries + timestamp).
 // Exposed so the conformance runner and the TR-10 wire adapter can share
 // one representation of "which events, which weights".
 type ScoredEvent struct {
 	// Key is the offender key the event belongs to.
 	Key string `json:"key"`
-	// Kind is the §13.3 event kind (BanPolicy weights-table name).
+	// Kind is the spec's ban-algorithm event kind (BanPolicy weights-table name).
 	Kind EventKind `json:"kind"`
-	// Weight is the §13.3 weight of Kind at ingest time.
+	// Weight is the spec's ban-algorithm weight of Kind at ingest time.
 	Weight float64 `json:"weight"`
 	// AtSec is the event's monotonic-second timestamp (engine clock).
 	AtSec int64 `json:"atSec"`
@@ -111,7 +111,7 @@ type ScoredEvent struct {
 type WouldBan struct {
 	// Key is the offender key.
 	Key string `json:"key"`
-	// Score is the decayed §13.3 score at this instant.
+	// Score is the decayed ban-algorithm score at this instant.
 	Score float64 `json:"score"`
 	// WouldBan is true when score >= threshold and no live ban holds.
 	WouldBan bool `json:"wouldBan"`
@@ -123,7 +123,7 @@ type WouldBan struct {
 	Recidivism int `json:"recidivism"`
 }
 
-// keyState is the §13.3 per-source state (events sliding window, live ban,
+// keyState is the spec's ban-algorithm per-source state (events sliding window, live ban,
 // recidivism). Guarded by Engine.mu.
 type keyState struct {
 	events     []eventRec // append-only; expired entries are dropped on upkeep
@@ -137,7 +137,7 @@ type eventRec struct {
 	weight float64
 }
 
-// Engine is ScoredWindowBan v1 (§13.3) in shadow. It is safe for
+// Engine is ScoredWindowBan v1 (the spec's ban algorithm) in shadow. It is safe for
 // concurrent use. The clock and evidence sink are injected — kernel-free,
 // telemetry-sink-free construction (the leaf imports no observability).
 type Engine struct {
@@ -148,8 +148,8 @@ type Engine struct {
 }
 
 // New builds a shadow ScoredWindowBan engine on an injected monotonic
-// seconds clock and evidence sink (§13.3 decision loop, step 4 only:
-// automatic expiry; early release is §13.6 workflow, out of TR-09 scope).
+// seconds clock and evidence sink (the spec's ban-algorithm decision loop, step 4 only:
+// automatic expiry; early release is the spec's unban workflow, out of TR-09 scope).
 func New(nowFn func() int64, sink EvidenceSink) *Engine {
 	if nowFn == nil {
 		panic("rateban: nil clock")
@@ -165,7 +165,7 @@ func New(nowFn func() int64, sink EvidenceSink) *Engine {
 }
 
 // Ingest feeds one ScoredEvent (offender key + event kind; the kind picks
-// the §13.3 weight — an unknown kind is an error, never a guessed weight).
+// the spec's ban-algorithm weight — an unknown kind is an error, never a guessed weight).
 // The event is stamped by the caller's atSec (the engine clock's value at
 // the observation), kept under the sliding window keyed by FindtimeSec.
 func (e *Engine) Ingest(key string, kind EventKind, atSec int64, note string) error {
@@ -185,7 +185,7 @@ func (e *Engine) Ingest(key string, kind EventKind, atSec int64, note string) er
 	return nil
 }
 
-// Observe runs §13.3 steps 1-2 at the current clock: recompute the score
+// Observe runs the ban algorithm's steps 1-2 at the current clock: recompute the score
 // over the window, honor a live ban (no re-scoring), and return the
 // decision WITHOUT recording it (Observe is read-only; Assess records).
 func (e *Engine) Observe(key string) WouldBan {
@@ -200,7 +200,7 @@ func (e *Engine) Observe(key string) WouldBan {
 	}
 	e.upkeep(s, now)
 	if s.untilSec > now {
-		// §13.3 step 2: state ACTIVE_BAN and now < until: enforcement
+		// Ban-algorithm step 2: state ACTIVE_BAN and now < until: enforcement
 		// continues; no re-scoring → the reported score is 0 by
 		// convention (nothing was computed), WouldBan false.
 		wb.ActiveBan = true
@@ -214,7 +214,7 @@ func (e *Engine) Observe(key string) WouldBan {
 	return wb
 }
 
-// Assess runs §13.3 step 3 in shadow at the given instant: if score >= T
+// Assess runs the ban algorithm's step 3 in shadow at the given instant: if score >= T
 // (and no live ban holds), increment recidivism, compute until = now +
 // min(B·κ^recid, Bmax), emit the R11 ban-evidence record to the sink, and
 // bump the exported BanRateAboveBudget counter — with NO enforcement side
@@ -248,7 +248,7 @@ func (e *Engine) Assess(key string, atSec int64) []BanEvidence {
 		Recidivism: s.recidivism,
 		BantimeSec: untilDelta,
 	}
-	s.recidivism++                  // §13.3 step 3: recidivism[s] += 1
+	s.recidivism++                  // ban-algorithm step 3: recidivism[s] += 1
 	s.untilSec = atSec + untilDelta // the shadow state still tracks the would-be window
 	for _, ev := range s.events {
 		age := atSec - ev.atSec
@@ -261,7 +261,7 @@ func (e *Engine) Assess(key string, atSec int64) []BanEvidence {
 		}
 	}
 	if err := e.sink.Record(rec); err != nil {
-		// §13.5: every ban decision emits its record. A sink failure
+		// Ban observability: every ban decision emits its record. A sink failure
 		// here means the shadow path cannot evidence the decision —
 		// surface it loudly rather than silently deciding.
 		panic(err)
@@ -289,7 +289,7 @@ func (e *Engine) Active(key string, now int64) bool {
 // (expectNoEnforcement) so a future enforcement leak fails RED here.
 func (e *Engine) Enforced() bool { return false }
 
-// score is §13.3 step 1: Σ w_i·e^(−λ·(now−t_i)) over events in the window.
+// score is ban-algorithm step 1: Σ w_i·e^(−λ·(now−t_i)) over events in the window.
 func (e *Engine) score(s *keyState, now int64) float64 {
 	total := 0.0
 	for _, ev := range s.events {
@@ -303,7 +303,7 @@ func (e *Engine) score(s *keyState, now int64) float64 {
 }
 
 // upkeep drops window-stale events (age > findtime) and clears a ban whose
-// expiry passed (automatic expiry, §13.3 step 4: now >= until).
+// expiry passed (automatic expiry, ban-algorithm step 4: now >= until).
 func (e *Engine) upkeep(s *keyState, now int64) {
 	kept := s.events[:0]
 	for _, ev := range s.events {
@@ -313,11 +313,11 @@ func (e *Engine) upkeep(s *keyState, now int64) {
 	}
 	s.events = kept
 	if s.untilSec != 0 && now >= s.untilSec {
-		s.untilSec = 0 // §13.3 step 4: automatic at until
+		s.untilSec = 0 // ban-algorithm step 4: automatic at until
 	}
 }
 
-// untilFor: min(bantime·κ^recid, maxBantime) — the §13.3 until delta.
+// untilFor: min(bantime·κ^recid, maxBantime) — the ban algorithm's until delta.
 func untilFor(recidivism int) int64 {
 	b := BantimeSec * int64(math.Pow(Backoff, float64(recidivism)))
 	if b > MaxBantimeSec {
@@ -335,7 +335,7 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-// sortEvents is unused today but kept for the §13.5 trajectory
+// sortEvents is unused today but kept for the ban-observability trajectory
 // oldest-first guarantee if events ever arrive out of order upstream.
 func sortEvents(evs []EvidenceEvent) {
 	sort.Slice(evs, func(i, j int) bool { return evs[i].AtSec < evs[j].AtSec })

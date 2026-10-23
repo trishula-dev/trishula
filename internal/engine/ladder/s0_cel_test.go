@@ -13,7 +13,7 @@ import (
 
 // --- fixtures ---------------------------------------------------------
 
-// seedRuleYaml is the TR-02 seed rule (verbatim §11.3 example, action=log).
+// seedRuleYaml is the TR-02 seed rule (verbatim example from the spec's CEL section, action=log).
 const seedRuleYaml = `
 rules:
   - id: seed-rate-shape
@@ -25,7 +25,9 @@ rules:
       request.rate_windows["5m"].requests > 40
 `
 
-// celTx builds a tx carrying a parsed §11.3 view (the head TR-05b produces;
+// TR-91 census: spec citation inside the raw string above; kept (conversion would change behavior)
+
+// celTx builds a tx carrying a parsed spec request view (the head TR-05b produces;
 // direct attachment here — the engine plumbing is AttachView).
 func celTx(t *testing.T, packYaml, method, path string, windows map[string]int64) (*ingest.TxContext, *CELEval) {
 	t.Helper()

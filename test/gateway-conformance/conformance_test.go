@@ -1,6 +1,6 @@
 package gatewayconformance
 
-// The lane's own guard tests, written against the §10.2/§10.5 record
+// The lane's own guard tests, written against the spec's contract and honest-delta record
 // before the verdict surface existed: the RED watch pins the
 // conformance verdicts (TestRunReference-/SecondaryProfileConformance),
 // the record/profile pins hold by design (data guards — they gate the
@@ -19,7 +19,7 @@ func TestDeltaRecordPinsTheDeltaTable(t *testing.T) {
 		t.Fatalf("LoadDelta: %v", err)
 	}
 	if got := len(d.ByID); got != 9 {
-		t.Fatalf("delta table carries %d rows, want the §10.5 table's 9", got)
+		t.Fatalf("delta table carries %d rows, want the §10.5 table's 9", got) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 	}
 	for _, id := range []string{
 		"steer-http", "h2c-to-engine", "weighted-canary", "readiness-gated-pools",
@@ -138,7 +138,7 @@ func TestRunSecondaryProfileConformance(t *testing.T) {
 
 func TestRunRejectsMisuse(t *testing.T) {
 	ps := LoadProfiles()
-	ps[0].H2[0].Contract = "steer-http" // a §10.5 gateway-leg row, not a case row
+	ps[0].H2[0].Contract = "steer-http" // a spec honest-delta gateway-leg row, not a case row
 	_, err := Run(ps[0], NewDrive())
 	if !errors.Is(err, ErrProfile) {
 		t.Fatalf("bound-to-gateway-row misuse: %v, want ErrProfile", err)

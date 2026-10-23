@@ -13,7 +13,7 @@ import (
 	"net/netip"
 )
 
-// Wire reason codes for BansV4Val.reason_code. The §13.4 tier names are
+// Wire reason codes for BansV4Val.reason_code. The spec's enforcement-tier names are
 // the reason space at v0 (bans_v4 scores are engine-produced); 0 is the
 // TR-03 legacy convention for an unscored ban. Keep in step with
 // bpf/ban_xdp.c's comment block — the wire carries the code, the record
@@ -28,7 +28,7 @@ var reasonCodes = map[string]uint16{
 	"":              reasonUnspecified, // TR-03 legacy: unscored kernel bans
 }
 
-// ReasonCode maps a §13.4 ladder tier name to its wire reason code in
+// ReasonCode maps a spec enforcement-tier ladder name to its wire reason code in
 // BansV4Val. Unknown tiers are an error: the code space stays a known
 // enum (the evidence record carries the name; the wire does not invent).
 func ReasonCode(tier string) (uint16, error) {

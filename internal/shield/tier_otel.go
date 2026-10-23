@@ -3,7 +3,7 @@ package shield
 // TR-80 (issue #80) — the tier's OTel wire contract. The loader emits
 // trishula.shield.visibility_tier ONCE AT BOOT per interface, as an
 // attribute on the shield's startup evidence (the engine's OTel pipeline
-// is internal/engine/otel — §15/TR-11: one span + one metric + one log
+// is internal/engine/otel — the spec's observability section / TR-11: one span + one metric + one log
 // per verdict; the tier rides the SHIELD's boot path as an attribute, not
 // a new pipeline). Collector wire note (TR-08c/TR-23): the attribute key
 // below is stable; its value is Tier.String()'s literal

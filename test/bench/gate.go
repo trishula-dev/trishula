@@ -13,11 +13,11 @@ const (
 	// VioBudgetP50: a cell's p50 bound exceeded.
 	VioBudgetP50 ViolationKind = "budget_p50_exceeded"
 	// VioRegression: a cell regressed more than RegressionLimit over its
-	// recorded baseline cell (§17.2: a p99 regression over 10% fails CI).
+	// recorded baseline cell (the spec's benchmark plan: a p99 regression over 10% fails CI).
 	VioRegression ViolationKind = "regression"
 )
 
-// RegressionLimit is the §17.2 CI gate: 10% over the recorded baseline.
+// RegressionLimit is the spec's benchmark-plan CI gate: 10% over the recorded baseline.
 const RegressionLimit = 0.10
 
 // Violation is one gate finding on one recipe.

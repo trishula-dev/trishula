@@ -15,7 +15,7 @@ type Evaluator interface {
 	Evaluate(tx *ingest.TxContext) *Verdict
 }
 
-// Engine walks the fixed S0–S7 ladder over a transaction (§19.1
+// Engine walks the fixed S0–S7 ladder over a transaction (the reference-implementation
 // Engine.EvaluateTx). Slots hold injected evaluators; unwired slots are
 // skipped, so a slice wires exactly the stages it carries.
 type Engine struct {

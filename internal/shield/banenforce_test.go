@@ -19,7 +19,7 @@ import (
 	rateban "github.com/trishula-dev/trishula/internal/engine/rateban"
 )
 
-// Wire constants under test (the §13.3 tier's reason name/code, the
+// Wire constants under test (the ban-algorithm tier's reason name/code, the
 // TR-03 legacy convention for unscored bans, and the C struct sizes of
 // bpf/ban_xdp.c: key = be32 saddr + u8 family + u8 key_class + u16 pad;
 // value = u64 ban_until_ms + u16 score + u16 reason_code + u32 pad).
@@ -67,7 +67,7 @@ func TestBansV4WireContract(t *testing.T) {
 }
 
 // The adapter: a would-ban the ENGINE emits must land in the kernel map
-// (the publish) and then in the evidence stream (§13.5: every ban decision
+// (the publish) and then in the evidence stream (the spec's ban observability: every ban decision
 // carries its record; an unpublished ban claims kernel state that does
 // not exist).
 func TestBanEnforcerPublishesAndRecords(t *testing.T) {
@@ -113,7 +113,7 @@ func TestBanEnforcerPublishesAndRecords(t *testing.T) {
 	if r.Verdict != "ban" || r.SourceIP != "10.66.0.66" || !r.Published {
 		t.Fatalf("record enrichment: %+v", r)
 	}
-	// The R11 account must survive the wire hop verbatim (§13.5).
+	// The R11 account must survive the wire hop verbatim (the spec's ban observability).
 	if r.Score != 12.34 || r.Threshold != 10 || r.BantimeSec != 600 ||
 		r.UntilSec != 1100 || r.Recidivism != 1 {
 		t.Fatalf("R11 fields lost: %+v", r)

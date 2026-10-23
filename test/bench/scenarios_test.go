@@ -1,8 +1,8 @@
 package bench
 
-// Guard: the scenario inventory encodes the nine §17.2 rows with their
+// Guard: the scenario inventory encodes the nine spec benchmark-plan rows with their
 // plane + gate classification; the recipe catalog validates against it.
-// One concern: the §17.2 inventory record + recipe-catalog integrity.
+// One concern: the spec's benchmark-plan inventory record + recipe-catalog integrity.
 import (
 	"strings"
 	"testing"
@@ -18,10 +18,10 @@ func TestScenariosEncode17_2(t *testing.T) {
 		byID[s.ID] = s
 	}
 	if len(scens) != 9 {
-		t.Errorf("scenario inventory = %d rows, want 9 (§17.2 lists nine)", len(scens))
+		t.Errorf("scenario inventory = %d rows, want 9 (§17.2 lists nine)", len(scens)) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 	}
 
-	// §17.2 rows 2, 3 and 7 are the engine-side scenarios hosted CI can
+	// Benchmark-plan rows 2, 3 and 7 are the engine-side scenarios hosted CI can
 	// measure on the committed CRS reference path; the rest name their
 	// absent runtime.
 	driveableWant := map[string]bool{
@@ -62,7 +62,7 @@ func TestScenariosEncode17_2(t *testing.T) {
 		}
 		seen[r.ID] = "seen"
 		if !strings.HasPrefix(r.Scenario, "s17-2-") {
-			t.Errorf("recipe %q: scenario id %q outside the §17.2 scheme", r.ID, r.Scenario)
+			t.Errorf("recipe %q: scenario id %q outside the §17.2 scheme", r.ID, r.Scenario) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 		}
 		if r.Iterations <= 0 || r.Warmup < 0 {
 			t.Errorf("recipe %q: measured loop unbounded or negative (iters=%d warmup=%d)", r.ID, r.Iterations, r.Warmup)

@@ -1,7 +1,7 @@
 package main
 
 // TR-06 (issue #6) — PR A: minimal transparent reverse proxy shape for the
-// engine host. The proxy proves the v1 integration posture (PRD §10.3
+// engine host. The proxy proves the v1 integration posture (the spec's reference walkthrough
 // variant A): the engine sits behind the gateway as a plain Gateway API
 // backend and forwards transparently to the upstream pool. No CEL/ladder
 // wiring yet — that integration lands in a later slice.

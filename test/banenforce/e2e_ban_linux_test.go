@@ -7,7 +7,7 @@ package banenforce
 //
 //	sudo go test -tags ban_e2e -run TestBanEnforceE2E ./test/banenforce/ -v
 //
-// The chain under test: the REAL TR-09 engine (rateban.Engine §13.3,
+// The chain under test: the REAL TR-09 engine (rateban.Engine, the spec's ban algorithm,
 // Clock seam injected) scores synthetic FlowEvents from an offender
 // netns → a would-ban crosses threshold(10) → its record is routed
 // THROUGH the enforcer (the engine's EvidenceSink seam IS the

@@ -3,7 +3,7 @@ package shield
 // TR-10 (issue #10) adapter: BanEnforcer closes the enforcement loop. A
 // rateban would-ban (the engine's Assess() record) is converted to a
 // kernel bans_v4 write at the kernel clock (publish) and echoed to the
-// evidence stream (§13.5: verdict "ban" once the kernel state exists;
+// evidence stream (the spec's ban observability: verdict "ban" once the kernel state exists;
 // publish failures are failures of the ban, evidenced). Reconcile
 // auto-lifts expired bans (now_ms >= until_ms — engine expiry parity).
 import (
@@ -52,7 +52,7 @@ func (b *BanEnforcer) SetClock(fn func() (uint64, error)) {
 // Record converts and publishes one engine would-ban: the ban window
 // (BantimeSec — the engine's applied duration, the remainder at crossing)
 // is rebased onto the kernel clock at publish time, the score travels as
-// score × 100 (u16 wire) and the §13.4 tier chooses the wire reason code.
+// score × 100 (u16 wire) and the spec's enforcement-tier ladder chooses the wire reason code.
 // Verdict "ban" is written ONLY when the kernel state landed (or no
 // publisher is wired: evidence-only mode); a failed publish is a failed
 // ban — evidenced with publish_err, verdict left at the engine's value.
@@ -167,7 +167,7 @@ func (b *BanEnforcer) readClock() (uint64, error) {
 	return clk()
 }
 
-// scoreCenti encodes the §13.3 score as score × 100 with round-half-up
+// scoreCenti encodes the ban-algorithm score as score × 100 with round-half-up
 // (saturating at the u16 max) — the wire's 2-decimal score.
 func scoreCenti(s float64) uint16 {
 	c := uint64(s*100 + 0.5)

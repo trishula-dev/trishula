@@ -183,7 +183,7 @@ func compareWant(v *http2.Request, w Want) string {
 }
 
 // viewShapeFinding checks RowPlainBackendView: the parsed views carry
-// exactly the §11.3 head fields — the view never grows a
+// exactly the spec's head fields — the view never grows a
 // gateway-endpoint or implementation-specific field (a set compare:
 // the field inventory is the contract, key order never is).
 func viewShapeFinding(profileID string, h1v *http1.Request, h2vs []*http2.Request) Finding {
@@ -193,13 +193,13 @@ func viewShapeFinding(profileID string, h1v *http1.Request, h2vs []*http2.Reques
 	if h1v != nil {
 		got := sortedKeys(h1v)
 		if !sameSet(got, wantH1) {
-			return miss(f, fmt.Sprintf("h1 view carries %v, want the §11.3 head shape %v", got, wantH1))
+			return miss(f, fmt.Sprintf("h1 view carries %v, want the §11.3 head shape %v", got, wantH1)) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 		}
 	}
 	for _, v := range h2vs {
 		got := sortedKeys(v)
 		if !sameSet(got, wantH2) {
-			return miss(f, fmt.Sprintf("h2 view carries %v, want the §11.3 head shape %v", got, wantH2))
+			return miss(f, fmt.Sprintf("h2 view carries %v, want the §11.3 head shape %v", got, wantH2)) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 		}
 	}
 	return f
@@ -222,7 +222,7 @@ func sameSet(got, want []string) bool {
 	return true
 }
 
-// sortedKeys lists one view's JSON field keys sorted (the §11.3 head
+// sortedKeys lists one view's JSON field keys sorted (the spec's head
 // shape check's projection over the JSON tags).
 func sortedKeys(v any) []string {
 	b, err := json.Marshal(v)

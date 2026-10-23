@@ -7,12 +7,12 @@ import (
 	"github.com/trishula-dev/trishula/internal/engine/cel"
 )
 
-// TR-17 (issue #17, PRD §11.3 + §11.7): the apply/swap seam on the S3
+// TR-17 (issue #17, the spec's CEL DSL plus its shadow-first lifecycle rule): the apply/swap seam on the S3
 // stage is load-disciplined. SetPack compile-probes the incoming pack
 // before the swap (the same gate Load runs: load ≠ eval — an
 // uncompilable or budget-aborted rule fails the SWAP, never becomes
 // per-request ":error" evidence); the installed pack keeps serving on a
-// rejected swap (fail closed, the §11.7 per-replica atomic swap).
+// rejected swap (fail closed, the spec's per-replica atomic swap).
 
 // TestSetPackRejectsUncompilablePackAndKeepsPrevious: a pack whose rule
 // cannot compile is rejected at the swap and the installed pack continues

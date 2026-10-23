@@ -74,7 +74,7 @@ func judgeFixture(t *testing.T, j *fakeJudge, now func() time.Time, cap int) (*A
 
 // --- AsyncJudge tests ------------------------------------------------------
 
-// TestAsyncJudgeNeverBlocks is the §20.1 R6 pin: a full queue refuses the
+// TestAsyncJudgeNeverBlocks is the spec's R6 risk-row pin: a full queue refuses the
 // submission (counts a drop) and returns without waiting for the worker.
 // Sequence is timer-free: the worker consumes the first submission and
 // blocks inside Judge (the entered signal proves it), then the queue
@@ -107,7 +107,7 @@ func TestAsyncJudgeNeverBlocks(t *testing.T) {
 	}
 }
 
-// TestAsyncJudgeDedupAndDrain pins the oracle rate-limit (§14.2 item 4):
+// TestAsyncJudgeDedupAndDrain pins the oracle rate-limit (the spec's hand-off item 4):
 // one in-flight or fresh verdict per signature — duplicates never re-judge
 // — and Close drains the queued work before returning.
 func TestAsyncJudgeDedupAndDrain(t *testing.T) {

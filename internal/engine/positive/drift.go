@@ -6,18 +6,18 @@ import (
 	"strings"
 )
 
-// GREEN (TR-18): the drift read (§11.5): the learned spec against the
+// GREEN (TR-18): the drift read (the spec's positive-security section): the learned spec against the
 // loaded (reviewed) policy, read off the cardinality census. Every row
 // names the endpoint, the schema position and the measured evidence; the
 // per-kind counts are the schema-drift counters' record source (the otel
 // wiring stays the otel slice). Patterns are never compared — inference
 // does not produce them (learn.go).
 
-// DiffKind names one class of live-vs-reviewed divergence (§11.5 drift
+// DiffKind names one class of live-vs-reviewed divergence (the spec's drift
 // telemetry). The kinds are the drift vocabulary — extend, never fork.
 type DiffKind string
 
-// The drift vocabulary (§11.5).
+// The drift vocabulary (the spec's positive-security section).
 const (
 	DiffEndpointAdded      DiffKind = "endpoint_added"      // live route absent from the reviewed policy
 	DiffEndpointUnobserved DiffKind = "endpoint_unobserved" // reviewed route with no live samples
@@ -41,7 +41,7 @@ type Diff struct {
 	Note  string // one-line detail carrying the measured evidence
 }
 
-// DriftReport is the drift telemetry read (§11.5): the live-vs-reviewed
+// DriftReport is the drift telemetry read (the spec's positive-security section): the live-vs-reviewed
 // divergence as data — the record set plus the per-kind counts the
 // schema-drift counters derive from (the otel wiring is the otel slice,
 // not this package).

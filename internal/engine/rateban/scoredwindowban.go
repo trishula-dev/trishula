@@ -1,4 +1,4 @@
-// Package rateban implements ScoredWindowBan v1 (PRD §13.3) as its own
+// Package rateban implements ScoredWindowBan v1 (the spec's ban algorithm) as its own
 // engine leaf: weighted event scores in a sliding findtime window, decayed
 // exponentially at a half-life of decayHalfLifePct of the window, with
 // recidivism-kappa bantime backoff capped at maxBantime.
@@ -15,7 +15,7 @@
 // TR-11 wires that counter into its exporter; this leaf imports neither
 // prometheus nor otel.
 //
-// The spec text (§13.3) is authoritative; test/ban-conformance reproduces
+// The spec's ban-algorithm text is authoritative; test/ban-conformance reproduces
 // it from the fixtures + an independent Python oracle (testdata/recompute.py).
 package rateban
 
@@ -24,9 +24,9 @@ import (
 	"math"
 )
 
-// §13.3 constants — the BanPolicy CRD defaults (§19.1 sketch), names
+// Ban-algorithm constants — the BanPolicy CRD defaults (the reference-implementation sketch), names
 // verbatim. Do not "improve" these here: the conformance suite byte-mirrors
-// the sketch, and per-vertical presets are §19.1 BanPolicy recipes, not
+// the sketch, and per-vertical presets are reference-implementation BanPolicy recipes, not
 // code forks.
 const (
 	// findtime W = 10m: the evidence window (fail2ban analog: findtime).
@@ -38,15 +38,15 @@ const (
 	// backoff κ = 2: recidivism exponential multiplier (fail2ban analog: recidive jail).
 	Backoff = 2.0
 	// maxBantime Bmax = 24h: human-scale cap — permanence is a decision,
-	// not an accident (§13.3).
+	// not an accident (the spec's ban algorithm).
 	MaxBantimeSec int64 = 86400
 	// decayHalfLifePct = 20: score-decay half-life as % of findtime
-	// (staleness by design, §13.3).
+	// (staleness by design, the spec's ban algorithm).
 	DecayHalfLifePct = 20.0
 )
 
-// EventKind enumerates the §13.3 weighted event kinds. The wire names are
-// the BanPolicy weights-table keys (§19.1) — never renamed locally.
+// EventKind enumerates the spec's ban-algorithm weighted event kinds. The wire names are
+// the BanPolicy weights-table keys (the reference-implementation sketch) — never renamed locally.
 type EventKind string
 
 const (
@@ -60,11 +60,11 @@ const (
 	KindKernelBurstFlag EventKind = "kernelBurstFlag"
 )
 
-// lambdaDecay is λ in §13.3's score: e^(−λ·age) with half-life
+// lambdaDecay is λ in the ban algorithm's score: e^(−λ·age) with half-life
 // DecayHalfLifePct% of FindtimeSec — i.e. λ = ln2 / (0.2 · 600 s).
 var lambdaDecay = math.Ln2 / (DecayHalfLifePct / 100.0 * float64(FindtimeSec))
 
-// DefaultWeights mirrors the §13.3 weights table (§19.1 sketch, names
+// DefaultWeights mirrors the ban algorithm's weights table (the reference-implementation sketch, names
 // verbatim):
 //
 //	CRS critical match +5 · CRS warning match +2
@@ -84,7 +84,7 @@ func DefaultWeights() map[string]float64 {
 	}
 }
 
-// KindWeight resolves one event kind's §13.3 weight (error: unknown kind —
+// KindWeight resolves one event kind's ban-algorithm weight (error: unknown kind —
 // callers decide policy; the engine never invents a weight).
 func KindWeight(k string) (float64, error) {
 	w, ok := DefaultWeights()[k]

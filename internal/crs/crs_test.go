@@ -142,7 +142,7 @@ func TestLoadError(t *testing.T) {
 
 // The Coraza transaction walk is pinned as a compile-time check: the
 // engine's phase surface (ProcessURI → ProcessRequestHeaders → body) is
-// the §11.8 reference evaluation order this wrapper reproduces.
+// the spec's differential-reference evaluation order this wrapper reproduces.
 var (
 	_ types.Transaction // referenced so the walk's dependency shape is visible in vet
 	_ debuglog.Logger   // injected logger surface (no default logger, host-CI quiet)

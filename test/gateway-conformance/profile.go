@@ -8,34 +8,34 @@ import (
 	"golang.org/x/net/http2/hpack"
 )
 
-// Engine-leg contract rows (§10.2 terms as they bind the Trishula
+// Engine-leg contract rows (Gateway-API contract terms as they bind the Trishula
 // backend side, the leg this lane drives). Names carry the `engine:`
-// prefix so they never collide with the §10.5 delta row ids.
+// prefix so they never collide with the spec's honest-delta row ids.
 const (
-	// RowSameViewParity: §10.2 terms 1+4, engine side — the same
+	// RowSameViewParity: contract terms 1+4, engine side — the same
 	// logical request over the h1 upstream leg and over the h2c
 	// upstream leg reconstructs the same view head (method, path
 	// plus the client-set headers). The upstream protocol is
 	// invisible to the ladder; this is the abstraction-honesty probe.
 	RowSameViewParity = "engine:same-view-parity"
-	// RowH2CIngress: §10.2 term 4 — h2c engine ingress
+	// RowH2CIngress: contract term 4 — h2c engine ingress
 	// (appProtocol: kubernetes.io/h2c): the profile's h2c upstream
-	// head parses into the full §11.3 head view, pseudo fields fold
+	// head parses into the full spec head view, pseudo fields fold
 	// into the named fields and every regular field joins the map.
 	RowH2CIngress = "engine:h2c-ingress"
-	// RowGRPCRecognized: §10.2 term 4 — gRPC framing recognized: an
+	// RowGRPCRecognized: contract term 4 — gRPC framing recognized: an
 	// application/grpc head classifies KindGRPC and :path carries the
 	// full RPC method, whatever implementation forwarded it.
 	RowGRPCRecognized = "engine:grpc-recognized"
-	// RowPlainBackendView: §10.2 term 1, engine side — the engine is a
+	// RowPlainBackendView: contract term 1, engine side — the engine is a
 	// plain Service backend that never selects endpoints: the
-	// reconstructed views carry exactly the §11.3 head fields and no
+	// reconstructed views carry exactly the spec head fields and no
 	// gateway-endpoint or implementation-specific fields.
 	RowPlainBackendView = "engine:plain-backend-view"
 )
 
 // ContractRows is the engine-leg contract row set Run drives. The four
-// ids are the only rows the lane's verdicts name; the §10.2 gateway-leg
+// ids are the only rows the lane's verdicts name; the contract's gateway-leg
 // terms (weighted steering, readiness, failOpen fallback, TLS mode,
 // binding) bind no case here — they are the delta record's
 // per-gateway rows.
@@ -57,10 +57,10 @@ type Frame struct {
 	Payload   []byte              // data frames
 }
 
-// Want is the §11.3 head reconstruction an h2 case pins. Headers is
+// Want is the spec head reconstruction an h2 case pins. Headers is
 // the exact map (regular fields only — pseudo fields fold into the
 // named struct fields); Scheme carries the profile's tested plaintext
-// hop value (§10.2 term 4 + §9.7: the engine leg is plain).
+// hop value (contract term 4 plus the spec's per-mode visibility rule: the engine leg is plain).
 type Want struct {
 	Method    string
 	Path      string
@@ -89,15 +89,15 @@ type H2Case struct {
 	Want     Want    // the pinned reconstruction
 }
 
-// Role says which side of the §10.5 lane a profile represents.
+// Role says which side of the spec's honest-delta lane a profile represents.
 type Role string
 
 const (
-	// RoleReference is the reference implementation (§10). The live e2e
+	// RoleReference is the reference implementation (the spec's Gateway API integration). The live e2e
 	// gate for this role is lab/dx1 (nightly); the profile here holds
 	// the same contract at the parse layer.
 	RoleReference Role = "reference"
-	// RoleSecondary is the secondary-gateway lane member (§20.1 R12).
+	// RoleSecondary is the secondary-gateway lane member (the spec's R12 risk row).
 	RoleSecondary Role = "secondary"
 )
 

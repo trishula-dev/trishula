@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-// TestSpecStageSketchDualStackKeys fails while the §19.1 stage sketches
+// TestSpecStageSketchDualStackKeys fails while the reference-implementation stage sketches
 // declare ban_key/verdict_key/flow_key with a bare __u32 address in a
-// design that is explicitly dual-stack (§9.3 acl4/acl6, §9.2 "IPv4/IPv6",
-// §13.3 /24-vs-/48 prefix escalation): a 32-bit key cannot hold an IPv6
+// design that is explicitly dual-stack (the spec's acl4/acl6 map pair, its hook inventory "IPv4/IPv6" row,
+// its /24-vs-/48 prefix-escalation rule): a 32-bit key cannot hold an IPv6
 // address and a /48 prefix would alias its contained hosts. Defect #62.
 //
 // Contract: the three key structs carry a family-discriminated address
@@ -17,11 +17,11 @@ func TestSpecStageSketchDualStackKeys(t *testing.T) {
 	prd := readPRD(t)
 	s191 := prdSection(prd, "19.1")
 	if s191 == "" {
-		t.Fatal("§19.1 not found in spec.md")
+		t.Fatal("§19.1 not found in spec.md") // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 	}
 	blocks := cBlocks(s191)
 	if len(blocks) == 0 {
-		t.Fatal("no ```c blocks found in §19.1")
+		t.Fatal("no ```c blocks found in §19.1") // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 	}
 	reBare := regexp.MustCompile(`__u32\s+\w*(addr|saddr|daddr)`)
 	reUnion := regexp.MustCompile(`(?s)union\s*\{`)
@@ -31,7 +31,7 @@ func TestSpecStageSketchDualStackKeys(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			body, ok := structBody(blocks, name)
 			if !ok {
-				t.Fatalf("struct %s not found in §19.1 ```c blocks", name)
+				t.Fatalf("struct %s not found in §19.1 ```c blocks", name) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 			}
 			if reBare.MatchString(body) {
 				t.Fatalf("%s declares a bare __u32 address; want a family-discriminated union (defect #62):\n%s", name, body)

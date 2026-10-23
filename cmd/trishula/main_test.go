@@ -7,7 +7,7 @@ import (
 )
 
 // TR-02 (issue #2): cmd/trishula is the skeleton entrypoint. The selftest
-// tracer proves the skeleton end-to-end: seed rule pack in, §11.3 fixture
+// tracer proves the skeleton end-to-end: seed rule pack in, spec-CEL fixture
 // cases evaluated, verdicts on stdout, exit code reflects the outcome.
 const (
 	seedPack    = "../../rules/cel/seed.yaml"

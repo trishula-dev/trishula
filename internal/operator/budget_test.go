@@ -10,7 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// TR-17 (issue #17, PRD §11.3 + G4): the WAFPolicy apply declares the CEL
+// TR-17 (issue #17, the spec's CEL DSL plus goal G4): the WAFPolicy apply declares the CEL
 // evaluation cost budget (spec.celBudget); Compile carries the declared
 // budget on the bundle wire and Load enforces it at the compile-probe —
 // a policy whose budget cannot fit a single rule evaluation never loads.
@@ -48,7 +48,7 @@ func TestCompileCarriesPolicyCELBudget(t *testing.T) {
 // TestLoadRejectsUnusableDeclaredBudget: the engine's load gate enforces
 // the declared budget — a rule that cannot finish the compile-probe under
 // its own declared budget fails the LOAD (never loads and errors every
-// request later); the previous bundle stands (§11.7 fail-closed swap).
+// request later); the previous bundle stands (the spec's fail-closed swap rule).
 func TestLoadRejectsUnusableDeclaredBudget(t *testing.T) {
 	pack, err := cel.ParseRulePack([]byte(`rules:
   - id: budget-one

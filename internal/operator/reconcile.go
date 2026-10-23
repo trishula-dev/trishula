@@ -8,12 +8,12 @@ package operator
 //	Reconcile(policies, rulePackSource) → per-policy compile Outcomes
 //	→ (on success) a Bundle the engine's --bundle leg Loads and consults.
 //
-// Fail closed (§8, §2.3): a policy whose rule sets do not resolve or whose
+// Fail closed (the spec's architecture plus its precedence rule): a policy whose rule sets do not resolve or whose
 // CEL does not compile produces an error outcome and NO bundle — traffic
 // keeps its previous shape (the previous bundle, or none). Errors never
 // widen enforcement; they only ever shrink it. A nil RulePackSource is
 // fine for policies with no custom rule sets (v0 default: the seed pack,
-// TR-02); the CEL query field (request.query, §11.3 structured request)
+// TR-02); the CEL query field (request.query, the spec's structured request)
 // rides this slice — the lab's SQLi rule keys on it.
 
 import (
@@ -26,7 +26,7 @@ import (
 )
 
 // RulePackSource resolves a policy's named rule-set refs to CEL rule packs
-// (the rule-pack half of §16.2's RuleSet objects). ns/name are the
+// (the rule-pack half of the spec's RuleSet objects). ns/name are the
 // RuleSetRef's namespace and name; ok=false is a MISSING ref — Reconcile
 // turns that into a compile failure (fail closed: an unresolved rule set
 // must never silently under-enforce), never a resolver transport error
@@ -97,7 +97,7 @@ func compileResolved(ctx context.Context, p *v1alpha1.WAFPolicy, src RulePackSou
 		// The apply-path budget stamps before the gate: validatePackRules
 		// probes under the resolved budgets, so a rule that cannot finish
 		// one evaluation under its declared ceiling fails the reconcile
-		// and NO bundle leaves the operator (fail closed, §8/§11.7).
+		// and NO bundle leaves the operator (fail closed, the spec's architecture plus its fail-closed lifecycle rule).
 		applyPolicyBudget(pack.Rules, p.Spec.CELBudget)
 		if err := validatePackRules(pack); err != nil {
 			return Bundle{}, fmt.Errorf("reconcile %s/%s: rule set %q: %w", p.Namespace, p.Name, rs.Name, err)
@@ -138,9 +138,9 @@ func validatePackRules(pack cel.RulePack) error {
 }
 
 // Decision is the decisive outcome of one request through a loaded
-// bundle: which rule matched (provenance, §16.2 status surface) and which
+// bundle: which rule matched (provenance, the spec's CRD-set status surface) and which
 // action applies (the rule's, else the policy's defaultAction when no
-// rule fires). Error verdicts never decide a match — fail safe (§11.3):
+// rule fires). Error verdicts never decide a match — fail safe (the spec's CEL DSL):
 // a rule that cannot evaluate reports its error and the ladder's
 // fail-closed default (DefaultActionBlock) protects the route.
 func (e *Eval) Decide(req cel.Request) (Decision, error) {

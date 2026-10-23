@@ -3,7 +3,7 @@ package ingest
 import "sync/atomic"
 
 // Stats is the engine-scoped ingest telemetry (TR-11 binds
-// trishula_shield_ring_dropped_total to RingLossTotal; PRD §9.4/§21).
+// trishula_shield_ring_dropped_total to RingLossTotal; the spec's ring-loss budget plus its adoption metrics).
 // Atomic: the reader goroutine writes; OTel exporters read.
 type Stats struct {
 	RingLossTotal uint64 // records lost to ring overruns

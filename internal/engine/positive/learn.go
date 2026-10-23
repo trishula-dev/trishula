@@ -11,7 +11,7 @@ import (
 )
 
 // GREEN (TR-18): learn-mode discovery over observed samples. The walk
-// pins: endpoint extraction (§11.5), JSON-schema inference with
+// pins: endpoint extraction (the spec's positive-security section), JSON-schema inference with
 // per-path cardinality tracking, unrepresentable records for every
 // shape the v0 subset cannot describe, and the materialized route
 // document the strict v0 loader accepts. The drift read lives in
@@ -26,7 +26,7 @@ const enumInferMax = 8
 // (the same fixed version the v0 loader accepts, TR-13a).
 const docVersion = "3.1.0"
 
-// Sample is one observed request feeding discovery (§11.5 learn mode):
+// Sample is one observed request feeding discovery (the spec's learn mode):
 // the method, the exact path and the raw encoded JSON body — the same
 // body-carrying view shape the S4 evaluator reads. The caller owns the
 // sampling loop (deps injected: the discoverer consumes data, never a
@@ -38,7 +38,7 @@ type Sample struct {
 }
 
 // SkippedMethod counts the samples discovery recorded but could not
-// infer in the v0 subset: any method outside `post` (§11.5 v0 subset:
+// infer in the v0 subset: any method outside `post` (the spec's v0 subset:
 // body-only, post-only, TR-13a).
 type SkippedMethod struct {
 	Method string
@@ -47,7 +47,7 @@ type SkippedMethod struct {
 }
 
 // FieldCardinality is the tracked observation statistics for one field
-// path (§11.5 "JSON-schema inference with cardinality tracking"):
+// path (the spec's "JSON-schema inference with cardinality tracking"):
 // presence ratio drives required inference, the distinct-value census
 // drives enum inference, and the length census drives maxLength.
 type FieldCardinality struct {
@@ -73,7 +73,7 @@ type LearnedRoute struct {
 	Undecodable     int                // post samples with a nil body, invalid JSON or a non-object root
 }
 
-// LearnedSpec is the learn-mode artifact (§11.5): the discovered
+// LearnedSpec is the learn-mode artifact (the spec's positive-security section): the discovered
 // endpoints over the observed window. It is the shape the future APISpec
 // CR diff tooling reads; reviewed enforcement still loads through the
 // strict v0 loader (TR-13a). Diff application into the APISpec CR is a

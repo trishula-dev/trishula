@@ -14,7 +14,7 @@ func fixtureClock(now *time.Time) func() time.Time {
 	return func() time.Time { return *now }
 }
 
-// TestVerdictCacheRoundTrip pins the §14.2 verdict-cache contract: keyed
+// TestVerdictCacheRoundTrip pins the spec's ML-hand-off verdict-cache contract: keyed
 // on the normalized request signature, tag-checked by the judge model id.
 func TestVerdictCacheRoundTrip(t *testing.T) {
 	now := baseNow

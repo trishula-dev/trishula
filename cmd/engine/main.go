@@ -1,5 +1,5 @@
 // TR-06 (issue #6) — minimal transparent reverse proxy for the engine host.
-// Proves the v1 integration posture (PRD §10.3 variant A): behind the
+// Proves the v1 integration posture (the spec's reference walkthrough, variant A): behind the
 // gateway the engine is a plain Gateway API backend forwarding transparently
 // to the upstream pool — the gateway selects the engine Service exactly as
 // it would select any backend; endpoint selection downstream of the engine
@@ -7,7 +7,7 @@
 //
 // TR-08c (issue #76, M9) — the bundle leg: with --bundle, the engine Loads
 // the operator's bundle (internal/operator, wire format v1) and consults it
-// in the proxy handler BEFORE forwarding (§5.2 step 1: "the engine consults
+// in the proxy handler BEFORE forwarding (the DX charter's consult step 1: "the engine consults
 // the loaded bundle"): a decided request is answered by the engine, not
 // the upstream. Without --bundle the handler is the unchanged transparent
 // proxy (the engine stays a Gateway API citizen).
@@ -177,7 +177,7 @@ func newEngineHandlerWithBox(upstream, hop string, box *bundleBox) http.Handler 
 		if consult := box.get(); consult != nil {
 			decision, err := consult.Decide(celRequestView(r))
 			if err != nil {
-				// Fail safe (§11.3): a deciding bundle erroring is state
+				// Fail safe (the spec's CEL rules): a deciding bundle erroring is state
 				// corruption; the fail-closed answer is deny.
 				log.Printf("engine: consult error for %s %s: %v", r.Method, r.URL.Path, err)
 				w.Header().Set(hopHeader, "engine")
@@ -242,7 +242,7 @@ func receiveBundle(path string, in io.Reader, out io.Writer) error {
 	return nil
 }
 
-// celRequestView projects the inbound request into the §11.3 structured
+// celRequestView projects the inbound request into the spec's structured
 // view the CEL rules evaluate (seed scope: method, path with query
 // stripped, the raw query string; rate_windows arrive with the rate-
 // accounting slice). Query keys decode loosely via RawQuery (the rules'

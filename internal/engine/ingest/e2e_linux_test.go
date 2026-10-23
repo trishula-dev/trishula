@@ -251,7 +251,7 @@ func TestFlowTCRingE2E(t *testing.T) {
 	// OrbStack veth TC bypass (defect #70) means established-flow data
 	// segments never re-ingress on this kernel — payload evidence is
 	// carried by the unit wire tests + the TR-06 real-kernel lab. The
-	// header-field (§19.1 flow_event) assertions above are the
+	// header-field (the reference-implementation flow_event) assertions above are the
 	// acceptance's "full header fields".
 	// Lost-count parity: C-side lost_events == Go Stats.RingLossTotal.
 	var lost uint64

@@ -1,4 +1,4 @@
-// matcher_gate_test.go (TR-16): the §11.4/§11.8 differential gate for the
+// matcher_gate_test.go (TR-16): the spec's Vectorscan/differential-parity gate for the
 // compiled fast path. The seed pattern set (tr16Seed) carries one pattern
 // per reference rule id the corpus exercises; the gate runs the LIVE
 // reference evaluator walk on every corpus case, computes per-phase
@@ -7,7 +7,7 @@
 // demotes every divergent pattern to reference-path-only, recompiles, and
 // asserts the post-demotion matcher verdicts hold 100% parity against the
 // live reference projection with a non-empty active set (self-healing
-// parity, PRD §11.4). Parity is VERDICT-level (PRD §11.8): computed from
+// parity, the spec's Vectorscan fast path). Parity is VERDICT-level (its differential-parity gate): computed from
 // the live walk per case, never pinned from a different evaluator run.
 package crsdifferential
 
@@ -49,7 +49,7 @@ var tr16Seed = []matcher.Pattern{
 		Expr: `(?i)\$\{(jndi|ctx)`},
 }
 
-// gateView projects a corpus case into the matcher view: the §11.3 request
+// gateView projects a corpus case into the matcher view: the spec's request
 // segments (uri, headers, query, body). Query and form values decode exactly
 // like the reference processors decode them (ARGS_GET / ARGS_POST).
 func gateView(c Case) map[string]string {

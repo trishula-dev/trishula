@@ -19,7 +19,7 @@ import (
 
 // wafPolicyYAML is the TR-08a acceptance fixture: a WAFPolicy carrying the
 // full minimal surface (metadata, one rule-set ref, a default action, the
-// mode flags), reduced from the §19.1 WAFPolicy sketch.
+// mode flags), reduced from the reference-implementation WAFPolicy sketch.
 const wafPolicyYAML = `apiVersion: trishula.security/v1alpha1
 kind: WAFPolicy
 metadata:

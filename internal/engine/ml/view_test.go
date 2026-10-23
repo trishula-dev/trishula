@@ -10,9 +10,9 @@ import (
 
 // --- fixtures -----------------------------------------------------------
 
-// txWithView builds a tx carrying a parsed §11.3 view (ladder.AttachView is
+// txWithView builds a tx carrying a parsed request view (the spec's) (ladder.AttachView is
 // the attachment contract) plus flow counters for the eBPF contribution
-// (§9.5).
+// (the spec's kernel rate accounting).
 func txWithView(t *testing.T, method, path, query string, windows map[string]int64, packets uint64) *ingest.TxContext {
 	t.Helper()
 	tx := &ingest.TxContext{
@@ -47,7 +47,7 @@ func fvOf(t *testing.T, method, path, query string, windows map[string]int64, pa
 
 // --- extraction tests ----------------------------------------------------
 
-// TestExtractFeatureViewFields pins the §14.2 FeatureView v1 field families
+// TestExtractFeatureViewFields pins the spec's FeatureView v1 field families
 // the v0 inputs can fill (one concern per row: method, target, params,
 // counters, windows).
 func TestExtractFeatureViewFields(t *testing.T) {
@@ -130,7 +130,7 @@ func TestExtractNoView(t *testing.T) {
 
 // --- signature tests ------------------------------------------------------
 
-// TestSignatureNormalization pins the §14.2 normalized request signature:
+// TestSignatureNormalization pins the spec's normalized request signature:
 // method + target + sorted param names, values dropped. The signature reads
 // the parsed view — FeatureView carries aggregates only (no raw text), so
 // the normalizable request shape comes from the view.

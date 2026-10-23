@@ -7,7 +7,7 @@ import (
 
 // TR-04a (issue #66, child of TR-04/#4): the transaction-assembly core.
 // Kernel-free — synthetic flows only; the ringbuf reader is TR-04b's
-// dependency, not this one's (§19.1 ingest sketch: NoteFlow attaches flow
+// dependency, not this one's (the reference-implementation ingest sketch: NoteFlow attaches flow
 // metadata to a TX context keyed by flow identity).
 
 func TestNoteFlowKeysAndRetrieves(t *testing.T) {

@@ -1,18 +1,18 @@
-// rate.go carries the §13.2 rate-algorithm surface of the rate plane:
+// rate.go carries the spec's rate-algorithm surface of the rate plane:
 // per-route, CRD-selected limiting over composed keys. TR-20 slice. The
-// §13.2 score-ladder row is NOT here: it is the ban decision, and
-// ScoredWindowBan v1 (§13.3, engine.go) carries it since TR-09 — this
+// The spec's score-ladder row is NOT here: it is the ban decision, and
+// ScoredWindowBan v1 (the spec's ban algorithm, engine.go) carries it since TR-09 — this
 // plane never re-implements it.
 //
 // Dispatch per route: SetRoute installs one RatePolicy (validated at
 // load, never mid-request — the bundle pipeline's load discipline);
 // Arrive evaluates one arrival against the route's algorithm over one
-// key per selected KeyClass dimension and returns the §13.4 L1 verdict
+// key per selected KeyClass dimension and returns the L1-tier verdict
 // fields (throttle flag, breach keys, Retry-After).
 //
 // Kernel-free and telemetry-clean by construction, like the ban engine:
 // the clock is injected, the only observable is the returned verdict.
-// The §9.5 kernel rate_windows feed and the S6 ladder wiring are later
+// The kernel rate_windows feed (the spec's kernel rate accounting) and the S6 ladder wiring are later
 // slices.
 package rateban
 
@@ -21,29 +21,29 @@ import (
 	"sync"
 )
 
-// Algorithm selects a §13.2 limiting algorithm; the names are the CRD
+// Algorithm selects one limiting algorithm from the spec's rate vocabulary; the names are the CRD
 // field's wire vocabulary.
 type Algorithm string
 
 const (
-	// AlgoTokenBucket: refill rate r, burst b; reject when empty (§13.2,
+	// AlgoTokenBucket: refill rate r, burst b; reject when empty (the spec's rate-algorithm section,
 	// the default for API quotas).
 	AlgoTokenBucket Algorithm = "tokenBucket"
-	// AlgoSlidingWindow: exact count over a multi-window set (§13.2,
+	// AlgoSlidingWindow: exact count over a multi-window set (the spec's rate-algorithm section,
 	// burst-sensitive endpoints; no boundary spike).
 	AlgoSlidingWindow Algorithm = "slidingWindow"
 	// AlgoEWMARate: exponentially weighted arrival rate per composed key
-	// (§13.2, behavioral DoS signals).
+	// (the spec's rate-algorithm section, behavioral DoS signals).
 	AlgoEWMARate Algorithm = "ewmaRate"
 )
 
-// KeyClass selects one key dimension from §13.2's composable key set.
+// KeyClass selects one key dimension from the spec's composable rate-key set.
 // sourceIp is the default; identity keys apply when identity exists. A
 // route sets several classes: each dimension evaluates against the
 // route's limits at once. State partitions per route for every class
 // (the route dimension sits in the composed key), so ipRouteClass reads
 // the same partition under a different name — the class exists so a CRD
-// policy can name the composed pair, keeping the §13.2 vocabulary
+// policy can name the composed pair, keeping the spec's rate vocabulary
 // complete.
 type KeyClass string
 
@@ -63,14 +63,14 @@ type WindowPolicy struct {
 	Limit    int
 }
 
-// TokenBucketPolicy is the §13.2 token-bucket configuration: refill rate
+// TokenBucketPolicy is the spec's token-bucket configuration: refill rate
 // RatePerSec tokens per second, Burst tokens at most.
 type TokenBucketPolicy struct {
 	RatePerSec float64
 	Burst      int
 }
 
-// EWMAPolicy is the §13.2 EWMA configuration: HalfLifeSec decay half-life
+// EWMAPolicy is the spec's EWMA configuration: HalfLifeSec decay half-life
 // and LimitPerSec, the maximum smoothed arrival rate in requests per
 // second.
 type EWMAPolicy struct {
@@ -78,14 +78,14 @@ type EWMAPolicy struct {
 	LimitPerSec float64
 }
 
-// RatePolicy is the per-route §13.2 selection. The operator's CRD
+// RatePolicy is the per-route selection from the spec's rate algorithms. The operator's CRD
 // compile (a later slice) fills one per route; SetRoute takes this
 // value, so callers already speak the CRD's shape.
 type RatePolicy struct {
 	// Algorithm picks the limiting algorithm for the route.
 	Algorithm Algorithm
 	// KeyClasses lists the composed key dimensions; empty = sourceIp
-	// (the §13.2 default).
+	// (the spec's rate-algorithm default).
 	KeyClasses []KeyClass
 	// Windows holds the multi-window set (AlgoSlidingWindow).
 	Windows []WindowPolicy
@@ -97,7 +97,7 @@ type RatePolicy struct {
 
 // Arrival is one request observation; the caller fills it from the
 // request view. RouteClass picks the policy; the rest feed the key
-// derivation (an empty identity field skips that key — §13.2's "when
+// derivation (an empty identity field skips that key — the spec's "when
 // identity exists").
 type Arrival struct {
 	RouteClass string
@@ -107,7 +107,7 @@ type Arrival struct {
 	JA4        string
 }
 
-// WindowCount is one window-evidence row (the §15.2 rate stage shape:
+// WindowCount is one window-evidence row (the spec's verdict-record rate-stage shape:
 // per-window requests/limit plus breach): the count is the post-arrival
 // window content, so a refused request's row can read above its limit.
 type WindowCount struct {
@@ -117,7 +117,7 @@ type WindowCount struct {
 	Limit    int
 }
 
-// RateVerdict is the plane's decision for one arrival. §13.4 L1 maps
+// RateVerdict is the plane's decision for one arrival. The L1 enforcement tier maps
 // !Allowed to a 429 whose Retry-After is RetryAfterSec; the field pair
 // is the DX5 signature (a Retry-After always rides a throttle).
 type RateVerdict struct {
@@ -140,7 +140,7 @@ type RateVerdict struct {
 	Rate float64
 }
 
-// RatePlane evaluates the §13.2 limiting algorithms per route. The clock
+// RatePlane evaluates the spec's limiting algorithms per route. The clock
 // is injected (NewRatePlane) — kernel-free and telemetry-clean like the
 // ban engine's construction.
 type RatePlane struct {
@@ -217,7 +217,7 @@ func validatePolicy(pol RatePolicy) error {
 			return fmt.Errorf("rateban: EWMA needs a positive limit")
 		}
 	default:
-		return fmt.Errorf("rateban: unknown algorithm %q (the §13.2 vocabulary is tokenBucket, slidingWindow, ewmaRate)", string(pol.Algorithm))
+		return fmt.Errorf("rateban: unknown algorithm %q (the §13.2 vocabulary is tokenBucket, slidingWindow, ewmaRate)", string(pol.Algorithm)) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 	}
 	seen := map[KeyClass]bool{}
 	for _, kc := range pol.KeyClasses {
@@ -235,9 +235,9 @@ func validatePolicy(pol RatePolicy) error {
 }
 
 // deriveKeys returns the composed keys for one arrival, in the policy's
-// class order. A dimension whose value is empty falls out (§13.2: the
+// class order. A dimension whose value is empty falls out (the spec's rate-key rule: the
 // key applies when identity exists). An empty KeyClasses list defaults
-// to sourceIp, the §13.2 default.
+// to sourceIp, the spec's rate-key default.
 func deriveKeys(classes []KeyClass, a Arrival) []string {
 	if len(classes) == 0 {
 		classes = []KeyClass{KeySourceIP}
@@ -294,20 +294,20 @@ func hasRoutePrefix(key, route string) bool {
 	return len(key) > len(route)+1 && key[:len(route)+1] == route+"/"
 }
 
-// Arrive evaluates one arrival against its route's §13.2 policy. Every
+// Arrive evaluates one arrival against its route's rate policy from the spec's algorithms. Every
 // arrival records in the sliding window and the EWMA accumulator —
-// §15.2's rate-stage evidence carries counts above a limit, which is
+// The spec's verdict-record rate-stage evidence carries counts above a limit, which is
 // only reachable when refused requests also record. The token bucket
 // checks before it spends: the rejected arrival consumes nothing. Any
 // dimension's breach throttles; the Retry-After is the longest of the
-// breached dimensions' waits (§13.4 L1, DX5).
+// breached dimensions' waits (the spec's L1 enforcement tier plus the DX5 charter row).
 func (p *RatePlane) Arrive(a Arrival) RateVerdict {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	v := RateVerdict{RouteClass: a.RouteClass, Windows: []WindowCount{}, BreachedKeys: []string{}}
 	pol, routed := p.routes[a.RouteClass]
 	if !routed {
-		// Unrouted class: no §13.2 policy applies; allow with empty
+		// Unrouted class: no rate policy from the spec's algorithms applies; allow with empty
 		// evidence (the documented unrouted boundary).
 		v.Allowed = true
 		return v

@@ -2,12 +2,12 @@
 
 package shield
 
-// Loader (TR-03 step 3, §9.2): attach the compiled shield to a kernel
+// Loader (TR-03 step 3, the spec's hook inventory): attach the compiled shield to a kernel
 // interface via cilium/ebpf; expose the engine→shield maps (ban/verdict
 // producers) and the monotonic clock the ban expiry shares with the
 // kernel (bpf_ktime_get_ns == CLOCK_MONOTONIC_RAW on Linux).
 //
-// PRD v4 §19.1 sketch's verdict_val omits port/proto width detail and
+// The reference-implementation sketch's verdict_val omits port/proto width detail and
 // ban/verdict keys were IPv4-only — defect #62's family-discriminated
 // union is the wire contract here (banwire_test.go).
 

@@ -1,4 +1,4 @@
-// wire.go — the stdlib http mount (TR-11, §15): thin adapter proving how
+// wire.go — the stdlib http mount (TR-11, the spec's observability section): thin adapter proving how
 // cmd/engine mounts the verdict pipeline. The engine host integration is a
 // later slice; this file is the documented adapter + its tests
 // (wire_test.go). NO net/http server lives here — the adapter wraps an

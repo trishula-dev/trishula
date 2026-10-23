@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Scenario encodes one §17.2 benchmark-plan row. Driveable marks the
+// Scenario encodes one spec benchmark-plan row. Driveable marks the
 // scenarios measurable in hosted CI on the in-repo engine path; Plane
 // names the runtime each scenario must run on; Gate names what keeps a
 // non-driveable scenario out of CI today (empty = unblocked).
@@ -19,7 +19,7 @@ type Scenario struct {
 }
 
 // Recipe is one measured request cell inside a scenario: a
-// deterministic request recipe bound to the §17.1 budget row it reports
+// deterministic request recipe bound to the spec's budget-table row it reports
 // against. Iterations and Warmup bound the hosted-CI measurement cost.
 type Recipe struct {
 	ID          string
@@ -34,7 +34,7 @@ type Recipe struct {
 	Warmup      int
 }
 
-// LoadScenarios returns the §17.2 scenario inventory: all nine rows,
+// LoadScenarios returns the spec's scenario inventory: all nine rows,
 // with the runtime classification. Rows 2, 3 and 7 measure in hosted CI
 // on the committed CRS reference path; the rest carry the runtime they
 // wait on, so a scenario stays named even when it cannot run here.
@@ -81,7 +81,7 @@ func buildJSON(target int) string {
 
 // buildFormDense builds a deterministic urlencoded body at or just over
 // target bytes: a dense key=pair sequence. This is the arg-dense deep-
-// inspect surface the §17.1 engine budget currently fails on.
+// inspect surface the spec's engine budget currently fails on.
 func buildFormDense(target int) string {
 	var sb strings.Builder
 	for i := 0; ; i++ {
@@ -104,15 +104,15 @@ const (
 )
 
 // Recipes returns the driveable request recipes for the CI-measurable
-// scenarios (§17.2 rows 2, 3 and 7), each bound to the §17.1 row its
+// scenarios (benchmark-plan rows 2, 3 and 7), each bound to the budget-table row its
 // measurement reports against. Iteration counts keep the whole CI-mode
 // run at a few seconds of hosted-CI time.
 func Recipes() ([]Recipe, error) {
 	return []Recipe{
-		// §17.2 row 2 — inline idle: passing traffic through the CRS walk.
+		// Benchmark-plan row 2 — inline idle: passing traffic through the CRS walk.
 		{ID: "idle-get", Scenario: "s17-2-2-inline-idle", Method: "GET", URI: "/?q=hello",
 			BudgetID: "engine-inspect-8k", Iterations: 400, Warmup: 60},
-		// §17.2 row 3 — inline steady: the 8KB full-CRS cell the §21 M2
+		// Benchmark-plan row 3 — inline steady: the 8KB full-CRS cell the spec's M2
 		// metric binds, plus the attack shapes at the same surface.
 		{ID: "steady-json-8k", Scenario: "s17-2-3-inline-steady", Method: "POST", URI: "/api/submit?q=1",
 			ContentType: ctJSON, Body: buildJSON(size8k), BudgetID: "e2e-inline-hop-8k", Iterations: 240, Warmup: 20},
@@ -120,7 +120,7 @@ func Recipes() ([]Recipe, error) {
 			ContentType: ctForm, Body: `q=<script>alert(1)</script>&z=1`, Attack: true, BudgetID: "e2e-inline-hop-8k", Iterations: 300, Warmup: 40},
 		{ID: "attack-sqli-small", Scenario: "s17-2-3-inline-steady", Method: "POST", URI: "/api/submit?q=1",
 			ContentType: ctForm, Body: `q=1' OR '1'='1 --`, Attack: true, BudgetID: "e2e-inline-hop-8k", Iterations: 300, Warmup: 40},
-		// §17.2 row 7 — body-size ladder: JSON body sizes through CRS,
+		// Benchmark-plan row 7 — body-size ladder: JSON body sizes through CRS,
 		// plus the two arg-dense urlencoded shapes.
 		{ID: "ladder-json-1k", Scenario: "s17-2-7-body-ladder", Method: "POST", URI: "/api/submit?q=1",
 			ContentType: ctJSON, Body: buildJSON(size1k), BudgetID: "engine-inspect-8k", Iterations: 300, Warmup: 30},

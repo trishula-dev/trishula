@@ -34,7 +34,7 @@ func (m srcMap) RulePack(_ context.Context, ns, name string) (cel.RulePack, bool
 }
 
 // sqliPack mirrors lab/dx1/manifests/dx1-wafpolicy.yaml: one enforced rule
-// matching SQLi probes in the query string of the §10.3 chat-completions
+// matching SQLi probes in the query string of the spec's chat-completions
 // route (the M9 lab rule).
 func sqliPack(t *testing.T) cel.RulePack {
 	t.Helper()
@@ -150,7 +150,7 @@ rules:
 	return *p
 }
 
-// TestReconcilePerTenantBundlesStaySeparate (TR-25, PRD §20.1 R8): two
+// TestReconcilePerTenantBundlesStaySeparate (TR-25, the spec's multi-tenancy requirement R8): two
 // tenants' policies reconcile into separate bundles — each bundle binds
 // its own namespace and carries ONLY its own namespace's custom packs. The
 // seed pack (TR02-001) is the shared default plane, not a tenant's rule.
@@ -260,7 +260,7 @@ func TestReconcileFailClosedOnUncompilableRule(t *testing.T) {
 	})
 }
 
-// TestReconcileRefResolutionIsNamespaceLocked (TR-25, PRD §20.1 R8): a
+// TestReconcileRefResolutionIsNamespaceLocked (TR-25, the spec's multi-tenancy requirement R8): a
 // rule-set ref resolves in the policy's namespace ONLY. A pack present in
 // another namespace is a missing ref: the outcome fails closed.
 func TestReconcileRefResolutionIsNamespaceLocked(t *testing.T) {

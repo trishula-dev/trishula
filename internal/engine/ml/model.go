@@ -1,4 +1,4 @@
-// model.go carries the in-band (T1) model seam (§14.2 T1 "ONNX inline")
+// model.go carries the in-band (T1) model seam (the spec's T1 "ONNX inline" hand-off)
 // and the v0 reference model: every inline scorer plugs one interface,
 // scores a FeatureView under the stage's context deadline, and carries an
 // id that tags verdicts, cache entries and evidence.
@@ -10,10 +10,10 @@ import (
 	"math"
 )
 
-// Model is the T1 in-band model seam (§14.2 item 2: ONNX inline,
+// Model is the T1 in-band model seam (the spec's hand-off item 2: ONNX inline,
 // tree/linear tabular models, µs-class). Score maps one FeatureView to a
 // score in [0, 1]. The context carries the stage's hard budget deadline
-// (§20.1 R6): a model MUST honor it and report its error — the budget
+// (the spec's R6 risk row): a model MUST honor it and report its error — the budget
 // gate in the stage relies on the context, never on wall-clock
 // measurement.
 type Model interface {
@@ -21,7 +21,7 @@ type Model interface {
 	Score(ctx context.Context, fv FeatureView) (float64, error)
 }
 
-// LinearWeights is the §14.2 linear-family scorer's weight table. Each
+// LinearWeights is the spec's linear-family scorer's weight table. Each
 // feature enters the sum normalized to [0, 1] by its fixed v0 cap
 // (linCap), so a weight is a unitless family multiplier.
 type LinearWeights struct {

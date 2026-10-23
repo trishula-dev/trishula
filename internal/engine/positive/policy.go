@@ -26,8 +26,8 @@ type routeSpec struct {
 }
 
 // Policy maps route patterns to route schemas and carries the default
-// action for unmatched routes (§11.5: unmatched path → policy action).
-// Match is exact in v0 (the §11.5 route-prefix binding lands with the
+// action for unmatched routes (the spec's rule: unmatched path → policy action).
+// Match is exact in v0 (the spec's route-prefix binding lands with the
 // APISpec CRD); this is also the in-memory shape the CRD will wrap.
 type Policy struct {
 	routes  map[string]routeSpec // exact path → schema (v0 match)

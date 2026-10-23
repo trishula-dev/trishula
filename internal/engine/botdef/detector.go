@@ -18,8 +18,8 @@ const (
 	labLogMeta = "botdef_lab_log_line"
 )
 
-// Detector is the §12 bot detector: a ladder Evaluator at the fixed S5
-// StageBots slot. v1 (TR-19) adds the §12.1 behavioral family and the
+// Detector is the spec's bot detector: a ladder Evaluator at the fixed S5
+// StageBots slot. v1 (TR-19) adds the spec's behavioral detector family and the
 // merge policy: per-detector verdicts over the three families; a consensus
 // above the family floor resolves the decisive action, a single family
 // keeps the log tier (single-detector matches log and score). Detached
@@ -29,15 +29,15 @@ const (
 // (ladder skips empty slots).
 type Detector struct {
 	// Behavior consults per-source behavioral windows when non-nil
-	// (§12.1 behavioral family; nil = the family stays out of the walk,
+	// (the spec's behavioral family; nil = the family stays out of the walk,
 	// the v0 posture).
 	Behavior *BehaviorWindows
 	// Policy merges the per-detector verdicts into the S5 action
-	// (§12.1; a zero policy keeps the log tier).
+	// (the spec's detector families; a zero policy keeps the log tier).
 	Policy MergePolicy
 }
 
-// ruleBotJA4 / ruleBotHeaders are the §12 (detector_id, evidence) rule ids
+// ruleBotJA4 / ruleBotHeaders are the spec's (detector_id, evidence) rule ids
 // the S5 fragment carries (ladder.Rules, walk order).
 const (
 	ruleBotJA4     ladder.RuleID = "bot:ja4"
@@ -45,15 +45,15 @@ const (
 )
 
 // botScoreToolEvidence / botScoreJa4Prior are the v0 score contributions
-// (log-tier evidence accumulation feeding the ban engine per §12 — values
+// (log-tier evidence accumulation feeding the ban engine per the spec's bot-defense section — values
 // v0-pinned, tunable when the merge policy lands).
 const (
 	botScoreToolEvidence = 7 // header plane classifies tool-ish
-	botScoreJa4Prior     = 2 // JA4 present (a prior per §12.3, never a verdict)
+	botScoreJa4Prior     = 2 // JA4 present (a prior per the spec's honest-limits note, never a verdict)
 )
 
 // NewDetector builds the bot detector on the v1 defaults: the behavioral
-// windows on the pinned thresholds and the §12.1 merge policy.
+// windows on the pinned thresholds and the spec's merge policy.
 func NewDetector() *Detector {
 	return &Detector{
 		Behavior: NewBehaviorWindows(DefaultBehaviorWindowConfig()),
@@ -61,11 +61,11 @@ func NewDetector() *Detector {
 	}
 }
 
-// Stage pins the fixed §19.1 ladder position: S5 bots.
+// Stage pins the fixed reference-implementation ladder position: S5 bots.
 func (d *Detector) Stage() ladder.Stage { return ladder.StageBots }
 
-// confJa4Prior / confHeadersTool are the §12.1 per-detector confidences
-// for the two v0 planes: the JA4 fingerprint stays a PRIOR (§12.3 — a
+// confJa4Prior / confHeadersTool are the spec's per-detector confidences
+// for the two v0 planes: the JA4 fingerprint stays a PRIOR (the spec's honest-limits note — a
 // hash without the tooling DB cannot assert, and it scores no consensus),
 // the tool-ish header classification is a direct detection (the masquerade
 // evidence rides the fingerprint reasons).
@@ -74,12 +74,12 @@ const (
 	confHeadersTool = 80
 )
 
-// Evaluate walks the §12.1 detector surfaces over the attached evidence
+// Evaluate walks the spec's detector surfaces over the attached evidence
 // and folds it into one S5 fragment:
 //
 //   - JA4 evidence: the computed fingerprint is the bot-vs-browser PRIOR
 //     (a DetectorVerdict below the merge confidence floor), never a
-//     verdict by itself (§12.3 honest limits — a hash without the tooling
+//     verdict by itself (the spec's honest-limits note — a hash without the tooling
 //     DB cannot assert); it accumulates rule + prior score.
 //   - Header evidence: the header-plane classification (tool-ish vs
 //     browser-ish) is a direct per-request signal; tool-ish logs AND
@@ -87,7 +87,7 @@ const (
 //   - Behavioral evidence: the attached observation (BehaviorObservation)
 //     feeds the per-source sliding windows; every fired behavioral
 //     detector logs AND scores above the floor.
-//   - The §12.1 merge rule resolves the fragment action per MergePolicy:
+//   - The spec's merge rule resolves the fragment action per MergePolicy:
 //     MinFamilies distinct families above the floor trigger the decisive
 //     ConsensusAction; a single family keeps the log tier.
 //
@@ -286,7 +286,7 @@ func HeaderViewOf(tx *ingest.TxContext) *HeaderView {
 	return hv
 }
 
-// LabLogLine renders one §12 lab-log verdict line (the acceptance surface:
+// LabLogLine renders one lab-log verdict line per the spec's bot-defense section (the acceptance surface:
 // a curl-vs-browser pair through the wired detector produces two lines with
 // distinct ja4= and hf= values, in the DX1 verdict-log field order):
 //

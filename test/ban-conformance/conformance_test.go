@@ -28,7 +28,7 @@ func init() {
 	}
 }
 
-// ---- §13.3 constants: the byte-mirror of the BanPolicy CRD sketch (§19.1).
+// ---- ban-algorithm constants: the byte-mirror of the BanPolicy CRD sketch (the reference-implementation sketch).
 // The fixtures YAML's policy block is asserted EQUAL to this table; both are
 // asserted equal to the PRD sketch by testdata/recompute.py (independent
 // implementation, run in CI next to this suite).
@@ -41,7 +41,7 @@ const (
 	halfLifePct         = 20.0  // decayHalfLifePct: % of findtime
 )
 
-// weightsDefault mirrors the §19.1 weights table (names verbatim).
+// weightsDefault mirrors the reference-implementation weights table (names verbatim).
 var weightsDefault = map[string]float64{
 	"crsCritical":     5,
 	"crsWarning":      2,
@@ -54,14 +54,14 @@ var weightsDefault = map[string]float64{
 }
 
 // lambdaPerSec derives λ from the decayHalfLifePct: half-life = pct·findtime,
-// λ = ln2 / half-life. §13.3: "score decay: exponential, half-life 20% of W".
+// λ = ln2 / half-life. The spec's ban-algorithm rule: "score decay: exponential, half-life 20% of W".
 var lambdaPerSec = math.Log(2) / (halfLifePct / 100.0 * float64(findtimeSec))
 
 func decayed(w float64, ageSec int64) float64 {
 	return w * math.Exp(-lambdaPerSec*float64(ageSec))
 }
 
-// untilFor: §13.3 until = t_now + min(B·κ^recid, Bmax).
+// untilFor: ban-algorithm until = t_now + min(B·κ^recid, Bmax).
 func untilFor(recid int64) int64 {
 	b := bantimeSec * int64(math.Pow(backoff, float64(recid)))
 	if b > maxBantimeSec {
@@ -134,11 +134,11 @@ func loadFixtures(t *testing.T) fxDoc {
 	if doc.Schema != "trishula.ban-conformance.v1" {
 		t.Fatalf("unexpected schema %q", doc.Schema)
 	}
-	// Byte-mirror assertions: the YAML policy block == the §13.3 sketch.
+	// Byte-mirror assertions: the YAML policy block == the spec's ban-algorithm sketch.
 	c := doc.Policy.Constants
 	if c["findtime"] != "10m" || asF(c["threshold"]) != threshold ||
 		c["bantime"] != "10m" || asF(c["backoff"]) != backoff || c["maxBantime"] != "24h" {
-		t.Fatalf("policy constants drift from §19.1 sketch: %v", c)
+		t.Fatalf("policy constants drift from §19.1 sketch: %v", c) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 	}
 	for k, w := range weightsDefault {
 		if doc.Policy.Weights[k] != w {
@@ -149,7 +149,7 @@ func loadFixtures(t *testing.T) fxDoc {
 		t.Fatalf("decayHalfLifePct drift: %d", doc.Policy.DecayHalfLifePct)
 	}
 	if doc.Policy.Mode != "shadow" {
-		t.Fatalf("conformance suite must run shadow (§13.3 shadow-first), got %q", doc.Policy.Mode)
+		t.Fatalf("conformance suite must run shadow (§13.3 shadow-first), got %q", doc.Policy.Mode) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 	}
 	return doc
 }
@@ -164,7 +164,7 @@ func asF(v any) float64 {
 	return 0
 }
 
-// ---- oracle: §13.3 recomputed independently of the package under test.
+// ---- oracle: the spec's ban algorithm recomputed independently of the package under test.
 
 // oracleScore recomputes Σ w·e^(−λ·age) over the events (age ≤ findtime).
 func oracleScore(events []rateban.ScoredEvent, at int64) (float64, error) {
@@ -221,7 +221,7 @@ func TestScoredWindowBanConformance(t *testing.T) {
 				r := int64(asF(recids[i]))
 				want := int64(asF(wants[i]))
 				if got := untilFor(r); got != want {
-					t.Fatalf("κ^%d bantime: fixture says %d, §13.3 formula says %d", r, want, got)
+					t.Fatalf("κ^%d bantime: fixture says %d, §13.3 formula says %d", r, want, got) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 				}
 			}
 		}
@@ -281,7 +281,7 @@ func runFixture(t *testing.T, fx fxFixture) {
 			clock = step.At
 			got := eng.Observe(ev.Key)
 			if got.ActiveBan {
-				// §13.3 step 2: active ban → no re-scoring; the engine
+				// Ban-algorithm step 2: active ban → no re-scoring; the engine
 				// reports score 0 by convention. Assert state + the
 				// no-reban rule, not a decayed score.
 				if !got.WouldBan == false {
@@ -337,7 +337,7 @@ func runFixture(t *testing.T, fx fxFixture) {
 				}
 				wantRecords++
 				if ev.WantUntil != nil && recs[0].UntilSec != *ev.WantUntil {
-					t.Fatalf("step %d: until: record %d, §13.3 formula %d", i, recs[0].UntilSec, *ev.WantUntil)
+					t.Fatalf("step %d: until: record %d, §13.3 formula %d", i, recs[0].UntilSec, *ev.WantUntil) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 				}
 			}
 			prevScore = got.Score
@@ -357,18 +357,18 @@ func runFixture(t *testing.T, fx fxFixture) {
 			}
 			rec := recs[len(recs)-1]
 			if step.BanAt.WantUntil != nil && rec.UntilSec != *step.BanAt.WantUntil {
-				t.Fatalf("step %d: until: record %d, §13.3 formula %d", i, rec.UntilSec, *step.BanAt.WantUntil)
+				t.Fatalf("step %d: until: record %d, §13.3 formula %d", i, rec.UntilSec, *step.BanAt.WantUntil) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 			}
 		case step.ExpectNoEnforcement != nil:
 			if eng.Enforced() {
-				t.Fatalf("step %d: shadow engine reported enforcement — §13.3 shadow-first violated", i)
+				t.Fatalf("step %d: shadow engine reported enforcement — §13.3 shadow-first violated", i) // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 			}
 		default:
 			t.Fatalf("step %d: unknown shape", i)
 		}
 	}
 
-	// evidence-check contracts (§13.5/R11 shapes on every would-ban record)
+	// evidence-check contracts (the spec's ban-observability and R11 risk-row shapes on every would-ban record)
 	want := map[string]bool{}
 	for _, c := range fx.EvidenceChecks {
 		want[c] = true
@@ -376,7 +376,7 @@ func runFixture(t *testing.T, fx fxFixture) {
 	checkEvidence(t, fx.ID, evidence, wantRecords, want)
 }
 
-// checkEvidence pins the R11/§13.5 evidence contracts.
+// checkEvidence pins the R11 ban-observability evidence contracts.
 func checkEvidence(t *testing.T, id string, evs []rateban.BanEvidence, wantRecords int, want map[string]bool) {
 	t.Helper()
 	if len(evs) < wantRecords {

@@ -44,13 +44,13 @@ func readPRD(t *testing.T) string {
 	return string(b)
 }
 
-// TestSpecSection2Contiguity fails while the D-ladder skips §2.5
-// (D5 at §2.6, D6 at §2.7). See issue #60.
+// TestSpecSection2Contiguity fails while the D-ladder skips a rung (each
+// later decision lands one section past its D-number). See issue #60.
 func TestSpecSection2Contiguity(t *testing.T) {
 	prd := readPRD(t)
 	ms := reH3Num.FindAllStringSubmatch(prd, -1)
 	if len(ms) == 0 {
-		t.Fatal("no numbered §2.x headings found")
+		t.Fatal("no numbered §2.x headings found") // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 	}
 	want := 1
 	for _, m := range ms {
@@ -59,7 +59,7 @@ func TestSpecSection2Contiguity(t *testing.T) {
 			got = got*10 + int(c-'0')
 		}
 		if got != want {
-			t.Fatalf("§2 numbering gap: found §2.%d where §2.%d expected (found: %v)",
+			t.Fatalf("§2 numbering gap: found §2.%d where §2.%d expected (found: %v)", // TR-91 census: spec citation inside string literal; kept (conversion would change behavior)
 				got, want, seq(ms))
 		}
 		want++
@@ -120,7 +120,7 @@ func itoa(n int) string {
 	return string(b)
 }
 
-// --- TR-23 (issue #23): the DX1 timed gate (PRD §5 DX1, §21 M3) -------------
+// --- TR-23 (issue #23): the DX1 timed gate (the spec's DX-charter row DX1,
 //
 // The DX1 charter and the M3 gate name one timing: a developer's first
 // custom rule is enforced ≤ 15 min from `git clone`, nightly-timed in CI.
@@ -128,7 +128,7 @@ func itoa(n int) string {
 // that gate:
 //  1. lab/dx1/README.md documents the timed gate script, the ≤ 15 min
 //     budget, the nightly runner and the first-enforced-rule claim, and
-//     cites the §21 M3 anchor.
+//     cites the spec's M3 adoption-gate anchor.
 //  2. docs/academy/README.md links the DX1 lab path.
 //  3. README.md names the gate script and the nightly workflow, and the
 //     workflow file exists.

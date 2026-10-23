@@ -7,7 +7,7 @@ import (
 
 // Wire contract (internal/shield/banwire_test.go, defect #62 amended):
 // keys carry a family-discriminated 16-byte address union — a bare u32
-// cannot represent IPv6 (dual-stack §9.3: acl4/acl6; §13.3: /24 vs /48).
+// cannot represent IPv6 (dual-stack: the spec's acl4/acl6 map pair; the /24-vs-/48 ban prefix rule).
 //
 //   struct ban_key {
 //       union { __be32 v4; __u8 v6[16]; } addr;   // network byte order
@@ -24,7 +24,7 @@ const (
 	FamilyV6 uint8 = 6
 )
 
-// Key classes (§19.1 prose); PR #2 grows the set (ja4_cluster, prefix).
+// Key classes (the reference-implementation prose); PR #2 grows the set (ja4_cluster, prefix).
 const (
 	KeyClassIP uint8 = 0
 )
@@ -95,11 +95,11 @@ const (
 	VerdictDrop  uint8 = 1
 )
 
-// ShieldSpec is the compiled-object contract (§19.1 names/sizes/types).
+// ShieldSpec is the compiled-object contract (reference-implementation names/sizes/types).
 // Zero-value = the PRD pin; a caller may only tighten via tests.
 type ShieldSpec struct{}
 
-// MapSpec is one §19.1 map contract row (name, kind, max_entries).
+// MapSpec is one reference-implementation map contract row (name, kind, max_entries).
 type MapSpec struct {
 	Name       string
 	Kind       string // lpm_trie | lru_hash | ringbuf

@@ -3,7 +3,7 @@ package bench
 // Guard: the gate's verdict logic, pure — budget bounds (p99 + the
 // optional p50 row bound), the floor kind, the 10-pct regression rule
 // over a recorded baseline, and the machine-factor normalization. One
-// concern: the §17.2 gate semantics.
+// concern: the spec's benchmark-plan gate semantics.
 import (
 	"strings"
 	"testing"
