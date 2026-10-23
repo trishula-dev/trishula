@@ -50,7 +50,7 @@ slice lands as a watched-RED then GREEN leaf PR per [AGENTS.md](AGENTS.md).
 | Operator compile + reconcile | [`internal/operator/`](https://github.com/trishula-dev/trishula/commit/cb60e2b0cd3463f84e72acf3d07356cacda66f2a) · [`api/v1alpha1/`](https://github.com/trishula-dev/trishula/commit/2826178d6c489df2a785b7b7d9ace0c3a644c494) | `WAFPolicy` CRD (controller-gen artifacts committed) → Bundle v1 compile (fail closed) → CRD watch → `bundle.json` publish; sealed in-process compile→load round-trip test. | [#76 M9 evidence](https://github.com/trishula-dev/trishula/issues/76#issuecomment-6093110531): apply→effect 2618 ms + fail-closed; compile→load round-trip test (#98, [https://github.com/trishula-dev/trishula/issues/75](https://github.com/trishula-dev/trishula/issues/75) closed on it) |
 | Engine: consult + hot-reload | [`cmd/engine/`](https://github.com/trishula-dev/trishula/commit/cb60e2b0cd3463f84e72acf3d07356cacda66f2a) | transparent proxy host (`--upstream`, `X-Trishula-Hop`) + bundle consult (`--bundle`) with polled hot-reload and `-receive-bundle` in-cluster delivery; engine-local `/healthz`. | [#6 delivery + hop evidence](https://github.com/trishula-dev/trishula/issues/6#issuecomment-6091986517) |
 | Operator runtime | [`cmd/operator/`](https://github.com/trishula-dev/trishula/commit/cb60e2b0cd3463f84e72acf3d07356cacda66f2a) | the real CRD watch loop + healthz :1936 (the image the lab deploys). | [#76 M9 E2E](https://github.com/trishula-dev/trishula/issues/76#issuecomment-6093110531) |
-| DX1 lab | [`lab/dx1/`](https://github.com/trishula-dev/trishula/commit/8bc24a27d6b4e0ca839e22453f9c519a13e3000c) · [`lab/demo.sh`](https://github.com/trishula-dev/trishula/commit/ed9b2714512ecad1bb6b0960eeeb7951e9693726) | idempotent setup (OrbStack/kind + NGF + engine + echo), apply→effect M9 timer, hop verification — composed by `lab/demo.sh`, one command. | the [Proof](#proof-labdemosh-output-verbatim) below (this run) + [#6 live hop evidence](https://github.com/trishula-dev/trishula/issues/6#issuecomment-6091479891) |
+| DX1 lab | [`lab/dx1/`](https://github.com/trishula-dev/trishula/commit/8bc24a27d6b4e0ca839e22453f9c519a13e3000c) · [`lab/demo.sh`](https://github.com/trishula-dev/trishula/commit/ed9b2714512ecad1bb6b0960eeeb7951e9693726) | idempotent setup (OrbStack/kind + NGF + engine + echo), apply→effect M9 timer, hop verification — composed by `lab/demo.sh`, one command; the timed gate `lab/dx1/dx1-gate.sh` asserts the M3 timing (clone → first enforced rule ≤ 15 min), nightly-timed by [.github/workflows/lab-nightly.yml](.github/workflows/lab-nightly.yml). | the [Proof](#proof-labdemosh-output-verbatim) below (this run) + [#6 live hop evidence](https://github.com/trishula-dev/trishula/issues/6#issuecomment-6091479891); the M3 gate's recorded nightly timing rides `lab-nightly` (first run recorded on the TR-23 PR) |
 
 ## What does not exist yet (honest)
 
@@ -101,6 +101,11 @@ docs/             PRD, paper, academy
 ```bash
 bash lab/demo.sh
 ```
+
+The DX1 timed gate runs as `bash lab/dx1/dx1-gate.sh`. The gate asserts
+the M3 timing: clone → first enforced rule in ≤ 15 min. The nightly job
+([.github/workflows/lab-nightly.yml](.github/workflows/lab-nightly.yml))
+runs it and keeps the timing asserted.
 
 The script runs on a Docker-provider host (kind or OrbStack Kubernetes)
 with `go`, `kubectl`, `helm`, `docker` and `curl`. It builds the linux
