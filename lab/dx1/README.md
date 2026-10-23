@@ -106,6 +106,38 @@ re-applies the rule-pack configmaps, resets to a clean policy slate, and
 re-times the scenario. Probes are POST (`request.method == "POST"` in the
 enforced rule); cluster is left running.
 
+## The DX1 timed gate — clone → first enforced rule (M3)
+
+```bash
+bash lab/dx1/dx1-gate.sh
+```
+
+One command from a repo checkout. The gate builds the linux engine and
+operator binaries from the tree when missing, brings the lab up, times
+the apply→effect leg and runs the hop evidence. The gate asserts the DX1
+charter (§5 DX1) and the M3 gate
+([§21 M3](https://github.com/trishula-dev/trishula/blob/main/docs/PRD.md#21-success-metrics--adoption-gates)):
+**clone → first enforced rule ≤ 15 min.**
+
+- `DX1_START` (epoch seconds) — the clock anchor. The nightly job sets it
+  right after checkout; the measured window then covers the full clone →
+  rule path. A plain run anchors at script start.
+- `DX1_TARGET` (seconds, default 900) — the budget: the M3 target of
+  ≤ 15 min.
+
+The first-enforced-rule moment comes from the apply-effect leg: the leg's
+t0 plus its measured apply→effect latency. The gate prints the leg table
+and names the moment (`first enforced rule at Ns`), and FAILs above the
+budget. The fail-closed broken-policy path and the hop evidence run after
+the M3 moment; they fail the gate, they never inflate the reading.
+
+The nightly job
+([.github/workflows/lab-nightly.yml](../../.github/workflows/lab-nightly.yml))
+checks this repo out on a hosted runner, anchors the clock and runs this
+gate: kind + NGF + Trishula + one CEL rule, anonymous pulls only. The
+nightly run is the M3 evidence: the timed schedule stays green under
+15 min.
+
 ## Notes
 
 - The NGF chart ships from the NGINX OCI registry

@@ -1,0 +1,57 @@
+# TR-23 (issue #23, PRD §5 DX1 + §21 M3) — the nightly DX1 timing run.
+#
+# kind + NGF + one enforced CEL rule on a hosted runner. The DX1 gate
+# (lab/dx1/dx1-gate.sh) anchors the clock at the job start and asserts
+# the M3 budget: clone → first enforced rule ≤ 15 min. A red run is the
+# gate working: the lab exceeded the budget. The timing table sits in
+# the job log and the run summary.
+name: lab-nightly
+
+on:
+  schedule:
+    - cron: "45 2 * * *"   # nightly, 02:45 UTC — off-peak
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  dx1-gate:
+    name: "DX1 timed gate (M3: clone → first enforced rule ≤ 15 min)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Anchor the DX1 clock (the clone → first-rule window starts here)
+        run: echo "DX1_START=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - name: Install kind v0.33.0 + crane v0.22.1
+        run: |
+          set -euo pipefail
+          curl -sSfL -o /usr/local/bin/kind \
+            "https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64"
+          chmod +x /usr/local/bin/kind
+          CRANE_DIR="$(mktemp -d)"
+          curl -sSfL \
+            "https://github.com/google/go-containerregistry/releases/download/v0.22.1/go-containerregistry_Linux_x86_64.tar.gz" \
+            | tar zx -C "${CRANE_DIR}" crane
+          install -m 755 "${CRANE_DIR}/crane" /usr/local/bin/crane
+          rm -rf "${CRANE_DIR}"
+          kind version
+          crane version
+      - name: DX1 timed gate
+        env:
+          DX1_TARGET: "900"
+        run: bash lab/dx1/dx1-gate.sh
+      - name: DX1 timing summary
+        if: always()
+        run: |
+          if [ -f /tmp/dx1-gate-timing.md ]; then
+            cat /tmp/dx1-gate-timing.md > "$GITHUB_STEP_SUMMARY"
+          else
+            echo "the gate did not reach its timing read" >> "$GITHUB_STEP_SUMMARY"
+          fi
