@@ -151,13 +151,10 @@ func (v *Verifier) verifyAsset(a AssetSpec) *AssetResult {
 }
 
 // bindStatement reports whether one candidate statement of the required
-// predicate type binds the asset: the subject digest equals the asset
-// digest and, for provenance, the builder id sits inside the repository
-// identity. It appends the reject reasons where no statement binds.
-//
-// TR-81 multi-subject RED stub: only the statement's first subject binds.
-// The GREEN commit widens the binding to every subject the statement
-// carries; the released attest statements name all release assets.
+// predicate type binds the asset: any subject digest of the statement
+// equals the asset digest and, for provenance, the builder id sits inside
+// the repository identity. It appends the reject reasons where no
+// statement binds.
 func (v *Verifier) bindStatement(candidates []Statement, a AssetSpec, checkBuilder bool, reasons *[]string) bool {
 	predicate := PredSBOM
 	if checkBuilder {
@@ -168,7 +165,14 @@ func (v *Verifier) bindStatement(candidates []Statement, a AssetSpec, checkBuild
 		return false
 	}
 	for _, st := range candidates {
-		if len(st.SubjectDigests) == 0 || st.SubjectDigests[0] != a.SHA256 {
+		bound := false
+		for _, d := range st.SubjectDigests {
+			if d == a.SHA256 {
+				bound = true
+				break
+			}
+		}
+		if !bound {
 			*reasons = append(*reasons, fmt.Sprintf("%s: %s", reasonSubjectMismatch, strings.Join(st.SubjectDigests, ", ")))
 			continue
 		}
