@@ -134,6 +134,14 @@ func clockOrZero(tx *ingest.TxContext) uint64 {
 	return tx.LastNS
 }
 
+// TxView reads the attached §11.3 view back from a tx (nil = none
+// attached). Exported read half of AttachView: cross-package consumers
+// (the S7 ML extractor, TR-21) share this key literally instead of
+// duplicating the attachment constant.
+func TxView(tx *ingest.TxContext) *cel.Request {
+	return nil // TR-21 RED stub: GREEN wires the single-homed read
+}
+
 // CELEval is the TR-05c S3 slot (the TR-02 seed pack evaluation). v0 runs
 // over the REQUEST parsed into the view (AttachView). Verdicts are
 // LOG-ONLY at this slice: an enforce-declared rule action never becomes
