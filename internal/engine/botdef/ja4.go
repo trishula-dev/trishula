@@ -1,9 +1,12 @@
-// Package botdef implements the §12 bot-detector family v0: JA4 TLS client
+// Package botdef implements the §12 bot-detector family: JA4 TLS client
 // fingerprinting (terminated-hop ClientHello summary in, FoxIO JA4 string
-// out) and the h1-style header-plane fingerprint (ordered normalized
+// out), the h1-style header-plane fingerprint (ordered normalized
 // header-name vector + presence vector + casing/UA/AL evidence, stable hash
-// + tool-vs-browser classification), glued to the ladder as §19.1 S5
-// StageBots evaluators over the ingest transaction context.
+// + tool-vs-browser classification), the §12.1 behavioral family
+// (behavior.go: per-source sliding windows — pacing, auth-failure ratio,
+// endpoint uniqueness) and the §12.1 merge policy (verdict.go: per-detector
+// verdicts, consensus over distinct families), glued to the ladder as
+// §19.1 S5 StageBots evaluators over the ingest transaction context.
 //
 // TR-12 v0 SLICE BOUNDARIES (deliberate):
 //
@@ -16,8 +19,8 @@
 //     the computed fingerprints + header-plane contradiction evidence.
 //   - JA4H (FoxIO's HTTP client fingerprint) is deliberately NOT claimed:
 //     FoxIO's published JA4H hash vectors lack reconstructible inputs
-//     (technical_details/JA4H.md is an unpublished stub). v0 computes the
-//     header fingerprint below and leaves the JA4H hash as TR-19 work.
+//     (technical_details/JA4H.md is an unpublished stub). The h1-style
+//     header fingerprint below stays the in-repo equivalent.
 //
 // All of the below is FoxIO JA4+ surface; JA4 itself is BSD-3-Clause, the
 // JA4+ family FoxIO License 1.1 (README.md, FoxIO-LLC/ja4). This package
