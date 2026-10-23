@@ -19,13 +19,23 @@ const (
 )
 
 // Detector is the §12 bot detector: a ladder Evaluator at the fixed S5
-// StageBots slot. v0 emits ONLY log-tier fragments (PRD §12: single-detector
-// matches log and score — consensus/blocking arrives with TR-19's merge
-// policy). Detached transactions (no attached ClientHelloSummary and/or
-// HeaderView — the state of every tx until TR-15/29 wire the extraction)
-// produce NO fragment; the S5 stage stays silent rather than fabricate a
-// verdict. No-op when the engine is unwired (ladder skips empty slots).
-type Detector struct{}
+// StageBots slot. v1 (TR-19) adds the §12.1 behavioral family and the
+// merge policy: per-detector verdicts over the three families; a consensus
+// above the family floor resolves the decisive action, a single family
+// keeps the log tier (single-detector matches log and score). Detached
+// transactions (no attached ClientHelloSummary, HeaderView or
+// BehaviorObservation) produce NO fragment; the S5 stage stays silent
+// rather than fabricate a verdict. No-op when the engine is unwired
+// (ladder skips empty slots).
+type Detector struct {
+	// Behavior consults per-source behavioral windows when non-nil
+	// (§12.1 behavioral family; nil = the family stays out of the walk,
+	// the v0 posture).
+	Behavior *BehaviorWindows
+	// Policy merges the per-detector verdicts into the S5 action
+	// (§12.1; a zero policy keeps the log tier).
+	Policy MergePolicy
+}
 
 // ruleBotJA4 / ruleBotHeaders are the §12 (detector_id, evidence) rule ids
 // the S5 fragment carries (ladder.Rules, walk order).
@@ -42,8 +52,14 @@ const (
 	botScoreJa4Prior     = 2 // JA4 present (a prior per §12.3, never a verdict)
 )
 
-// NewDetector builds the bot detector (stateless v0).
-func NewDetector() *Detector { return &Detector{} }
+// NewDetector builds the bot detector on the v1 defaults: the behavioral
+// windows on the pinned thresholds and the §12.1 merge policy.
+func NewDetector() *Detector {
+	return &Detector{
+		Behavior: NewBehaviorWindows(DefaultBehaviorWindowConfig()),
+		Policy:   DefaultMergePolicy(),
+	}
+}
 
 // Stage pins the fixed §19.1 ladder position: S5 bots.
 func (d *Detector) Stage() ladder.Stage { return ladder.StageBots }
