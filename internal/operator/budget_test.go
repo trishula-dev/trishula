@@ -7,6 +7,7 @@ import (
 
 	"github.com/trishula-dev/trishula/api/v1alpha1"
 	"github.com/trishula-dev/trishula/internal/engine/cel"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // TR-17 (issue #17, PRD §11.3 + G4): the WAFPolicy apply declares the CEL
@@ -58,9 +59,12 @@ func TestLoadRejectsUnusableDeclaredBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse budgeted pack: %v", err)
 	}
-	b, err := Compile(v1alpha1.WAFPolicy{Spec: v1alpha1.WAFPolicySpec{
-		DefaultAction: v1alpha1.DefaultActionLog,
-	}})
+	b, err := Compile(v1alpha1.WAFPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "budget-policy", Namespace: "lab"},
+		Spec: v1alpha1.WAFPolicySpec{
+			DefaultAction: v1alpha1.DefaultActionLog,
+		},
+	})
 	if err != nil {
 		t.Fatalf("compile seed bundle: %v", err)
 	}

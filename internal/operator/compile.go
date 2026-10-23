@@ -103,6 +103,11 @@ type Bundle struct {
 	// canonical JSON encoding (compile-time integrity evidence; Load
 	// re-verifies them against the packs).
 	RulePackDigests []string `json:"rulePackDigests"`
+	// Tenant is the bundle's tenant binding: the WAFPolicy's namespace
+	// (PRD §20.1 R8). Stub state (RED, TR-25): the field exists on the
+	// wire and its tests fail against the zero value; the GREEN commit
+	// stamps it at Compile and gates it at Load (fail closed).
+	Tenant string `json:"tenant"`
 }
 
 // seedPackPath locates the seed rule pack relative to this package
