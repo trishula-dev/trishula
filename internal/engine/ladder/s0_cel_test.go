@@ -52,6 +52,22 @@ func celTx(t *testing.T, packYaml, method, path string, windows map[string]int64
 	return tx, ev
 }
 
+// --- S7 view seam (TR-21) ------------------------------------------------
+
+// TestTxViewExportedReadback pins the exported read half of the view
+// attachment contract: attach then read back through the same key, nil
+// for a tx with no view.
+func TestTxViewExportedReadback(t *testing.T) {
+	tx, _ := celTx(t, seedRuleYaml, "POST", "/v1/chat/completions", nil)
+	view := TxView(tx)
+	if view == nil || view.Path != "/v1/chat/completions" {
+		t.Fatalf("TxView: got %+v, want the attached view", view)
+	}
+	if got := TxView(&ingest.TxContext{}); got != nil {
+		t.Errorf("TxView: got %+v, want nil for a view-less tx", got)
+	}
+}
+
 // --- S3 CEL tests ------------------------------------------------------
 
 // TestCELEvalMatchLogsPinsLogOnly is the issue-#5-posture pin: a matching
