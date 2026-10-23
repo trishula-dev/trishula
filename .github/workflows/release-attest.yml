@@ -79,7 +79,7 @@ jobs:
           set -euo pipefail
           gh release download "$TAG" --repo trishula-dev/trishula --dir assets
       - name: Generate the SBOM over the release assets
-        uses: anchore/sbom-action@f8706fc06deabb1adc34978fc92896fdcd3d17fe # v0.24.3
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           path: assets
           format: spdx-json
@@ -87,11 +87,11 @@ jobs:
           upload-artifact: false
           upload-release-assets: false
       - name: Attest every asset with build provenance
-        uses: actions/attest-build-provenance@9d57eef8c06cd9d6b433effeeb7a6a77b3ff94ad # v4.2.2
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: assets/*
       - name: Attest every asset with the SBOM
-        uses: actions/attest-sbom@4c8abdcbea4a6b66f70fd1169e70af4bf5b13701 # v4.1.0
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
           sbom-path: sbom.spdx.json
           subject-path: assets/*
