@@ -21,6 +21,7 @@ import (
 	"github.com/trishula-dev/trishula/api/v1alpha1"
 	"github.com/trishula-dev/trishula/internal/engine/cel"
 	"github.com/trishula-dev/trishula/internal/operator"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // sqliPack is the enforced rule pack the lab policy resolves (the same
@@ -46,6 +47,9 @@ func compileLabBundle(t *testing.T) []byte {
 		t.Fatalf("parse pack: %v", err)
 	}
 	policy := v1alpha1.WAFPolicy{
+		// The lab CR's namespace (dx1): the bundle's tenant binding at
+		// compile (TR-25, PRD §20.1 R8).
+		ObjectMeta: metav1.ObjectMeta{Name: "dx1-wafpolicy", Namespace: "dx1"},
 		Spec: v1alpha1.WAFPolicySpec{
 			// The lab CR's default (dx1-wafpolicy.yaml): undecided requests
 			// pass; the enforced SQLi rule is the blocking leg.

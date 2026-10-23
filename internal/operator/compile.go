@@ -15,6 +15,8 @@
 //
 //	{
 //	  "formatVersion": 1,     // this schema; Load rejects future versions
+//	  "tenant": "lab",        // the policy namespace (§20.1 R8; Load
+//	                          // rejects the empty value)
 //	  "policy": {             // compiled policy view (§16.2 spec, verbatim)
 //	    "defaultAction": "block",
 //	    "modeFlags": {"inline":true, "shield":true, "shadow":false},
@@ -41,6 +43,17 @@
 // today's v0 WAFPolicy surface carries no ACL prefixes or verdict-cache
 // entries, so the record holds empty maps — the shape the shield-side
 // loader consumes, never nil after Compile.
+//
+// # Tenant binding (TR-25, §20.1 R8)
+//
+// The bundle binds its tenant ("CRD namespacing; per-tenant compiled
+// bundles"). Tenant is the WAFPolicy's namespace: Compile stamps it from
+// the policy object and rejects a namespace-less policy, and Load rejects
+// a bundle without it. A bundle never leaves the operator unqualified
+// (fail closed). The v0 transport carries the binding per tenant: the
+// bundle ConfigMap lands in the policy's own namespace (cmd/operator), so
+// tenants never share a publish slot. Bundles compiled before TR-25 carry
+// no tenant and fail the Load gate.
 package operator
 
 import (
@@ -103,6 +116,10 @@ type Bundle struct {
 	// canonical JSON encoding (compile-time integrity evidence; Load
 	// re-verifies them against the packs).
 	RulePackDigests []string `json:"rulePackDigests"`
+	// Tenant is the bundle's tenant binding: the WAFPolicy's namespace
+	// (§20.1 R8). Compile stamps it; Load rejects the empty value (fail
+	// closed — an unqualified bundle cannot bind a tenant).
+	Tenant string `json:"tenant"`
 }
 
 // seedPackPath locates the seed rule pack relative to this package
@@ -122,8 +139,12 @@ var seedPackBytes []byte
 // Compile compiles a WAFPolicy into a Bundle (§8 step 1), in-process: no
 // cluster reads here (the reconcile loop is TR-08c). The v0 CEL plane is
 // always the TR-02 seed rule pack; CRS rule-set refs are validated and
-// recorded as the CRS plane descriptor.
+// recorded as the CRS plane descriptor. The bundle binds its tenant: the
+// policy's namespace (§20.1 R8, fail closed on an empty one).
 func Compile(policy v1alpha1.WAFPolicy) (Bundle, error) {
+	if policy.Namespace == "" {
+		return Bundle{}, errors.New("compile: WAFPolicy carries no namespace (§20.1 R8: every bundle binds its tenant)")
+	}
 	switch policy.Spec.DefaultAction {
 	case v1alpha1.DefaultActionBlock, v1alpha1.DefaultActionChallenge,
 		v1alpha1.DefaultActionLog, v1alpha1.DefaultActionPass, "":
@@ -132,6 +153,7 @@ func Compile(policy v1alpha1.WAFPolicy) (Bundle, error) {
 	}
 	b := Bundle{
 		FormatVersion: BundleFormatVersion,
+		Tenant:        policy.Namespace,
 		Policy: Policy{
 			DefaultAction: policy.Spec.DefaultAction,
 			ModeFlags:     policy.Spec.ModeFlags,
@@ -258,6 +280,9 @@ type Eval struct {
 func Load(bundle Bundle) (*Eval, error) {
 	if bundle.FormatVersion != BundleFormatVersion {
 		return nil, fmt.Errorf("load: bundle formatVersion %d, want %d", bundle.FormatVersion, BundleFormatVersion)
+	}
+	if strings.TrimSpace(bundle.Tenant) == "" {
+		return nil, errors.New("load: bundle carries no tenant (§20.1 R8: per-tenant bundles are namespaced)")
 	}
 	if bundle.KernelValues == nil {
 		return nil, errors.New("load: kernelValues must be present (empty maps at v0), not nil")
