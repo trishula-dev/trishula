@@ -280,6 +280,22 @@ func TestLoadGateValidatesFastPathLeg(t *testing.T) {
 			routes:  []FastPathRoute{{Prefix: strings.Repeat("a", fastpath.RouteTemplatePrefixMaxBytes+1), Action: 0}},
 			wantErr: "spec.routes[0].prefix",
 		},
+		{
+			name: "duplicate prefix",
+			routes: []FastPathRoute{
+				{Prefix: "/admin", Action: 0}, {Prefix: "/admin", Action: 1},
+			},
+			wantErr: "spec.routes[1].prefix",
+		},
+		{
+			name: "nine rows past the bound",
+			routes: []FastPathRoute{
+				{Prefix: "/a", Action: 0}, {Prefix: "/b", Action: 0}, {Prefix: "/c", Action: 0}, {Prefix: "/d", Action: 0},
+				{Prefix: "/e", Action: 1}, {Prefix: "/f", Action: 1}, {Prefix: "/g", Action: 1}, {Prefix: "/h", Action: 1},
+				{Prefix: "/i", Action: 1},
+			},
+			wantErr: "spec.routes",
+		},
 	}
 	for _, row := range rows {
 		tampered := bundle
@@ -287,6 +303,8 @@ func TestLoadGateValidatesFastPathLeg(t *testing.T) {
 		if _, err := Load(tampered); err == nil {
 			t.Errorf("%s: Load accepted the kernel leg, want a staged gate failure", row.name)
 			continue
+		} else if !strings.Contains(err.Error(), row.wantErr) {
+			t.Errorf("%s: Load err = %v, want it to name %q", row.name, err, row.wantErr)
 		}
 	}
 }
