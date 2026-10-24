@@ -178,6 +178,27 @@ type Parser struct {
 	// released marks the streams whose head reconstructed (exactly-once
 	// release; a later HEADERS block on a marked stream is trailers).
 	released map[uint32]bool
+	// heads/resets are the TR-31 connection accounting (ResetStats): the
+	// consumed header blocks and the stream resets, incremented in Next's
+	// frame dispatch. They never gate the walk.
+	heads, resets uint64
+}
+
+// ResetStats is one connection's frame accounting for the h2 rapid-reset
+// shape (the ban plane's DoS-response section, TR-31): Heads counts the
+// header blocks consumed (each opens one stream view), Resets counts the
+// stream resets seen. The reset ratio over the head count is the
+// rapid_reset_suspect input; the counters say nothing about verdicts.
+type ResetStats struct {
+	Heads  uint64
+	Resets uint64
+}
+
+// Stats returns the counters so far. Read-only: the walk keeps its state
+// and the counters never gate it (fail-open: an under-reporting parser
+// cannot block a stream, only under-evidence a cue).
+func (p *Parser) Stats() ResetStats {
+	return ResetStats{Heads: p.heads, Resets: p.resets}
 }
 
 // New builds a connection parser over w. opts may be nil (defaults apply).
@@ -247,6 +268,7 @@ func (p *Parser) Next() (*Request, error) {
 		}
 		switch f := f.(type) {
 		case *http2.MetaHeadersFrame:
+			p.heads++ // TR-31: every consumed header block opens one stream view
 			if p.released[f.StreamID] {
 				continue // trailers (or a repeat block): never a second release
 			}
@@ -260,8 +282,10 @@ func (p *Parser) Next() (*Request, error) {
 		case *http2.GoAwayFrame:
 			return nil, fmt.Errorf("%w (last stream %d, code %v)",
 				ErrGoAway, f.LastStreamID, f.ErrCode)
+		case *http2.RSTStreamFrame:
+			p.resets++ // TR-31: the storm shape reads the reset count
 		default:
-			// DATA, SETTINGS, PING, WINDOW_UPDATE, PRIORITY, RST_STREAM,
+			// DATA, SETTINGS, PING, WINDOW_UPDATE, PRIORITY,
 			// unknown types: consumed and dropped at the head-only slice.
 		}
 	}

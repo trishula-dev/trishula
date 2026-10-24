@@ -60,8 +60,8 @@ import (
 	residue "github.com/trishula-dev/trishula/internal/shield/residue"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target amd64,arm64 residue_shield ../../bpf/shield_xdp.c -- -I../../bpf -O2 -g
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target amd64,arm64 residue_flow ../../bpf/flow_tc.c -- -I../../bpf -I../../bpf/include -O2 -g
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -output-suffix "" -target amd64,arm64 residue_shield ../../bpf/shield_xdp.c -- -I../../bpf -O2 -g
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -output-suffix "" -target amd64,arm64 residue_flow ../../bpf/flow_tc.c -- -I../../bpf -I../../bpf/include -O2 -g
 
 const (
 	nsName   = "tr35b"

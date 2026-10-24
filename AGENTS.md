@@ -128,6 +128,7 @@ bash -cl '...'`), never a mac-only assertion.
 | M9 timing | `lab/dx1/apply-effect.sh` | CRD apply → effect ≤5 s |
 | Parity | `go test ./test/crs-differential/` | CRS reference verdict parity (CI-blocking) |
 | Ban enforcement | `go test -tags ban_e2e ./test/banenforce/` | kernel shot + expiry + reconciler + evidence JSONL |
+| DoS detector features (TR-31) | `sudo go test -tags ingest4d -run TestFlowStatsDoSFeaturesE2E ./internal/engine/ingest/ -v` | the flow map's window features live (segs/bytes, first/last segment stamps, both families); fail-open (traffic lands, ban table empty); zero-residue teardown by identity |
 | Attack demo | `lab/demo-attack.sh` (sudo, Linux) | full attack replay: CRS + BOLA + kernel drop |
 | Exit-gate demo | `lab/demo.sh` | one command: DX1 setup + M9 apply→effect + hop evidence |
 

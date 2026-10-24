@@ -14,7 +14,9 @@ package ingest
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -22,11 +24,13 @@ import (
 	"testing"
 	"time"
 
+	rateban "github.com/trishula-dev/trishula/internal/engine/rateban"
+
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/ringbuf"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target native ingest_flow ../../../bpf/flow_tc.c -- -I../../../bpf -I../../../bpf/include -O2 -g
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -output-suffix "" -target amd64,arm64 ingest_flow ../../../bpf/flow_tc.c -- -I../../../bpf -I../../../bpf/include -O2 -g
 
 const (
 	e2ePort uint16 = 8080
@@ -297,4 +301,398 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+
+// --- TR-31: the behavioural DoS detector features (kernel-gated) --------
+
+// The feature read rides the generated BTF mirrors (ingest_flowFlowKey /
+// ingest_flowFlowStat) — the wire-contract rule: kernel objects flow
+// through generated bindings, and a layout drift fails the load loudly.
+
+// doSNet constants: TR-31's gate lab (namespaced against every sibling
+// gate: tr04d, tr35b, tr35h0...).
+const (
+	doSNS     = "tr31"
+	doSVethH  = "tr31h"
+	doSVethN  = "tr31n"
+	doSNSv4   = "10.31.7.66/24"
+	doSHostv4 = "10.31.7.1/24"
+	doSPin    = "/sys/fs/bpf/tr31/tc_ingress_waf"
+	// the paced raw burst: sport/dport picked for row-discovery; the
+	// payload is 9 bytes per segment — the trickle shape.
+	doSSport = 6666
+	doSDport = 9440
+	doSGet   = "GET /tr31 HTTP/1.1\r\nHost: x\r\n\r\n"
+)
+
+// pacedInject is the slowloris-shaped burst the gate drives: 28 TCP
+// PS+ACK segments, 9-byte payloads, 90 ms apart (~2.4 s span), one
+// 5-tuple. AF_PACKET raw frames traverse clsact per frame on this kernel
+// (the 2025-10-25 probe run recorded per-frame accumulation).
+const pacedInject = `import socket,struct,time
+s=socket.socket(socket.AF_PACKET,socket.SOCK_RAW)
+s.bind(("tr31n",0x0800))
+dmac=b"\x02\x00\xde\xad\xbe\xef"
+smac=b"\x02\x00\xaa\xbb\xcc\xdd"
+def frame(seq):
+    pay=b"slowloris"
+    eth=struct.pack("!6s6sH",dmac,smac,0x0800)
+    iph=struct.pack("!BBHHHBBH4s4s",0x45,0,20+20+len(pay),1,0,64,6,0,socket.inet_aton("10.31.7.66"),socket.inet_aton("10.31.7.1"))
+    tcph=struct.pack("!HHIIBBHHH",6666,9440,seq,0,(5<<4),0x18,1024,0,0)
+    return eth+iph+tcph+pay
+seq=1000
+for i in range(28):
+    s.send(frame(seq)); seq+=len(b"slowloris"); time.sleep(0.09)
+print("paced-28-ok")`
+
+// forEachStat walks every flow_stats row (kernel-gated) through the
+// generated mirrors. A read failure fails the test — an unreadable
+// detector map is not a pass.
+func forEachStat(t *testing.T, m *ebpf.Map, fn func(k ingest_flowFlowKey, v ingest_flowFlowStat)) {
+	t.Helper()
+	var k ingest_flowFlowKey
+	var v ingest_flowFlowStat
+	it := m.Iterate()
+	for it.Next(&k, &v) {
+		fn(k, v)
+	}
+	if err := it.Err(); err != nil {
+		t.Fatalf("flow_stats iterate: %v (layout drift? the E2E fails loudly)", err)
+	}
+}
+
+// TestFlowStatsDoSFeaturesE2E proves the TR-31 detector feature plane on a
+// live kernel: the per-flow map carries the time-window features (segs,
+// bytes, first/last counted-segment timestamps); a SYN-first flow keeps
+// its syn stamp; a paced trickle accumulates per-segment; the accounting
+// path NEVER enforces (the ban table reads empty and real traffic keeps
+// passing — fail-open) and the teardown leaves zero residue (the
+// residue-gate pattern: identity-based, settled).
+//
+//	sudo go test -tags ingest4d -run TestFlowStatsDoSFeaturesE2E ./internal/engine/ingest/ -v
+func TestFlowStatsDoSFeaturesE2E(t *testing.T) {
+	mustRoot4d(t)
+
+	// Pre-cleanup (the residue-gate discipline): a previous failed run
+	// never blocks this one.
+	_ = os.RemoveAll(doSPin)
+	_ = os.RemoveAll("/sys/fs/bpf/tr31")
+	_ = exec.Command("ip", "netns", "del", doSNS).Run()
+	_ = exec.Command("ip", "link", "del", doSVethH).Run()
+
+	run4d(t, "ip", "netns", "add", doSNS)
+	defer func() {
+		// Tolerant cleanup: the teardown section may already have removed
+		// them (a Skipf/Fatal in a defer would clobber the verdict).
+		_ = exec.Command("ip", "netns", "del", doSNS).Run()
+		_ = exec.Command("ip", "link", "del", doSVethH).Run()
+	}()
+	run4d(t, "ip", "link", "add", doSVethH, "type", "veth", "peer", "name", doSVethN)
+	run4d(t, "ip", "link", "set", doSVethN, "netns", doSNS)
+	run4d(t, "ip", "addr", "add", doSHostv4, "dev", doSVethH)
+	run4d(t, "ip", "link", "set", doSVethH, "up")
+	run4d(t, "ip", "netns", "exec", doSNS, "ip", "addr", "add", doSNSv4, "dev", doSVethN)
+	run4d(t, "ip", "netns", "exec", doSNS, "ip", "link", "set", doSVethN, "up")
+
+	spec, err := loadIngest_flow()
+	if err != nil {
+		t.Fatalf("bpf2go spec: %v", err)
+	}
+	coll, err := ebpf.NewCollection(spec)
+	if err != nil {
+		t.Fatalf("collection: %v", err)
+	}
+	// The install snapshot (the residue-gate lesson: the teardown verdict
+	// reads absent-by-identity, never by name).
+	type snap31 struct {
+		maps  map[ebpf.MapID]string
+		progs map[ebpf.ProgramID]string
+	}
+	snap := snap31{maps: map[ebpf.MapID]string{}, progs: map[ebpf.ProgramID]string{}}
+	for name, m := range coll.Maps {
+		info, ierr := m.Info()
+		if ierr != nil {
+			t.Fatalf("snapshot map %s: %v", name, ierr)
+		}
+		id, _ := info.ID()
+		snap.maps[id] = name
+	}
+	for name, p := range coll.Programs {
+		info, ierr := p.Info()
+		if ierr != nil {
+			t.Fatalf("snapshot prog %s: %v", name, ierr)
+		}
+		id, _ := info.ID()
+		snap.progs[id] = name
+	}
+
+	prog := coll.Programs["tc_ingress_waf"]
+	run4d(t, "tc", "qdisc", "add", "dev", doSVethH, "clsact")
+	if mkerr := os.MkdirAll("/sys/fs/bpf/tr31", 0o700); mkerr != nil {
+		t.Skipf("pin dir: %v", mkerr)
+	}
+	if perr := prog.Pin(doSPin); perr != nil {
+		t.Skipf("prog pin: %v", perr)
+	}
+	out, aerr := exec.Command("tc", "filter", "replace", "dev", doSVethH, "ingress", "bpf", "da",
+		"pinned", doSPin).CombinedOutput()
+	if aerr != nil {
+		t.Skipf("tc filter attach (pinned): %v\n%s", aerr, out)
+	}
+
+	// The dual attach (TR-04d posture): the ns side rides nsenter over the
+	// keeper's net ns only — `ip netns exec` remounts sysfs and hides the
+	// pins.
+	keeper := exec.Command("ip", "netns", "exec", doSNS, "sleep", "120")
+	if kerr := keeper.Start(); kerr != nil {
+		t.Skipf("ns keeper: %v", kerr)
+	}
+	defer keeper.Process.Kill()
+	time.Sleep(300 * time.Millisecond)
+	enter := func(args ...string) *exec.Cmd {
+		full := []string{"-t", itoa(keeper.Process.Pid), "-n"}
+		full = append(full, args...)
+		return exec.Command("nsenter", full...)
+	}
+	if o, e := enter("tc", "qdisc", "add", "dev", doSVethN, "clsact").CombinedOutput(); e != nil {
+		t.Logf("ns clsact: %v %s", e, o)
+	}
+	if o, e := enter("tc", "filter", "replace", "dev", doSVethN, "egress", "bpf", "da",
+		"pinned", doSPin).CombinedOutput(); e != nil {
+		t.Logf("ns filter: %v %s", e, o)
+	}
+
+	// The host listener: real traffic must keep passing while the feature
+	// accounting runs (the fail-open contract).
+	got := make(chan struct{}, 8)
+	l, lerr := net.Listen("tcp", "10.31.7.1:18080")
+	if lerr != nil {
+		t.Skipf("listen: %v", lerr)
+	}
+	defer l.Close()
+	go func() {
+		for {
+			c, e := l.Accept()
+			if e != nil {
+				return
+			}
+			go func(c net.Conn) {
+				b := make([]byte, 512)
+				for {
+					n, e := c.Read(b)
+					if n > 0 {
+						got <- struct{}{}
+					}
+					if e != nil {
+						break // the client closed: the read loop drains what landed
+					}
+				}
+				time.Sleep(50 * time.Millisecond) // let the FIN settle; no RST storms
+				c.Close()
+			}(c)
+		}
+	}()
+
+	if o, e := enter("bash", "-c", "printf '"+doSGet+"' > /dev/tcp/10.31.7.1/18080").CombinedOutput(); e != nil {
+		t.Fatalf("plain GET into the path: %v %s", e, o)
+	}
+	select {
+	case <-got:
+	case <-time.After(8 * time.Second):
+		t.Fatalf("fail-open: the GET never landed while the feature accounting ran")
+	}
+	t.Logf("fail-open traffic: the GET landed through the attached hook")
+
+	if o, e := enter("python3", "-c", pacedInject).CombinedOutput(); e != nil {
+		t.Skipf("paced frames need python3: %v %s", e, o)
+	}
+	time.Sleep(300 * time.Millisecond)
+
+	// The feature reading. Rows matching the burst 5-tuple aggregate (the
+	// dual attach can carve one flow's history into sibling rows). The
+	// address union stores the v4 saddr bytes in network order; the LE
+	// host reads 10.31.7.66 as 0x42071F0A.
+	const nsAddrLE = uint32(66<<24 | 7<<16 | 31<<8 | 10)
+	var segs, bytes uint32
+	var first, last uint64
+	rows := 0
+	ban := 0
+	forEachStat(t, coll.Maps["flow_stats"], func(k ingest_flowFlowKey, v ingest_flowFlowStat) {
+		if k.Saddr.Addr.V4 == nsAddrLE &&
+			k.Sport == byteOrderSwap16(doSSport) && k.Dport == byteOrderSwap16(doSDport) {
+			rows++
+			segs += v.SegCount
+			bytes += v.ReqBytes
+			if first == 0 || v.FirstSegTs < first {
+				first = v.FirstSegTs
+			}
+			if v.LastSegTs > last {
+				last = v.LastSegTs
+			}
+			t.Logf("burst row: family=%d daddr=%08x segs=%d bytes=%d first=%d last=%d syn=%d",
+				k.Family, k.Daddr.Addr.V4, v.SegCount, v.ReqBytes, v.FirstSegTs, v.LastSegTs, v.SynTs)
+		}
+	})
+	if rows == 0 {
+		t.Fatalf("the paced burst left no flow row (hook or map read broke)")
+	}
+	if segs < 24 {
+		t.Errorf("row paced-trickle: segs=%d, want >= 24 (of the 28 driven)", segs)
+	}
+	if bytes < uint32(24*len("slowloris")) {
+		t.Errorf("row paced-trickle: bytes=%d, want >= 216", bytes)
+	}
+	if first == 0 || last < first {
+		t.Errorf("row paced-trickle: window stamps first=%d last=%d must hold first>0, last>=first", first, last)
+	}
+	if span := last - first; span < 1_500_000_000 {
+		t.Errorf("row paced-trickle: span=%dns over %d rows, want >= 1.5s", span, rows)
+	}
+
+	// The SYN-first flow: the GET's flow row keeps its syn stamp.
+	synRows := 0
+	forEachStat(t, coll.Maps["flow_stats"], func(k ingest_flowFlowKey, v ingest_flowFlowStat) {
+		if k.Saddr.Addr.V4 == nsAddrLE &&
+			k.Dport == byteOrderSwap16(18080) && v.SynTs != 0 {
+			synRows++
+			t.Logf("syn-first row: sport=%d syn=%d segs=%d bytes=%d",
+				byteOrderSwap16(k.Sport), v.SynTs, v.SegCount, v.ReqBytes)
+		}
+	})
+	if synRows == 0 {
+		t.Errorf("row syn-first: no flow row carried its syn stamp")
+	}
+
+	// The decision reads through the real evaluator: the short-window
+	// trickle is clean (fail-open at the ban path — no cue, no ban). The
+	// shape math and its thresholds ride the in-package table tests.
+	feat := rateban.FlowFeatures{Segs: segs, Bytes: bytes, FirstNS: first, LastNS: last}
+	if suspect := rateban.SlowlorisSuspect(feat); suspect {
+		t.Errorf("row fail-open-decision: the short-window trickle must read clean (segs=%d bytes=%d span<3s)", segs, bytes)
+	}
+	t.Logf("decision read: slowloris_suspect=false over the live features %+v (the window default is 30s; the shape math rows live host-side)", feat)
+
+	// The enforcement proof: the ban table reads empty after every accounting
+	// pass — features never write bans.
+	banIter := coll.Maps["ban_table"].Iterate()
+	var bk ingest_flowBanKey
+	var bv ingest_flowBanVal
+	for banIter.Next(&bk, &bv) {
+		ban++
+	}
+	if err := banIter.Err(); err != nil {
+		t.Fatalf("ban_table iterate: %v", err)
+	}
+	if ban != 0 {
+		t.Errorf("row fail-open-decision: ban_table rows=%d, want 0 (the feature path never enforces)", ban)
+	}
+
+	// --- the teardown (the residue-gate pattern) ------------------------
+	// Order from TR-35b: the TC legs first, then the pin, then the
+	// collections, then the net machinery; the settle poll reads every
+	// snapshot identity dead.
+	if o, e := exec.Command("tc", "qdisc", "del", "dev", doSVethH, "clsact").CombinedOutput(); e != nil {
+		t.Logf("host clsact del: %v %s", e, o)
+	}
+	if o, e := enter("tc", "qdisc", "del", "dev", doSVethN, "clsact").CombinedOutput(); e != nil {
+		t.Logf("ns clsact del: %v %s", e, o)
+	}
+	keeper.Process.Kill()
+	_ = os.RemoveAll(doSPin)
+	_ = os.RemoveAll("/sys/fs/bpf/tr31")
+	coll.Close()
+	_ = exec.Command("ip", "netns", "del", doSNS).Run()
+	_ = exec.Command("ip", "link", "del", doSVethH).Run()
+
+	// Settle poll: every snapshot map/program id must leave the kernel.
+	// Freed ids linger one deferred-free window (the TR-35b lesson); with
+	// this object's 36 MiB ban LRU + the 16 MiB ring the window ran past
+	// 5 s on back-to-back same-process runs, so the poll settles over
+	// 20 s worst case. The read is (id, name)-paired (the residue-gate
+	// lesson: ids recycle — a stranger that took a freed id is not this
+	// install's residue; the kernel name is the discriminator).
+	settled := func() bool {
+		for id, name := range snap.maps {
+			m, err := ebpf.NewMapFromID(id)
+			if err != nil {
+				if !errors.Is(err, os.ErrNotExist) {
+					return false // an unreadable id is unknown state, never a pass
+				}
+				continue // gone
+			}
+			info, ierr := m.Info()
+			_ = m.Close()
+			if ierr != nil {
+				return false
+			}
+			if info.Name == name {
+				return false // this install's map, still alive
+			}
+		}
+		for id, name := range snap.progs {
+			p, err := ebpf.NewProgramFromID(id)
+			if err != nil {
+				if !errors.Is(err, os.ErrNotExist) {
+					return false
+				}
+				continue
+			}
+			info, ierr := p.Info()
+			_ = p.Close()
+			if ierr != nil {
+				return false
+			}
+			if info.Name == name {
+				return false
+			}
+		}
+		for _, dir := range []string{"ingress", "egress"} {
+			o, err := exec.Command("tc", "filter", "show", "dev", doSVethH, dir).CombinedOutput()
+			if err != nil {
+				continue // the device is gone: nothing left to sweep on it
+			}
+			if strings.Contains(string(o), " bpf ") {
+				return false
+			}
+		}
+		if _, err := os.Stat("/sys/fs/bpf/tr31"); err == nil {
+			return false
+		}
+		return true
+	}
+	for i := 0; i < 100; i++ {
+		if settled() {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if !settled() {
+		left := "maps:["
+		for id, name := range snap.maps {
+			if m, err := ebpf.NewMapFromID(id); err == nil {
+				info, ierr := m.Info()
+				_ = m.Close()
+				if ierr == nil && info.Name == name {
+					left += fmt.Sprintf("%d(%s) ", id, name)
+				}
+			}
+		}
+		left += "] progs:["
+		for id, name := range snap.progs {
+			if p, err := ebpf.NewProgramFromID(id); err == nil {
+				info, ierr := p.Info()
+				_ = p.Close()
+				if ierr == nil && info.Name == name {
+					left += fmt.Sprintf("%d(%s) ", id, name)
+				}
+			}
+		}
+		left += "]"
+		for _, dir := range []string{"ingress", "egress"} {
+			o, _ := exec.Command("tc", "filter", "show", "dev", doSVethH, dir).CombinedOutput()
+			left += fmt.Sprintf(" tc[%s]=%q", dir, strings.TrimSpace(string(o)))
+		}
+		t.Fatalf("live teardown left kernel residue: %s", left)
+	}
+	t.Logf("residue: zero — every snapshot identity (maps/progs/filters/pins) left the kernel")
 }

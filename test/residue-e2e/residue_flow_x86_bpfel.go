@@ -62,10 +62,12 @@ type residue_flowFlowKey struct {
 }
 
 type residue_flowFlowStat struct {
-	_        structs.HostLayout
-	SynTs    uint64
-	ReqBytes uint32
-	SegCount uint32
+	_          structs.HostLayout
+	SynTs      uint64
+	FirstSegTs uint64
+	LastSegTs  uint64
+	ReqBytes   uint32
+	SegCount   uint32
 }
 
 // Names of all BPF objects in the ELF.

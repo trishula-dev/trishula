@@ -13,9 +13,7 @@ decided, why, and what it supersedes.
 | [0003](0003-release-naming.md) | Name releases on the calendar rc ladder | accepted |
 | [0004](0004-record-topology.md) | Record topology: decisions, topic records, and spec pointers | accepted |
 | [0005](0005-cue-declarative-layer.md) | Own the structured artefacts in CUE | accepted |
--- | --- | --- |
-
-origin/main
+| [0006](0006-flow-stat-window-features.md) | The flow stats value carries window features, memset-built keys | accepted |
 
 ## When an ADR is required
 

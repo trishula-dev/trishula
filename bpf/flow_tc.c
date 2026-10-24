@@ -88,13 +88,25 @@ struct {
 	__type(value, __u64);
 } lost_events SEC(".maps");
 
-/* Flow stats: per-flow counters (slowloris math later, §12/§13). */
+/* Flow stats: per-flow counters (shield → shield; §9.3). TR-31 (issue #31)
+ * grows the value into the behavioural window features the engine's
+ * detectors read: the first and last counted-segment timestamps make the
+ * per-flow time window legible — bytes/segment and the span are the §13.7
+ * slowloris math inputs. The kernel counts and stamps (O(1) map work per
+ * packet); it never computes a score or a decision (§9.5, §13.3). A failed
+ * lookup or update fails the accounting open: the packet passes. */
 struct flow_key {
 	struct key_addr saddr, daddr;
 	__u16 sport, dport;
 	__u8 family;
 };
-struct flow_stat { __u64 syn_ts; __u32 req_bytes; __u32 seg_count; };
+struct flow_stat {
+	__u64 syn_ts;
+	__u64 first_seg_ts; /* TR-31: first counted segment */
+	__u64 last_seg_ts;  /* TR-31: last counted segment (the window span) */
+	__u32 req_bytes;
+	__u32 seg_count;
+};
 
 struct {
 	__uint(type, BPF_MAP_TYPE_LRU_HASH);
@@ -259,22 +271,31 @@ static __always_inline int on_ip4(struct __sk_buff *skb, void *data,
 			tcp->source, tcp->dest, tcp->syn ? 0x2 : 0,
 			KEY_AF_INET, (__u16)payload_len, tcp_end);
 
-	/* Per-flow accounting (shield → shield; §9.3). */
-	struct flow_key fk = {
-		.saddr = {.addr = {.v4 = ip->saddr}},
-		.daddr = {.addr = {.v4 = ip->daddr}},
-		.sport = tcp->source,
-		.dport = tcp->dest,
-		.family = KEY_AF_INET,
-	};
+	/* Per-flow accounting (shield → shield; §9.3). TR-31: the window
+	 * features stamp on both legs (first/last counted-segment ts).
+	 * The key is memset before use: the kernel compares the full padded
+	 * key_size, and the E2E proved stack garbage in the pad splits one
+	 * 5-tuple across map rows. Any failure here fails open — the packet
+	 * passes unaccounted. */
+	struct flow_key fk;
+	__builtin_memset(&fk, 0, sizeof(fk));
+	fk.saddr.addr.v4 = ip->saddr;
+	fk.daddr.addr.v4 = ip->daddr;
+	fk.sport = tcp->source;
+	fk.dport = tcp->dest;
+	fk.family = KEY_AF_INET;
 	struct flow_stat *st = bpf_map_lookup_elem(&flow_stats, &fk);
 	if (!st) {
 		struct flow_stat init = {0};
-		init.syn_ts = tcp->syn ? bpf_ktime_get_ns() : 0;
+		__u64 now = bpf_ktime_get_ns();
+		init.syn_ts = tcp->syn ? now : 0;
+		init.first_seg_ts = now;
+		init.last_seg_ts = now;
 		init.req_bytes = payload_len;
 		init.seg_count = 1;
 		bpf_map_update_elem(&flow_stats, &fk, &init, BPF_NOEXIST);
 	} else {
+		st->last_seg_ts = bpf_ktime_get_ns();
 		__sync_fetch_and_add(&st->req_bytes, payload_len);
 		__sync_fetch_and_add(&st->seg_count, 1);
 	}
@@ -313,6 +334,35 @@ static __always_inline int on_ip6(struct __sk_buff *skb, void *data,
 	emit_flow_event(skb, data, data_end, 0, ip6h->saddr.in6_u.u6_addr8,
 			0, ip6h->daddr.in6_u.u6_addr8, tcp->source, tcp->dest,
 			tcp->syn ? 0x2 : 0, KEY_AF_INET6, skb->len, tcp_end6);
+
+	/* TR-31: the per-flow accounting rides the IPv6 leg too — the
+	 * family byte in flow_key carries the discriminator (#62); the
+	 * detector features must not go v4-only. Same fail-open shape and
+	 * the same memset discipline as the IPv4 leg. */
+	struct flow_key fk6;
+	__builtin_memset(&fk6, 0, sizeof(fk6));
+	__builtin_memcpy(fk6.saddr.addr.v6, ip6h->saddr.in6_u.u6_addr8, 16);
+	__builtin_memcpy(fk6.daddr.addr.v6, ip6h->daddr.in6_u.u6_addr8, 16);
+	fk6.sport = tcp->source;
+	fk6.dport = tcp->dest;
+	fk6.family = KEY_AF_INET6;
+	__u32 payload_len6 = (__u32)skb->len -
+			     ((__u32)(long)tcp_end6 - (__u32)(long)data);
+	struct flow_stat *st6 = bpf_map_lookup_elem(&flow_stats, &fk6);
+	if (!st6) {
+		struct flow_stat init6 = {0};
+		__u64 now6 = bpf_ktime_get_ns();
+		init6.syn_ts = tcp->syn ? now6 : 0;
+		init6.first_seg_ts = now6;
+		init6.last_seg_ts = now6;
+		init6.req_bytes = payload_len6;
+		init6.seg_count = 1;
+		bpf_map_update_elem(&flow_stats, &fk6, &init6, BPF_NOEXIST);
+	} else {
+		st6->last_seg_ts = bpf_ktime_get_ns();
+		__sync_fetch_and_add(&st6->req_bytes, payload_len6);
+		__sync_fetch_and_add(&st6->seg_count, 1);
+	}
 	return TC_ACT_OK;
 }
 

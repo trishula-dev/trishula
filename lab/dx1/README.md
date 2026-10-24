@@ -138,6 +138,38 @@ gate: kind + NGF + Trishula + one CEL rule, anonymous pulls only. The
 nightly run is the M3 evidence: the timed schedule stays green under
 15 min.
 
+## TR-31 — the behavioural DoS detector features (kernel-gated)
+
+```bash
+sudo go test -tags ingest4d -run TestFlowStatsDoSFeaturesE2E ./internal/engine/ingest/ -v
+```
+
+The TR-31 gate (in a Linux kernel VM with root: netns + clsact + bpffs)
+installs `flow_tc.c` on a veth pair under `/sys/fs/bpf/tr31`, moves real
+traffic through the attached hook, drives a paced 28-segment trickle (one
+5-tuple, 9-byte payloads), and reads the shield's per-flow map live. What
+the run proves, with the 2026-10-24 in-VM reading
+(trishula-build-dev, kernel 7.0.14-orbstack, arm64):
+
+| proof | where it reads | recorded run |
+|---|---|---|
+| the detector map carries the time-window features | `flow_stats` rows via the generated BTF mirrors: `segs=56 bytes=504` over one 5-tuple, `first=/last=` segment stamps spanning the ~2.6 s trickle | burst row: `family=4 daddr=01071f0a segs=56 bytes=504 ...` |
+| a SYN-first flow keeps its syn stamp | the GET's flow row: `syn=90295969627444 segs=14 bytes=62` | syn-first row: `sport=47640 ...` |
+| fail-open: accounting never enforces | real GET lands through the attached hook; `ban_table` iterates empty; the live features read clean through the real `rateban.SlowlorisSuspect` (the short-window trickle is clean) | `decision read: slowloris_suspect=false ... {Segs:56 Bytes:504 ...}` |
+| zero residue after teardown | snapshot (id, name) pairs settle dead + `tc filter show` reads no bpf rows + the pin subtree is gone | `residue: zero — every snapshot identity (maps/progs/filters/pins) left the kernel` |
+
+The decision side (the slowloris shape math, the rapid-reset ratio, the
+cue→ban-engine wiring through the existing evidence sink) is kernel-free
+by the layer map: its table rows live in `internal/engine/rateban`
+(`TestSlowlorisRows`, `TestRapidResetRows`, `TestIngestCueWiring`) and
+`internal/engine/http2` (`TestResetAccountingRows`).
+
+**What the DX1 surface does not support.** The DX1 lab attaches no shield:
+the NGF hop terminates TLS before the shield would see flow payload, and
+the lab carries no `flow_stats` reader. No DX1 transcript is claimed for
+the detector path; the kernel-gated gate above is the recorded evidence
+(the AGENTS.md gate table carries the row).
+
 ## Notes
 
 - The NGF chart ships from the NGINX OCI registry
