@@ -52,7 +52,7 @@ table() { # table <setup_s> <apply_s> <verify_s> <total_s> <first_rule_s> <budge
 
 CURRENT=0
 LEG_NAMES=("binaries" "setup (lab up, idempotent)" "apply→effect (the M9 leg, timed)" "verify (hop evidence)")
-trap 'printf "\n== DX1-FAIL — leg %s (%s) failed; full output above ==\n" "${CURRENT:-?}" "${LEG_NAMES[${CURRENT}]:-?}" >&2; exit 1' ERR
+trap 'printf "\n== DX1-FAIL — leg %s (%s) failed; full output above ==\n" "$(( ${CURRENT} > 0 ? ${CURRENT} - 1 : 0 ))" "${LEG_NAMES[$(( ${CURRENT} > 0 ? ${CURRENT} - 1 : 0 ))]:-?}" >&2; exit 1' ERR
 
 banner "DX1 timed gate (TR-23, spec section 21 M3) — anchor ${DX1_START} (epoch s), budget ${DX1_TARGET} s"
 

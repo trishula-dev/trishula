@@ -49,13 +49,16 @@ LOCALARCH="$(go env GOARCH 2>/dev/null || echo arm64)"
 log() { printf '\n== %s\n' "$*"; }
 
 # crane_anon: anonymous registry reads with an isolated, empty DOCKER_CONFIG
-# so the docker credential helper (osxkeychain) is never consulted.
+# so the docker credential helper (osxkeychain) is never consulted. The
+# crane exit code rides out (rm -rf alone would swallow it and every caller
+# would read a failed pull as success — issue #198).
 crane_anon() {
-  local dc
+  local dc rc
   dc="$(mktemp -d)"
   printf '{}\n' > "${dc}/config.json"
-  DOCKER_CONFIG="${dc}" crane "$@"
+  DOCKER_CONFIG="${dc}" crane "$@" || rc=$?
   rm -rf "${dc}"
+  return "${rc:-0}"
 }
 
 # docker_pull: crane pull to a tarball + docker load; the docker CLI itself
@@ -181,12 +184,32 @@ helm_sets() {
     --set-json "nginx.service.nodePorts=[{\"port\":${NODE_HTTP_PORT},\"listenerPort\":80}]"
 }
 
+# crane_manifest_evidence <image-ref> — one line of live store evidence: the
+# artifact's config + layer mediaTypes. Optional jq; a failed read prints its
+# own line (never a silent gap).
+crane_manifest_evidence() {
+  local ev
+  ev="$(crane_anon manifest "$1" 2>/dev/null | jq -c '{config: .config.mediaType, layers: [.layers[] | {mediaType: .mediaType, size: .size}]}' 2>/dev/null)" &&
+    [ -n "${ev}" ] &&
+    echo "store evidence: ${ev}" >&2 ||
+    echo "store evidence: manifest read failed (the tag may not publish)" >&2
+}
+
 # fetch_chart_dir <image-ref> <dest> — official chart package via anonymous
 # crane (keychain-flaky environments); installs from the chart directory.
+# A failure names its stage with evidence (issue #198): the pull error, or
+# the live manifest when the artifact carries no chart package. The plain
+# "chart package unavailable" line named no gap and read as a store fact
+# with no proof behind it.
 fetch_chart_dir() {
   local img="$1" dest="$2" work layer f
   work="$(mktemp -d)"
-  crane_anon pull "${img}" "${work}/chart.tar"
+  if ! crane_anon pull "${img}" "${work}/chart.tar"; then
+    echo "chart package fetch failed at the crane pull stage (its error prints above)" >&2
+    crane_manifest_evidence "${img}"
+    rm -rf "${work}"
+    return 1
+  fi
   tar -xf "${work}/chart.tar" -C "${work}"
   layer=""
   for f in "${work}"/*.tar.gz "${work}"/*.tgz; do
@@ -196,70 +219,102 @@ fetch_chart_dir() {
       break
     fi
   done
-  test -n "${layer}" && test -s "${layer}" || return 1
+  if test -z "${layer}" || ! test -s "${layer}"; then
+    echo "chart package gap: the pull carries no nginx-gateway-fabric chart package" >&2
+    crane_manifest_evidence "${img}"
+    rm -rf "${work}"
+    return 1
+  fi
   mkdir -p "${dest}"
   tar -xzf "${layer}" -C "${dest}"
   rm -rf "${work}"
 }
 
+# install_ngf_1x <version> — the proven 1.x single-pod lane (control + data
+# plane in one pod; no dataplane-agent handshake). It serves both callers:
+# a direct NGF_CHART_VERSION=1.x pin (the CI gate; the 2.x set shape does
+# not exist in the 1.x chart) and the 2.x fallback below. Both chart images
+# pre-stage into the node before the helm wait — the pod runs two containers
+# (nginx-gateway + nginx); a kubelet pull would ride the install budget
+# (issue #198, run 40077270222).
+install_ngf_1x() {
+  local version="$1" chart_dir work layer f
+  helm uninstall "${NGF_RELEASE}" -n "${NGF_NS}" --wait --timeout 3m 2>/dev/null || true
+  for img in \
+    "ghcr.io/nginx/nginx-gateway-fabric:${version}" \
+    "ghcr.io/nginx/nginx-gateway-fabric/nginx:${version}"; do
+    if ! docker image inspect "${img}" >/dev/null 2>&1; then
+      docker_pull "${img}"
+    fi
+    load_into_node "${img}"
+  done
+  chart_dir="$(mktemp -d)/chart"
+  fetch_chart_dir "ghcr.io/nginx/charts/nginx-gateway-fabric:${version}" "${chart_dir}" || true
+  test -d "${chart_dir}/nginx-gateway-fabric" || {
+    # direct extraction fallback: crane pull -> untar OCI layer
+    work="$(mktemp -d)"
+    crane_anon pull "ghcr.io/nginx/charts/nginx-gateway-fabric:${version}" "${work}/chart.tar"
+    tar -xf "${work}/chart.tar" -C "${work}"
+    layer="$(for f in "${work}"/*.tar.gz; do tar -tzf "${f}" 2>/dev/null | grep -q 'Chart.yaml' && echo "${f}" && break; done)"
+    mkdir -p "${chart_dir}" && tar -xzf "${layer}" -C "${chart_dir}"
+  }
+  # Leftovers of a failed 2.x attempt go first (--ignore-not-found); a
+  # direct 1.x pin finds none.
+  kubectl delete crd -l 'app.kubernetes.io/instance=nginx-gateway-fabric' --ignore-not-found 2>/dev/null || true
+  for c in $(kubectl get crd -o name 2>/dev/null | grep 'gateway.nginx.org'); do
+    kubectl delete "${c}" --ignore-not-found
+  done
+  helm install "${NGF_RELEASE}" "${chart_dir}/nginx-gateway-fabric" \
+    -n "${NGF_NS}" --create-namespace --wait --timeout 6m \
+    --set 'service.type=NodePort' \
+    --set 'nginxGateway.replicaCount=1'
+  # Pin the NodePort (the 1.x chart assigns a random one).
+  kubectl -n "${NGF_NS}" patch svc "${NGF_RELEASE}-nginx-gateway-fabric" \
+    --type=merge -p "{\"spec\":{\"ports\":[{\"name\":\"http\",\"port\":80,\"nodePort\":${NODE_HTTP_PORT}}]}}"
+  NGF_CHART_VERSION="${version}"
+}
+
 if ! helm status "${NGF_RELEASE}" -n "${NGF_NS}" >/dev/null 2>&1; then
   NGF_INSTALLED_NEW="1"
-  readarray -t HELM_SETS < <(helm_sets)
-  if ! helm install "${NGF_RELEASE}" "oci://ghcr.io/nginx/charts/nginx-gateway-fabric" \
-        --version "${NGF_CHART_VERSION}" -n "${NGF_NS}" --create-namespace \
-        --wait --timeout 5m "${HELM_SETS[@]}" 2>/tmp/dx1-helm-err.log; then
-    cat /tmp/dx1-helm-err.log >&2
-    echo "helm install oci failed; retrying with the official chart package" >&2
-    CHART_DIR="$(mktemp -d)/chart"
-    fetch_chart_dir "ghcr.io/nginx/charts/nginx-gateway-fabric:${NGF_CHART_VERSION}" "${CHART_DIR}" || {
-      echo "chart package unavailable; install with: helm install ${NGF_RELEASE} oci://ghcr.io/nginx/charts/nginx-gateway-fabric --version ${NGF_CHART_VERSION} ..." >&2
-      exit 3
-    }
-    if ! helm install "${NGF_RELEASE}" "${CHART_DIR}/nginx-gateway-fabric" \
-          -n "${NGF_NS}" --create-namespace --wait --timeout 5m "${HELM_SETS[@]}"; then
-      # NGF 2.x dataplane registration is agent-based: the control plane waits
-      # for the dataplane agent to report an nginx INSTANCE built from
-      # /proc/<pid>/cmdline. On k8s-under-OrbStack the setproctitle rewrite
-      # never lands in /proc for containerd pods, the agent reports zero
-      # instances and every dataplane pod stays 0/1 ("timed out waiting for
-      # agent to register nginx"). Verified 2026-10-10 (2.7.2 + 2.6.8, kind
-      # v1.35.8 + OrbStack k8s v1.35.6). OrbStack-only labs: fall back to the
-      # 1.x single-pod architecture (control + data plane in one pod, no
-      # agent handshake) — the lab's steering evidence is identical.
-      echo "NGF ${NGF_CHART_VERSION} dataplane did not become ready; retrying with the 1.x single-pod architecture (NGF_FALLBACK_CHART)" >&2
-      helm uninstall "${NGF_RELEASE}" -n "${NGF_NS}" --wait --timeout 3m 2>/dev/null || true
-      FALLBACK_CHART_VERSION="${NGF_FALLBACK_CHART_VERSION:-1.6.2}"
-      FALLBACK_IMAGE="ghcr.io/nginx/nginx-gateway-fabric:${FALLBACK_CHART_VERSION}"
-      if ! docker image inspect "${FALLBACK_IMAGE}" >/dev/null 2>&1; then
-        docker_pull "${FALLBACK_IMAGE}"
+  case "${NGF_CHART_VERSION}" in
+    1.*)
+      # A 1.x pin rides the proven single-pod lane directly: the 2.x set
+      # shape (provisioned gateways, nginx.service.*) does not exist in the
+      # 1.x chart, and the 2.x OCI lane misses the install deadline
+      # (issue #198, run 40077270222).
+      echo "NGF pin ${NGF_CHART_VERSION}: the 1.x single-pod lane installs directly" >&2
+      install_ngf_1x "${NGF_CHART_VERSION}"
+      ;;
+    *)
+      readarray -t HELM_SETS < <(helm_sets)
+      if ! helm install "${NGF_RELEASE}" "oci://ghcr.io/nginx/charts/nginx-gateway-fabric" \
+            --version "${NGF_CHART_VERSION}" -n "${NGF_NS}" --create-namespace \
+            --wait --timeout 5m "${HELM_SETS[@]}" 2>/tmp/dx1-helm-err.log; then
+        cat /tmp/dx1-helm-err.log >&2
+        echo "helm install oci failed; retrying with the official chart package" >&2
+        CHART_DIR="$(mktemp -d)/chart"
+        fetch_chart_dir "ghcr.io/nginx/charts/nginx-gateway-fabric:${NGF_CHART_VERSION}" "${CHART_DIR}" || {
+          echo "2.x retry ends here: no installable chart package came out of the pull (evidence above)" >&2
+          echo "the OCI store publishes chart ${NGF_CHART_VERSION} in the oci:// chart form; the CI gate pins NGF_CHART_VERSION=1.6.2 (the proven single-pod lane) instead" >&2
+          exit 3
+        }
+        if ! helm install "${NGF_RELEASE}" "${CHART_DIR}/nginx-gateway-fabric" \
+              -n "${NGF_NS}" --create-namespace --wait --timeout 5m "${HELM_SETS[@]}"; then
+          # NGF 2.x dataplane registration is agent-based: the control plane waits
+          # for the dataplane agent to report an nginx INSTANCE built from
+          # /proc/<pid>/cmdline. On k8s-under-OrbStack the setproctitle rewrite
+          # never lands in /proc for containerd pods, the agent reports zero
+          # instances and every dataplane pod stays 0/1 ("timed out waiting for
+          # agent to register nginx"). Verified 2026-10-10 (2.7.2 + 2.6.8, kind
+          # v1.35.8 + OrbStack k8s v1.35.6). OrbStack-only labs: fall back to the
+          # 1.x single-pod architecture (control + data plane in one pod, no
+          # agent handshake) — the lab's steering evidence is identical.
+          echo "NGF ${NGF_CHART_VERSION} dataplane did not become ready; retrying with the 1.x single-pod architecture (NGF_FALLBACK_CHART_VERSION)" >&2
+          install_ngf_1x "${NGF_FALLBACK_CHART_VERSION:-1.6.2}"
+        fi
       fi
-      load_into_node "${FALLBACK_IMAGE}"
-      CHART_DIR="$(mktemp -d)/chart"
-      fetch_chart_dir "ghcr.io/nginx/charts/nginx-gateway-fabric:${FALLBACK_CHART_VERSION}" "${CHART_DIR}"
-      test -d "${CHART_DIR}/nginx-gateway-fabric" || {
-        # direct extraction fallback: crane pull -> untar OCI layer
-        FALLWORK="$(mktemp -d)"
-        crane_anon pull "ghcr.io/nginx/charts/nginx-gateway-fabric:${FALLBACK_CHART_VERSION}" "${FALLWORK}/chart.tar"
-        tar -xf "${FALLWORK}/chart.tar" -C "${FALLWORK}"
-        FALL_LAYER="$(for f in "${FALLWORK}"/*.tar.gz; do tar -tzf "${f}" 2>/dev/null | grep -q 'Chart.yaml' && echo "${f}" && break; done)"
-        mkdir -p "${CHART_DIR}" && tar -xzf "${FALL_LAYER}" -C "${CHART_DIR}"
-      }
-      FALLBACK_SETS=(
-        --set 'service.type=NodePort'
-        --set 'nginxGateway.replicaCount=1'
-      )
-      kubectl delete crd -l 'app.kubernetes.io/instance=nginx-gateway-fabric' --ignore-not-found 2>/dev/null || true
-      for c in $(kubectl get crd -o name 2>/dev/null | grep 'gateway.nginx.org'); do
-        kubectl delete "${c}" --ignore-not-found
-      done
-      helm install "${NGF_RELEASE}" "${CHART_DIR}/nginx-gateway-fabric" \
-        -n "${NGF_NS}" --create-namespace --wait --timeout 6m "${FALLBACK_SETS[@]}"
-      # Pin the NodePort (the 1.x chart assigns a random one).
-      kubectl -n "${NGF_NS}" patch svc "${NGF_RELEASE}-nginx-gateway-fabric" \
-        --type=merge -p "{\"spec\":{\"ports\":[{\"name\":\"http\",\"port\":80,\"nodePort\":${NODE_HTTP_PORT}}]}}"
-      NGF_CHART_VERSION="${FALLBACK_CHART_VERSION}"
-    fi
-  fi
+      ;;
+  esac
 else
   echo "helm release ${NGF_RELEASE} already installed (lab pins ${NGF_CHART_VERSION})"
 fi
@@ -281,7 +336,14 @@ load_into_node "ghcr.io/mendhak/http-https-echo:42"
 
 if [ "${NGF_INSTALLED_NEW}" = "1" ]; then
   kubectl rollout status --timeout=5m -n "${NGF_NS}" "deployment/${NGF_RELEASE}-nginx-gateway-fabric"
-  kubectl rollout status --timeout=5m -n "${NGF_NS}" "deployment/${NGF_RELEASE}-nginx"
+  case "${NGF_CHART_VERSION}" in
+    1.*)
+      ;; # the 1.x chart ships one deployment; a ${NGF_RELEASE}-nginx read fails on a missing deployment
+    *)
+      # the 2.x architecture ships the nginx data plane as its own deployment
+      kubectl rollout status --timeout=5m -n "${NGF_NS}" "deployment/${NGF_RELEASE}-nginx"
+      ;;
+  esac
 fi
 
 # --- 6. lab manifests: engine + echo + Gateway/HTTPRoute --------------------
