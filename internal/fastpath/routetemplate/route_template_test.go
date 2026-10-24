@@ -173,11 +173,16 @@ func TestRouteTemplateStagesBundleLeg(t *testing.T) {
 // TestRouteTemplateObjectContract pins the committed object at the spec
 // (kernel-free: the spec never touches the kernel): one TC program inside
 // the envelope constant, the compile-staged placeholder, and the bounded
-// route map. The Go mirrors carry the wire sizes the e2e reads.
+// route map. The Go mirrors carry the wire sizes the e2e reads. The
+// envelope assertion is the contract formalization: Instantiate runs the
+// same fastpath.AssertEnvelope call on every verifier load.
 func TestRouteTemplateObjectContract(t *testing.T) {
 	spec, err := loadRoute_mark()
 	if err != nil {
 		t.Fatalf("load committed route template object: %v", err)
+	}
+	if err := fastpath.AssertEnvelope(spec); err != nil {
+		t.Fatalf("AssertEnvelope(committed route template): %v", err)
 	}
 	if len(spec.Programs) != 1 {
 		t.Fatalf("the object carries %d programs, want 1 (one program envelope)", len(spec.Programs))
@@ -189,8 +194,8 @@ func TestRouteTemplateObjectContract(t *testing.T) {
 	if prog.Type != ebpf.SchedCLS {
 		t.Errorf("route_mark type = %v, want SchedCLS", prog.Type)
 	}
-	if got := len(prog.Instructions); got > routeEnvelopeInstructions {
-		t.Errorf("route_mark carries %d instructions past the %d-instruction envelope", got, routeEnvelopeInstructions)
+	if got := len(prog.Instructions); got > fastpath.RouteEnvelopeInstructions {
+		t.Errorf("route_mark carries %d instructions past the %d-instruction envelope", got, fastpath.RouteEnvelopeInstructions)
 	}
 	if spec.Variables["route_cfg"] == nil {
 		t.Error("the object misses the route_cfg placeholder")
@@ -216,5 +221,57 @@ func TestRouteTemplateObjectContract(t *testing.T) {
 	}
 	if spec.Maps["route_marks"].KeySize != 68 || spec.Maps["route_marks"].ValueSize != 8 {
 		t.Errorf("route map key/value sizes = %d/%d, want 68/8", spec.Maps["route_marks"].KeySize, spec.Maps["route_marks"].ValueSize)
+	}
+}
+
+// TestInstantiateFailsKernelFree pins the instantiate surface's negative
+// rows: every rejection fires before the kernel, and the error names the
+// offending cell. The kernel load path carries its own proof in the route
+// gate (test/route-e2e).
+func TestInstantiateFailsKernelFree(t *testing.T) {
+	nine := []operator.FastPathRoute{
+		{Prefix: "/a", Action: fastpath.RouteTemplateActionForward},
+		{Prefix: "/b", Action: fastpath.RouteTemplateActionForward},
+		{Prefix: "/c", Action: fastpath.RouteTemplateActionForward},
+		{Prefix: "/d", Action: fastpath.RouteTemplateActionForward},
+		{Prefix: "/e", Action: fastpath.RouteTemplateActionDrop},
+		{Prefix: "/f", Action: fastpath.RouteTemplateActionDrop},
+		{Prefix: "/g", Action: fastpath.RouteTemplateActionDrop},
+		{Prefix: "/h", Action: fastpath.RouteTemplateActionDrop},
+		{Prefix: "/i", Action: fastpath.RouteTemplateActionDrop},
+	}
+	rows := []struct {
+		name    string
+		bundle  *operator.Bundle
+		wantErr string
+	}{
+		{name: "nil bundle", bundle: nil, wantErr: ErrNoKernelLeg.Error()},
+		{name: "no kernel leg", bundle: &operator.Bundle{}, wantErr: ErrNoKernelLeg.Error()},
+		{
+			name:    "nine-route leg past the row bound",
+			bundle:  stageBundle(nine),
+			wantErr: "spec.routes carries 9 rows; the template bound is 8 rows",
+		},
+	}
+	for _, row := range rows {
+		coll, err := Instantiate(row.bundle)
+		if err == nil {
+			if coll != nil {
+				coll.Close()
+			}
+			t.Errorf("%s: Instantiate succeeded, want a named failure", row.name)
+			continue
+		}
+		if coll != nil {
+			coll.Close()
+			t.Errorf("%s: Instantiate returned a collection on the failure path", row.name)
+		}
+		if !strings.Contains(err.Error(), row.wantErr) {
+			t.Errorf("%s: Instantiate err = %v, want it to name %q", row.name, err, row.wantErr)
+			continue
+		}
+		if strings.Contains(err.Error(), "verifier") {
+			t.Errorf("%s: the failure names the verifier; the bound rejects kernel-free, before the load", row.name)
+		}
 	}
 }
