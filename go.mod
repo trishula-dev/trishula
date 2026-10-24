@@ -6,7 +6,6 @@ require (
 	github.com/cilium/ebpf v0.22.0
 	github.com/corazawaf/coraza/v3 v3.8.1
 	github.com/envoyproxy/go-control-plane/envoy v1.40.0
-	github.com/google/cel-go v0.31.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/log v1.47.0
 	go.opentelemetry.io/otel/metric v1.47.0
@@ -25,10 +24,12 @@ require (
 require (
 	github.com/cncf/xds/go v0.0.0-20260202195803-dba9d589def2 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
+	github.com/google/cel-go v0.29.2 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 )
 
 require (
+	cel.dev/cel-go v0.32.0
 	cel.dev/expr v0.25.2 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect

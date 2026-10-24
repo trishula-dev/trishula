@@ -16,3 +16,15 @@ timing: clone → first enforced rule in ≤ 15 min
 The nightly job
 ([lab-nightly.yml](../../.github/workflows/lab-nightly.yml)) runs the
 gate and keeps the timing honest.
+
+## The modules
+
+The curriculum map
+([spec §7.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#71-curriculum-map--what-each-layer-of-the-product-teaches))
+names five modules. Each row below links one landed module doc and its
+runnable lab. The module doc carries every §7.1 topic for its map entry,
+and every rule example in it cites its wire anatomy.
+
+| Module | Map entry | Doc | Lab |
+|---|---|---|---|
+| 3 | eBPF as a platform | [module-3.md](module-3.md) | [lab/module-3](../../lab/module-3/README.md) |
