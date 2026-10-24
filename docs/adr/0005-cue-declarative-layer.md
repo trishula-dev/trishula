@@ -1,4 +1,4 @@
-# 0004 — Own the structured artefacts in CUE
+# 0005 — Own the structured artefacts in CUE
 
 Status: accepted
 

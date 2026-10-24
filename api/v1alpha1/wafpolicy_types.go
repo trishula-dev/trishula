@@ -156,7 +156,7 @@ type WAFPolicyStatus struct {
 	//
 	// +optional
 	// +listType=map
-	// +listKey=type
+	// +listMapKey=type
 	// +patchStrategy=merge
 	// +patchMergeKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
