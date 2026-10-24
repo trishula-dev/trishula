@@ -48,6 +48,9 @@ sudo env PATH="$PATH" HOME="$HOME" FASTPATH_DIFF_E2E_REQUIRED=1 \
   go test -tags fastpath_diff_e2e -v ./test/fastpath-differential/
 ```
 
+The kernel leg rides per-PR CI: `.github/workflows/fastpath-diff-gate.yml` (the
+route-gate posture, `FASTPATH_DIFF_E2E_REQUIRED=1`).
+
 The kernel leg runs the committed object through BPF_PROG_TEST_RUN over the TC
 program; it never attaches. The test-run surface returns the TC action only, so the
 kernel leg scores the decision outcome — the skb mark stays a userspace-leg pin.
@@ -88,3 +91,25 @@ fastpath-differential budget row kernel-fidelity: live 0, holds
 The watched RED pair: the RED commit held the plane-split row unrecorded and one
 hand-derived pin wrong (the leading-space case); the live walk corrected both and the
 GREEN recorded the census.
+
+## The §4.5 wall rows
+
+Both walls belong to the [§4.5 comparison
+protocol](https://github.com/trishula-dev/trishula/blob/main/docs/design/socket-plane-fast-path.md#45-the-comparison-protocol-for-the-tr-40-pr).
+The census record's
+[section 9.5](https://github.com/trishula-dev/trishula/blob/main/docs/design/socket-plane/4-compiler-census.md)
+table pins the two cells. The record rules hold: one harness version, one scenario
+set, one node class, sequential runs. Walls enter as recorded-run outputs only. This
+harness records a verdict census, never a timing.
+
+| Cell | Budget | Recorded wall | Verdict |
+| --- | --- | --- | --- |
+| Route-mark TC program, per message | the §17.1 TC cell | PENDING; trigger: the §4.5 comparison sweep — the PRE legs per §4.4 with the attached POST legs, one harness, one node class | PENDING |
+| T2/T3 forward share with the route class | §4.5 rule 4 | PENDING; trigger: the same sweep; the share reads off the POST run's failure-matrix count | PENDING |
+
+Both cells carry PENDING as of 2026-10-24. The decision streams run recorded on
+this environment (the kernel census above); the comparison sweep needs two surfaces
+the tree does not carry: the PRE sweep needs the §4.4 scenario harness, and the
+POST sweep needs the programs attached (§4.1). The kernel leg runs the test-run
+surface only (section 10.6), so it renders no wall. Every later figure enters with
+its run citation. No estimate and no borrowed figure rides either row.
