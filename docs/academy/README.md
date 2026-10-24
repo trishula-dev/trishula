@@ -16,3 +16,15 @@ timing: clone → first enforced rule in ≤ 15 min
 The nightly job
 ([lab-nightly.yml](../../.github/workflows/lab-nightly.yml)) runs the
 gate and keeps the timing honest.
+
+## The modules
+
+The curriculum map
+([spec §7.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#71-curriculum-map--what-each-layer-of-the-product-teaches))
+names five modules. Each row below links one landed module doc and its
+runnable lab. The module doc carries every §7.1 topic for its map entry,
+and every rule example in it cites its wire anatomy.
+
+| Module | Map entry | Doc | Lab |
+|---|---|---|---|
+| 4 | security modeling | [module-4.md](module-4.md) | [lab/module-4](../../lab/module-4/README.md) |
