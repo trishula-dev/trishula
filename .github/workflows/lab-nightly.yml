@@ -35,15 +35,16 @@ jobs:
       - name: Install kind v0.33.0 + crane v0.22.1
         run: |
           set -euo pipefail
-          curl -sSfL -o /usr/local/bin/kind \
+          TOOL_DIR="$(mktemp -d)"
+          curl -sSfL -o "${TOOL_DIR}/kind" \
             "https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64"
-          chmod +x /usr/local/bin/kind
-          CRANE_DIR="$(mktemp -d)"
+          chmod +x "${TOOL_DIR}/kind"
           curl -sSfL \
             "https://github.com/google/go-containerregistry/releases/download/v0.22.1/go-containerregistry_Linux_x86_64.tar.gz" \
-            | tar zx -C "${CRANE_DIR}" crane
-          install -m 755 "${CRANE_DIR}/crane" /usr/local/bin/crane
-          rm -rf "${CRANE_DIR}"
+            | tar zx -C "${TOOL_DIR}" crane
+          sudo install -m 755 "${TOOL_DIR}/kind" /usr/local/bin/kind
+          sudo install -m 755 "${TOOL_DIR}/crane" /usr/local/bin/crane
+          rm -rf "${TOOL_DIR}"
           kind version
           crane version
       - name: DX1 timed gate
