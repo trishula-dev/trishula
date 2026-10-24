@@ -23,6 +23,21 @@ package residuee2e
 //	sudo --preserve-env=PATH,HOME go test -tags residue_e2e ./test/residue-e2e/ -v
 //
 // [§ 21 M7]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#21-success-metrics--adoption-gates
+//
+// TR-193 (issue #193): the gate does not judge host state outside this run.
+// Runner and dev kernels load unrelated eBPF objects at boot. A bystander
+// can carry a generic map name; "events" is the widest collision in the
+// eBPF ecosystem. The old poisoning check read such a bystander as stale
+// install state. It failed every CI leg of the gate from its first run.
+// Four CI legs read the same fatal with ids 4, 5, 10 and 4 at test start.
+// The dev VM read green across two back-to-back runs with zero leftover
+// objects. The gate now records the pre-state (kernel map ids held at
+// start) and judges this run's install by identity. Three rules hold:
+//   - Every install object id must leave the kernel; assertGone reads ids.
+//   - No owned-name map may appear while the gate runs. The poisoning
+//     check reads the delta against the snapshot and the pre-state.
+//   - Pre-existing kernel maps stay out of the verdict. The gate records
+//     them, never as install residue.
 
 import (
 	"errors"
@@ -448,47 +463,74 @@ func snapshotInstall(c1, c2 *ebpf.Collection, xdp link.Link) (installSnapshot, e
 	return s, nil
 }
 
+// liveMaps reads every live kernel map id with its kernel name. A read
+// error fails the caller. A vanished object drops from the set. The kernel
+// name field holds 15 bytes; two live maps can share one name.
+func liveMaps() (map[ebpf.MapID]string, error) {
+	seen := map[ebpf.MapID]string{}
+	var prev ebpf.MapID
+	for {
+		id, err := ebpf.MapGetNextID(prev)
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("residue census: map id after %d: %w", prev, err)
+			}
+			return seen, nil
+		}
+		prev = id
+		m, err := ebpf.NewMapFromID(id)
+		if err != nil {
+			continue // the map vanished mid-walk; the list moves on
+		}
+		info, err := m.Info()
+		_ = m.Close()
+		if err != nil {
+			return nil, fmt.Errorf("residue census: map %d info: %w", id, err)
+		}
+		seen[id] = info.Name
+	}
+}
+
+// kernelPreState records the map ids the kernel held at gate start. The
+// gate judges this run's install; the host's own state stays outside the
+// verdict. "Held before the install" is all the pre-state asserts. It
+// cannot tell install leftovers from bystander objects. A bare gate install
+// cannot reach a later process: the sweep closes every collection, filter
+// and link, and the process exits. Only the pin root survives a gate run.
+// Cleanup deletes that subtree before the pre-state is read. The M7 sweep
+// still fails closed. Any owned-name map that appears during the run fails
+// the gate.
+func kernelPreState() (map[ebpf.MapID]bool, error) {
+	live, err := liveMaps()
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[ebpf.MapID]bool, len(live))
+	for id := range live {
+		out[id] = true
+	}
+	return out, nil
+}
+
 // assertInstallVisible proves the census reads every snapshot object before
 // the teardown. The census ownership stays name-based (the product surface);
 // the gate asserts only visibility here.
 //
-// The stale-name class (the extra events-named objects) changes the count.
-// The check therefore requires: every snapshot map id and program id shows
-// in the live lists, the pin and the tc rows show, and every census object
-// that matches the scope names carries a snapshot identity. The last clause
-// is the poisoning check: an owned object outside the snapshot = stale state.
-func assertInstallVisible(t *testing.T, kr residue.KernelRead, sc residue.Scope, snap installSnapshot) residue.Report {
+// The check reads three sets. The snapshot ids are this install's objects.
+// The pre-state ids are the kernel's objects before the install. The live
+// walk reads the kernel now. Three asserts follow:
+//   - Every snapshot id shows in the kernel with its install name.
+//   - A pre-state id stays out of the verdict. The gate does not judge the
+//     host's own state (#193).
+//   - An owned-name id in neither set appeared during the run. It is
+//     unknown install state and the gate fails closed.
+func assertInstallVisible(t *testing.T, kr residue.KernelRead, sc residue.Scope, snap installSnapshot, pre map[ebpf.MapID]bool) residue.Report {
 	t.Helper()
 	installed, err := residue.Census(kr, sc)
 	if err != nil {
 		t.Fatalf("census over the live install: %v", err)
 	}
-
-	listIDs := func() (map[ebpf.MapID]string, error) {
-		seen := map[ebpf.MapID]string{}
-		var prev ebpf.MapID
-		for {
-			id, err := ebpf.MapGetNextID(prev)
-			if err != nil {
-				if !errors.Is(err, os.ErrNotExist) {
-					return nil, fmt.Errorf("residue census: map id after %d: %w", prev, err)
-				}
-				return seen, nil
-			}
-			prev = id
-			m, err := ebpf.NewMapFromID(id)
-			if err != nil {
-				continue // the map vanished mid-walk; the list moves on
-			}
-			info, err := m.Info()
-			_ = m.Close()
-			if err != nil {
-				return nil, fmt.Errorf("residue census: map %d info: %w", id, err)
-			}
-			seen[id] = info.Name
-		}
-	}
-	seen, err := listIDs()
+	seen, err := liveMaps()
 	if err != nil {
 		t.Fatalf("live map id walk: %v", err)
 	}
@@ -498,19 +540,62 @@ func assertInstallVisible(t *testing.T, kr residue.KernelRead, sc residue.Scope,
 			t.Fatalf("the census cannot see installed map %s (id %d): the census read is incomplete", name, id)
 		}
 	}
-	// 2. the poisoning check: an owned kernel map outside the snapshot is
-	// stale state from another install with the same name. Name ownership
-	// cannot tell installs apart; the ids can. Fail loud with both.
+	// 2. the poisoning check over this run's delta. A pre-state id belongs
+	// to the host. An owned name outside the snapshot and the pre-state
+	// appeared during the run; the sweep refuses to judge it.
 	for id, name := range seen {
 		if _, ok := snap.MapIDs[id]; ok {
+			continue
+		}
+		if pre[id] {
 			continue
 		}
 		if !sc.Owned(residue.Object{Class: residue.ClassMap, ID: name}) {
 			continue
 		}
-		t.Fatalf("the census reads an owned map outside the snapshot: %q id %d — stale state from another install; clean it before the gate runs", name, id)
+		t.Fatalf("the census reads an owned map outside the snapshot: %q id %d — new kernel state during this gate run; the install did not create it", name, id)
 	}
 	return installed
+}
+
+// sansPreMaps narrows the census to state the gate can own. A map row with
+// an owned name survives when at least one live map with that name carries
+// an id outside the pre-state. Rows of the other classes stay. The result
+// reads the same contract: this run adds no owned kernel object.
+func sansPreMaps(t *testing.T, rep residue.Report, pre map[ebpf.MapID]bool) residue.Report {
+	t.Helper()
+	if rep.Clean() {
+		return rep
+	}
+	live, err := liveMaps()
+	if err != nil {
+		t.Fatalf("live map id walk: %v", err)
+	}
+	idSets := map[string][]ebpf.MapID{}
+	for id, name := range live {
+		idSets[name] = append(idSets[name], id)
+	}
+	out := residue.Report{Counts: map[residue.Class]int{}}
+	for _, o := range rep.Objects {
+		if o.Class == residue.ClassMap && !nameStillNew(o.ID, idSets, pre) {
+			continue
+		}
+		out.Objects = append(out.Objects, o)
+		out.Counts[o.Class]++
+	}
+	return out
+}
+
+// nameStillNew reports whether one census map name still holds an id the
+// pre-state never saw. true keeps the row. Unknown state stays in the
+// verdict. false drops a row backed only by pre-state ids.
+func nameStillNew(name string, idSets map[string][]ebpf.MapID, pre map[ebpf.MapID]bool) bool {
+	for _, id := range idSets[name] {
+		if !pre[id] {
+			return true
+		}
+	}
+	return false
 }
 
 func progIDByName(name string) (ebpf.ProgramID, error) {
@@ -571,13 +656,28 @@ func assertGone(t *testing.T, snap installSnapshot) {
 	}
 }
 
-// TestResidueGateE2E is the issue #168 acceptance: attach both shield legs,
-// uninstall, and assert zero kernel objects (gate row M7).
-func TestResidueGateE2E(t *testing.T) {
+// runGate carries one gate iteration. Cleanup runs first. The netns pair
+// follows. The install, the pre-teardown census, the uninstall and the zero
+// asserts ride one scope. The pre-state is read after the cleanup. It then
+// holds no object this run installed. A non-nil prev snapshot makes the
+// iteration start with the last iteration's zero read, while a managed
+// veth exists. The caller owns the returned snapshot.
+func runGate(t *testing.T, prev *installSnapshot) installSnapshot {
+	t.Helper()
 	mustRoot(t)
 	cleanup(t)
 	defer cleanup(t)
+
+	pre, err := kernelPreState()
+	if err != nil {
+		t.Fatalf("pre-state walk: %v", err)
+	}
 	setupNet(t)
+	if prev != nil {
+		// The next install waits until the previous iteration left zero.
+		// The read rides map, program and pin identities (#193).
+		assertGone(t, *prev)
+	}
 
 	sc := liveScope()
 	kr := liveKernel{}
@@ -586,7 +686,7 @@ func TestResidueGateE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install snapshot: %v", err)
 	}
-	assertInstallVisible(t, kr, sc, snap)
+	assertInstallVisible(t, kr, sc, snap, pre)
 
 	// The full teardown (the §16.4 order) rides the injected Uninstaller:
 	// per-hook detach, per-interface TC filter removal, the BPFFS subtree
@@ -596,14 +696,22 @@ func TestResidueGateE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("uninstall: %v", err)
 	}
+	r0 = sansPreMaps(t, r0, pre)
 	r := r0
 	if !r0.Clean() {
-		r = settleCensus(t, kr, sc)
+		r = settleCensus(t, kr, sc, pre)
 	}
 	if !r.Clean() {
 		t.Fatalf("uninstall left kernel residue: %s", r)
 	}
 	assertGone(t, snap)
+	return snap
+}
+
+// TestResidueGateE2E is the issue #168 acceptance: attach both shield legs,
+// uninstall, and assert zero kernel objects (gate row M7).
+func TestResidueGateE2E(t *testing.T) {
+	runGate(t, nil)
 }
 
 // liveUninstaller binds the TR-35a Uninstaller effects to the live kernel:
@@ -657,6 +765,8 @@ func (u *liveUninstaller) DeleteTCFilters(iface string) error {
 			}
 		}
 	}
+	// The TC collection closes with the hooks. The loader-side fds drop
+	// with the filter rows.
 	u.c2.Close()
 	return nil
 }
@@ -679,7 +789,7 @@ func (u *liveUninstaller) SweepPins(root string) error {
 // object frees (the freed id lingers one workqueue/RCU window). The poll
 // budget: 5 s (50 reads × 100 ms). Residue that survives the settles is
 // real, not transient.
-func settleCensus(t *testing.T, kr residue.KernelRead, sc residue.Scope) residue.Report {
+func settleCensus(t *testing.T, kr residue.KernelRead, sc residue.Scope, pre map[ebpf.MapID]bool) residue.Report {
 	t.Helper()
 	var last residue.Report
 	for i := 0; i < 50; i++ {
@@ -687,6 +797,7 @@ func settleCensus(t *testing.T, kr residue.KernelRead, sc residue.Scope) residue
 		if err != nil {
 			t.Fatalf("census: %v", err)
 		}
+		r = sansPreMaps(t, r, pre)
 		if r.Clean() {
 			return r
 		}
