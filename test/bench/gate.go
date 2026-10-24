@@ -86,3 +86,139 @@ func Evaluate(in GateInput, cat Catalog) ([]Violation, error) {
 	}
 	return vs, nil
 }
+
+// InflationBand is the machine-factor level a paired sample reads when
+// runner inflation rides the measurement window: a sample at or above
+// it carries the load episode. Quiet-host samples read 1.00 within
+// noise. Hosted-CI storm windows read 2x to 7x. 1.5 splits the two
+// states with margin on each side.
+const InflationBand = 1.5
+
+// RowVerdict is the variance-consistent verdict class one budget-row
+// pair reads on the live path (TR-92a). The class records why the row
+// settled: a genuine budget miss, a bracket the samples could not
+// settle, or a row that holds.
+type RowVerdict string
+
+const (
+	// RowUnmet: the row misses its budget on the walls the verdict
+	// settles. It reads the raw walls when the paired samples agree on
+	// the runner state, the normalized walls when they agree on
+	// inflation.
+	RowUnmet RowVerdict = "unmet"
+	// RowRetainedWithVariance: the walls miss or hold while one side of
+	// the machine-factor pair carries inflation, or both sides carry
+	// inflation and the normalized walls hold. The pair cannot settle
+	// code evidence. The row stays recorded and the run continues.
+	RowRetainedWithVariance RowVerdict = "retained-with-variance"
+	// RowHolds: the row's budget holds on the compared walls.
+	RowHolds RowVerdict = "holds"
+)
+
+// RowInput couples one measured cell with its paired machine factors:
+// one sample before the row's measurement, one after. The pair rides
+// the runner, never the recipe: the calibration probe is fixed work
+// outside the CRS path, so an engine-side regression cannot inflate it.
+type RowInput struct {
+	Report     Report
+	PreFactor  float64
+	PostFactor float64
+}
+
+// RowVerdictRecord is the row's verdict class with the evidence the run
+// record prints: the factor the budget comparison used, the budget
+// findings on the compared walls, and their joined detail line.
+type RowVerdictRecord struct {
+	Verdict    RowVerdict
+	Factor     float64 // the factor the walls normalize by; 1.0 when the row settles on raw walls
+	Violations []Violation
+	Detail     string
+}
+
+// EvaluateRow classifies one budget-row pair (recipe + budget row) from
+// its paired machine factors. The TR-92a defect class: a once-per-run
+// calibration prints 1.00, then sustained concurrent CI load inflates
+// the walls the runner records, and rows misclassify unmet. The pair
+// separates the two states:
+//
+//   - Both samples carry inflation: the bracket covers the row's
+//     window on both sides, so the agreed level (the pair mean)
+//     normalizes the walls as the gate specifies. The row reads unmet
+//     when the normalized p99 still misses; else it reads
+//     retained-with-variance.
+//   - One sample carries inflation: the row's window may or may not
+//     sit inside the episode. A raw miss cannot settle as code
+//     evidence; the row reads retained-with-variance. Raw walls that
+//     hold read holds.
+//   - Neither sample carries inflation: the raw verdict stands, and
+//     the row reads unmet only when the raw budget row genuinely
+//     misses.
+//
+// Floor-kind budgets normalize nowhere (the live recipes cannot bind
+// them; validation forbids the pairing) and compare their raw walls in
+// every class. The recorded-baseline regression leg stays on Evaluate;
+// this path carries the live budget-row verdicts.
+func EvaluateRow(in RowInput, cat Catalog) (RowVerdictRecord, error) {
+	if err := checkMachineFactors(in.PreFactor, in.PostFactor); err != nil {
+		return RowVerdictRecord{}, err
+	}
+	if _, ok := cat.ByID[in.Report.BudgetID]; !ok {
+		return RowVerdictRecord{}, fmt.Errorf("bench: unknown budget %q", in.Report.BudgetID)
+	}
+	preInf, postInf := in.PreFactor >= InflationBand, in.PostFactor >= InflationBand
+	factor := 1.0
+	if preInf && postInf {
+		factor = (in.PreFactor + in.PostFactor) / 2
+	}
+	vs, err := Evaluate(GateInput{Report: in.Report, MachineFactor: factor}, cat)
+	if err != nil {
+		return RowVerdictRecord{}, err
+	}
+	rec := RowVerdictRecord{Factor: factor}
+	miss := false
+	for _, v := range vs {
+		rec.Violations = append(rec.Violations, v)
+		if rec.Detail != "" {
+			rec.Detail += "; "
+		}
+		rec.Detail += v.Detail
+		if v.Kind == VioBudget {
+			miss = true
+		}
+	}
+	switch {
+	case preInf && postInf:
+		if miss {
+			rec.Verdict = RowUnmet
+		} else {
+			// The agreed inflation normalizes the walls to a hold: the
+			// raw miss the record carries is runner variance, not code
+			// evidence.
+			rec.Verdict = RowRetainedWithVariance
+		}
+	case preInf != postInf:
+		if miss {
+			rec.Verdict = RowRetainedWithVariance
+		} else {
+			rec.Verdict = RowHolds
+		}
+	default:
+		if miss {
+			rec.Verdict = RowUnmet
+		} else {
+			rec.Verdict = RowHolds
+		}
+	}
+	return rec, nil
+}
+
+// checkMachineFactors guards the same range the gate applies to one
+// factor: both sides of a live pair stay in (0, 10].
+func checkMachineFactors(fs ...float64) error {
+	for _, f := range fs {
+		if f <= 0 || f > 10 {
+			return fmt.Errorf("bench: machine factor %g outside (0, 10]", f)
+		}
+	}
+	return nil
+}

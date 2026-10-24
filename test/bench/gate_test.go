@@ -122,30 +122,120 @@ func TestGateVerdicts(t *testing.T) {
 	}
 }
 
-// The TR-92a defect restated as a behavior check. The live verdict
-// consumes ONE machine factor per run: the current once-per-run
-// calibrator. A load episode that arrives after the sample point moves
-// the runner away. The episode inflates the row's walls and the row
-// reads unmet on a state that holds quiet. A per-recipe sample pair
-// brackets the episode (1.00 before the row, 3.00 after) and must not
-// fail the row. This test carries the desired verdict until the
-// per-recipe sampling lands.
+// The TR-92a watch, carried from the RED commit. The RED state ran this
+// named test against the once-per-run calibrator: the row read unmet on
+// a mid-run inflation episode. The GREEN state pairs the machine factor
+// around the budget-row pair: one sample settles quiet (1.00), the
+// other settles inside the episode (3.00), and the row records
+// retained-with-variance while the run continues.
 func TestBudgetRowVerdictUnderMidRunInflation(t *testing.T) {
 	cat := gateCat()
-	// The once-per-run calibrator samples at the run start: 1.00.
-	runMachineFactor := 1.0
 	// The load episode arrives after the sample point. The raw p99
 	// rides the episode: 4500 us at 3x the 1500 us row.
 	rep := Report{RecipeID: "steady-json-8k", BudgetID: "e2e-inline-hop-8k", P99us: 4500}
-	vs, err := Evaluate(GateInput{Report: rep, MachineFactor: runMachineFactor}, cat)
+	row, err := EvaluateRow(RowInput{Report: rep, PreFactor: 1.0, PostFactor: 3.0}, cat)
 	if err != nil {
-		t.Fatalf("Evaluate: %v", err)
+		t.Fatalf("EvaluateRow: %v", err)
 	}
-	for _, v := range vs {
-		if v.Kind != VioBudget {
+	if row.Verdict != RowRetainedWithVariance {
+		t.Fatalf("recipe %s: verdict = %q, want %q: one sample of the pair carries the inflation, so the raw miss cannot settle as code evidence",
+			rep.RecipeID, row.Verdict, RowRetainedWithVariance)
+	}
+}
+
+// Guard: the paired-sample verdict classes the live run records. The
+// pair rides the runner on the fixed calibration probe; the classes
+// separate code evidence from runner variance. One concern: the
+// TR-92a classification rule over the machine-factor pair.
+func TestBudgetRowVerdictClassesPairedSamples(t *testing.T) {
+	cat := gateCat()
+	cases := []struct {
+		name       string
+		in         RowInput
+		want       RowVerdict
+		wantFactor float64
+		wantSub    string // substring the record's detail carries, or empty
+		wantErr    bool
+	}{
+		{
+			name: "one sample carries the inflation before the row, raw miss — retained-with-variance",
+			in:   RowInput{Report: Report{RecipeID: "steady-json-8k", BudgetID: "e2e-inline-hop-8k", P99us: 4500}, PreFactor: 3.0, PostFactor: 1.0},
+			want: RowRetainedWithVariance,
+		},
+		{
+			name: "one sample carries the inflation after the row, raw miss — retained-with-variance",
+			in:   RowInput{Report: Report{RecipeID: "steady-json-8k", BudgetID: "e2e-inline-hop-8k", P99us: 4500}, PreFactor: 1.0, PostFactor: 3.0},
+			want: RowRetainedWithVariance,
+		},
+		{
+			name: "one sample carries the inflation, raw walls hold — holds",
+			in:   RowInput{Report: Report{RecipeID: "steady-json-8k", BudgetID: "e2e-inline-hop-8k", P99us: 900}, PreFactor: 2.0, PostFactor: 1.0},
+			want: RowHolds,
+		},
+		{
+			name: "both samples agree on inflation, normalized p99 still misses — unmet",
+			in:   RowInput{Report: Report{RecipeID: "steady-json-8k", BudgetID: "e2e-inline-hop-8k", P99us: 9000}, PreFactor: 2.5, PostFactor: 3.5},
+			want: RowUnmet, wantFactor: 3.0,
+			wantSub: "machine factor 3.00",
+		},
+		{
+			name: "both samples agree on inflation, normalized p99 holds — retained-with-variance",
+			in:   RowInput{Report: Report{RecipeID: "steady-json-8k", BudgetID: "e2e-inline-hop-8k", P99us: 4200}, PreFactor: 3.0, PostFactor: 3.0},
+			want: RowRetainedWithVariance, wantFactor: 3.0,
+		},
+		{
+			name: "both samples quiet, raw budget miss — unmet",
+			in:   RowInput{Report: Report{RecipeID: "steady-json-8k", BudgetID: "e2e-inline-hop-8k", P99us: 1700}, PreFactor: 1.0, PostFactor: 1.0},
+			want: RowUnmet, wantFactor: 1.0,
+			wantSub: "1700.0 us above the budget",
+		},
+		{
+			name: "both samples quiet, budget holds — holds",
+			in:   RowInput{Report: Report{RecipeID: "steady-json-8k", BudgetID: "e2e-inline-hop-8k", P99us: 900}, PreFactor: 1.0, PostFactor: 1.0},
+			want: RowHolds, wantFactor: 1.0,
+		},
+		{
+			name:    "floor budget not met on raw walls — unmet",
+			in:      RowInput{Report: Report{RecipeID: "load-replica", BudgetID: "engine-throughput-replica", ReqPS: 9000}, PreFactor: 1.0, PostFactor: 1.0},
+			want:    RowUnmet,
+			wantSub: "under the floor budget",
+		},
+		{
+			name:    "zero sample factor is gate misuse",
+			in:      RowInput{Report: Report{RecipeID: "steady-json-8k", BudgetID: "e2e-inline-hop-8k", P99us: 900}, PreFactor: 0, PostFactor: 1.0},
+			wantErr: true,
+		},
+		{
+			name:    "sample factor over the clamp is gate misuse",
+			in:      RowInput{Report: Report{RecipeID: "steady-json-8k", BudgetID: "e2e-inline-hop-8k", P99us: 900}, PreFactor: 11, PostFactor: 1.0},
+			wantErr: true,
+		},
+		{
+			name:    "unknown budget id is gate misuse",
+			in:      RowInput{Report: Report{RecipeID: "steady-json-8k", BudgetID: "nope", P99us: 900}, PreFactor: 1.0, PostFactor: 1.0},
+			wantErr: true,
+		},
+	}
+	for _, tc := range cases {
+		row, err := EvaluateRow(tc.in, cat)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("%s: EvaluateRow err = nil, want error", tc.name)
+			}
 			continue
 		}
-		t.Fatalf("recipe %s: budget row %s reads unmet at the once-per-run machine factor %.2f while the row's own samples bracket the inflation (pre 1.00, post 3.00): %s",
-			rep.RecipeID, rep.BudgetID, runMachineFactor, v.Detail)
+		if err != nil {
+			t.Errorf("%s: EvaluateRow err = %v, want nil", tc.name, err)
+			continue
+		}
+		if row.Verdict != tc.want {
+			t.Errorf("%s: verdict = %q, want %q", tc.name, row.Verdict, tc.want)
+		}
+		if tc.wantFactor != 0 && row.Factor != tc.wantFactor {
+			t.Errorf("%s: factor = %g, want %g", tc.name, row.Factor, tc.wantFactor)
+		}
+		if tc.wantSub != "" && !strings.Contains(row.Detail, tc.wantSub) {
+			t.Errorf("%s: detail = %q, want it to carry %q", tc.name, row.Detail, tc.wantSub)
+		}
 	}
 }
