@@ -59,6 +59,24 @@ jobs:
             echo "the gate did not reach its timing read" >> "$GITHUB_STEP_SUMMARY"
           fi
 
+  module-3-ebpf-lab:
+    # TR-27b (issue #170, spec section 7): the module-3 lab on the eBPF
+    # platform. Hermetic leg: the kernel wire contracts. The kernel legs
+    # (attach, ban-e2e) skip with a loud line — hosted runners carry no
+    # kernel-test VM; the kernel gates run in the developer VM posture.
+    name: "module-3 ebpf lab (wire contracts)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - name: module-3 ebpf lab
+        run: bash lab/module-3/run.sh
+
   module-4-modeling-lab:
     # TR-27c (issue #171, spec section 7): the module-4 lab on security
     # modeling. Hermetic legs: the rate tables, the ban oracle, the bot

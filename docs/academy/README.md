@@ -27,4 +27,5 @@ and every rule example in it cites its wire anatomy.
 
 | Module | Map entry | Doc | Lab |
 |---|---|---|---|
+| 3 | eBPF as a platform | [module-3.md](module-3.md) | [lab/module-3](../../lab/module-3/README.md) |
 | 4 | security modeling | [module-4.md](module-4.md) | [lab/module-4](../../lab/module-4/README.md) |
