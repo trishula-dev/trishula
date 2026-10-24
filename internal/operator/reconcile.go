@@ -78,6 +78,12 @@ func compileResolved(ctx context.Context, p *v1alpha1.WAFPolicy, src RulePackSou
 	if err != nil {
 		return Bundle{}, fmt.Errorf("reconcile %s/%s: %w", p.Namespace, p.Name, err)
 	}
+	// The compile-split write rides the compile path (TR-40b): the split
+	// stamps on the policy object this reconcile already holds. A stamp
+	// failure is a compile failure — fail closed, no bundle leaves.
+	if err := StampCompileSplit(p, &b); err != nil {
+		return Bundle{}, fmt.Errorf("reconcile %s/%s: %w", p.Namespace, p.Name, err)
+	}
 	if len(p.Spec.RuleSets) == 0 {
 		return b, nil
 	}

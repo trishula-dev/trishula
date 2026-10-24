@@ -275,3 +275,41 @@ func TestReconcileRefResolutionIsNamespaceLocked(t *testing.T) {
 		t.Errorf("error should name the unresolved ref, got: %v", o.Err)
 	}
 }
+
+// TestReconcileStampsCompileSplit pins the split write on the reconcile
+// path (TR-40b): the reconcile stamps the per-field annotation onto the
+// policy object it compiles, and the deployed operator's persist step
+// carries the same object. A failed compile carries no stamp — a policy
+// with no bundle claims no split.
+func TestReconcileStampsCompileSplit(t *testing.T) {
+	policies := []v1alpha1.WAFPolicy{routeClassPolicy()}
+	out := Reconcile(context.Background(), policies, nil)
+	if len(out) != 1 || out[0].Err != nil {
+		t.Fatalf("Reconcile(route policy): out = %+v, want one clean compile", out)
+	}
+	if out[0].Bundle == nil || out[0].Bundle.FastPath == nil {
+		t.Fatalf("reconcile bundle lost the kernel leg: %+v", out[0].Bundle)
+	}
+	got := policies[0].Annotations[CompileSplitAnnotation]
+	if got == "" {
+		t.Fatal("reconcile left no compile-split annotation on the policy object")
+	}
+	if bundle, err := Compile(routeClassPolicy()); err == nil {
+		want, _ := compileSplitJSON(bundle.Split)
+		if got != want {
+			t.Errorf("annotation = %q, want %q", got, want)
+		}
+	}
+	// The failed compile carries no stamp: an uncompilable policy reads no
+	// split, not a stale one.
+	failed := routeClassPolicy()
+	failed.Name = "broken"
+	failed.Spec.Routes = []v1alpha1.RouteMark{{Prefix: strings.Repeat("p", 65), Action: v1alpha1.RouteActionDrop}}
+	failedIn := []v1alpha1.WAFPolicy{failed}
+	if out := Reconcile(context.Background(), failedIn, nil); len(out) == 1 && out[0].Err == nil {
+		t.Fatal("the oversized prefix compiled, want a compile failure")
+	}
+	if ann := failedIn[0].Annotations[CompileSplitAnnotation]; ann != "" {
+		t.Errorf("the failed compile stamped %q, want no annotation", ann)
+	}
+}
