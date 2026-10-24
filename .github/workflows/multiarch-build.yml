@@ -1,0 +1,77 @@
+# TR-33 (issue #33, spec section 20.2 Phase 1+): the multi-arch build lane.
+#
+# The issue moves the OpenShift and multi-arch builds into an evaluation and
+# build lane. This workflow is the build statement in CI: it cross-compiles
+# every command for both bpf2go arms (amd64 + arm64) and asserts the object
+# census. The census is the release asset shape: the 2026.01-rc1 to rc3
+# releases carry one object per program per arm plus checksums.txt (16 objects
+# = 8 programs x 2 arms), and `release-attest.yml` attests every asset, so a
+# per-arm asset set flows through with no change.
+#
+# The kernel and cluster legs stay out: XDP/TC attach under an OpenShift SCC,
+# the RHCOS kernel surface and the OVN interface posture are cluster-gated.
+# docs/deploy/multiarch-openshift.md carries the build statement and the
+# PENDING rows (hardware- and cluster-gated; this environment cannot reach
+# them).
+
+name: multiarch-build
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/multiarch-build.yml
+      - bpf/**
+      - internal/shield/**
+      - internal/engine/ingest/**
+      - internal/fastpath/**
+      - docs/deploy/**
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trishula-multiarch-build
+  cancel-in-progress: false
+
+jobs:
+  multiarch:
+    name: "TR-33 multi-arch build + object census"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      # Both arms compile: the generated loader files carry go:build tags per
+      # arm and go:embed the matching object, so a missing arm object fails
+      # the build step, not just the census below.
+      - name: Cross-compile both arms
+        run: |
+          set -euo pipefail
+          GOOS=linux GOARCH=amd64 go build ./...
+          GOOS=linux GOARCH=arm64 go build ./...
+      # The census: every committed x86 object carries its arm64 twin in the
+      # same directory and vice versa. A single-arm program or a dropped arm
+      # fails here before a release ships the asymmetric asset set.
+      - name: Object census (1 program = 1 object per arm)
+        run: |
+          set -euo pipefail
+          STEMS="$RUNNER_TEMP/multiarch-stems"
+          git ls-files '*_x86_bpfel.o'   | sed 's/_x86_bpfel\.o$//'   | sort > "$STEMS.x86"
+          git ls-files '*_arm64_bpfel.o' | sed 's/_arm64_bpfel\.o$//' | sort > "$STEMS.arm64"
+          n_x86=$(wc -l < "$STEMS.x86" | tr -d ' ')
+          n_arm=$(wc -l < "$STEMS.arm64" | tr -d ' ')
+          if [ "$n_x86" -eq 0 ] || [ "$n_arm" -eq 0 ]; then
+            echo "census RED: no bpf2go objects tracked (x86=$n_x86 arm64=$n_arm)"
+            exit 1
+          fi
+          if ! diff -u "$STEMS.x86" "$STEMS.arm64"; then
+            echo "census RED: the arm pairs differ — one program carries one arm only"
+            exit 1
+          fi
+          echo "census pass: $n_x86 programs x 2 arms = $((n_x86 * 2)) objects in git"
+          cat "$STEMS.arm64"
