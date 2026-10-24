@@ -47,6 +47,32 @@ read at least 4x over their budget row are pinned unmet; the other
 cells carry a 4x blowup bound. A green run with a missing pin is a
 moved finding: re-pin with the fresh recorded run.
 
+## How the live verdicts settle (TR-92a)
+
+The budget verdict pairs the machine factor around every budget-row
+pair: one sample before the recipe measures, one after. A sample reads
+the runner speed on a fixed calibration probe (wall time over CPU
+time). Engine cost cannot move the probe; runner motion moves it. The
+verdict classes:
+
+- Both samples read inflation (each at or above 1.5). The pair
+  brackets the row's window. The agreed level (the pair mean)
+  normalizes the walls. The row reads unmet when the normalized p99
+  still misses; else it reads retained-with-variance.
+- One sample reads inflation. The pair cannot settle code evidence. A
+  raw miss records retained-with-variance and the run continues; raw
+  walls that hold read holds.
+- Neither sample reads inflation. The raw verdict stands: the row
+  reads unmet only when the raw budget row genuinely misses.
+
+Budgets, pins and fixtures stay unchanged. The storm record (#147): a
+calibration once per run printed 1.00 while the sustained concurrent
+CI load inflated the walls, and rows misclassified unmet. The per-recipe
+pair makes the runner state visible per row and the verdict classes
+keep the gate variance-consistent. A real regression still reads unmet:
+quiet pairs leave the raw verdict standing, and agreed inflation leaves
+the normalized verdict standing.
+
 Why the strict M2 bound does not gate this suite: hosted CI runs test
 packages in parallel and shared runners carry sibling load, so a
 strict 1.5 ms p99 assert reads 2x to 7x tails under contention
