@@ -50,6 +50,11 @@ jobs:
       - name: DX1 timed gate
         env:
           DX1_TARGET: "900"
+          # The lab's proven NGF lane (issue #198, run 40077270222): the 2.7.2
+          # OCI install misses the 5m helm deadline on the runner and the
+          # chart-package retry gave no installable chart. setup.sh routes a
+          # 1.x pin to the 1.x single-pod lane directly.
+          NGF_CHART_VERSION: "1.6.2"
         run: bash lab/dx1/dx1-gate.sh
       - name: DX1 timing summary
         if: always()

@@ -153,7 +153,13 @@ nightly run is the M3 evidence: the timed schedule stays green under
   is not ready, `setup.sh` automatically retries with the NGF **1.x
   single-pod architecture** (`NGF_FALLBACK_CHART_VERSION`, default 1.6.2 —
   control + data plane in one pod, no agent handshake) and pins the
-  `NODE_HTTP_PORT`. The steering evidence is identical. (Plain docker
+  `NODE_HTTP_PORT`. The steering evidence is identical. A direct
+  `NGF_CHART_VERSION=1.x` pin rides that lane from the start. The nightly
+  CI gate pins `NGF_CHART_VERSION=1.6.2`: the 2.7.2 OCI install misses the
+  5m helm deadline on the runner and the chart-package retry gives no
+  installable chart (issue #198, run 40077270222). Local labs keep the
+  2.7.2-first default, so the 2.x lane keeps its re-entry attempts there.
+  (Plain docker
   containers are unaffected; see the filed OrbStack issue for the containerd
   `/proc` title-rewrite reproduction.)
 - The chart ships no Gateway API CRDs; CRDs come from the pinned
