@@ -121,3 +121,31 @@ func TestGateVerdicts(t *testing.T) {
 		}
 	}
 }
+
+// The TR-92a defect restated as a behavior check. The live verdict
+// consumes ONE machine factor per run: the current once-per-run
+// calibrator. A load episode that arrives after the sample point moves
+// the runner away. The episode inflates the row's walls and the row
+// reads unmet on a state that holds quiet. A per-recipe sample pair
+// brackets the episode (1.00 before the row, 3.00 after) and must not
+// fail the row. This test carries the desired verdict until the
+// per-recipe sampling lands.
+func TestBudgetRowVerdictUnderMidRunInflation(t *testing.T) {
+	cat := gateCat()
+	// The once-per-run calibrator samples at the run start: 1.00.
+	runMachineFactor := 1.0
+	// The load episode arrives after the sample point. The raw p99
+	// rides the episode: 4500 us at 3x the 1500 us row.
+	rep := Report{RecipeID: "steady-json-8k", BudgetID: "e2e-inline-hop-8k", P99us: 4500}
+	vs, err := Evaluate(GateInput{Report: rep, MachineFactor: runMachineFactor}, cat)
+	if err != nil {
+		t.Fatalf("Evaluate: %v", err)
+	}
+	for _, v := range vs {
+		if v.Kind != VioBudget {
+			continue
+		}
+		t.Fatalf("recipe %s: budget row %s reads unmet at the once-per-run machine factor %.2f while the row's own samples bracket the inflation (pre 1.00, post 3.00): %s",
+			rep.RecipeID, rep.BudgetID, runMachineFactor, v.Detail)
+	}
+}
