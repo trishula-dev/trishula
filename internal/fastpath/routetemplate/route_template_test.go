@@ -6,8 +6,11 @@ package routetemplate
 
 import (
 	"os"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/cilium/ebpf"
 
 	"github.com/trishula-dev/trishula/internal/fastpath"
 	"github.com/trishula-dev/trishula/internal/operator"
@@ -110,8 +113,8 @@ func TestRouteTemplateStagesBundleLeg(t *testing.T) {
 				if len(stages) != 2 {
 					t.Fatalf("Stage rows = %d, want 2", len(stages))
 				}
-				if stages[0].PrefixLenBits != 7*8 || string(stages[0].Prefix[:7]) != "/v1/chat" || stages[0].Action != 0 || stages[0].ID != 0 {
-					t.Errorf("row 0 = %+v, want /v1/chat 56 bits forward id 0", stages[0])
+				if stages[0].PrefixLenBits != 8*8 || string(stages[0].Prefix[:8]) != "/v1/chat" || stages[0].Action != 0 || stages[0].ID != 0 {
+					t.Errorf("row 0 = %+v, want /v1/chat 64 bits forward id 0", stages[0])
 				}
 				if stages[1].PrefixLenBits != 9*8 || string(stages[1].Prefix[:9]) != "/v1/admin" || stages[1].Action != 1 || stages[1].ID != 1 {
 					t.Errorf("row 1 = %+v, want /v1/admin 72 bits drop id 1", stages[1])
@@ -164,5 +167,54 @@ func TestRouteTemplateStagesBundleLeg(t *testing.T) {
 			t.Fatalf("%s: Stage: %v", row.name, err)
 		}
 		row.check(t, stages)
+	}
+}
+
+// TestRouteTemplateObjectContract pins the committed object at the spec
+// (kernel-free: the spec never touches the kernel): one TC program inside
+// the envelope constant, the compile-staged placeholder, and the bounded
+// route map. The Go mirrors carry the wire sizes the e2e reads.
+func TestRouteTemplateObjectContract(t *testing.T) {
+	spec, err := loadRoute_mark()
+	if err != nil {
+		t.Fatalf("load committed route template object: %v", err)
+	}
+	if len(spec.Programs) != 1 {
+		t.Fatalf("the object carries %d programs, want 1 (one program envelope)", len(spec.Programs))
+	}
+	prog, ok := spec.Programs["route_mark"]
+	if !ok || prog == nil {
+		t.Fatalf("the object misses the route_mark program: %v", spec.Programs)
+	}
+	if prog.Type != ebpf.SchedCLS {
+		t.Errorf("route_mark type = %v, want SchedCLS", prog.Type)
+	}
+	if got := len(prog.Instructions); got > routeEnvelopeInstructions {
+		t.Errorf("route_mark carries %d instructions past the %d-instruction envelope", got, routeEnvelopeInstructions)
+	}
+	if spec.Variables["route_cfg"] == nil {
+		t.Error("the object misses the route_cfg placeholder")
+	}
+	m, ok := spec.Maps["route_marks"]
+	if !ok || m == nil {
+		t.Fatalf("the object misses route_marks: %v", spec.Maps)
+	}
+	if m.Type != ebpf.LPMTrie {
+		t.Errorf("route_marks type = %v, want LPMtrie", m.Type)
+	}
+	if m.MaxEntries != uint32(fastpath.RouteTemplateMaxEntries) {
+		t.Errorf("route_marks max_entries = %d, want %d", m.MaxEntries, fastpath.RouteTemplateMaxEntries)
+	}
+	if m.Flags != 1 { // BPF_F_NO_PREALLOC
+		t.Errorf("route_marks flags = %d, want 1 (BPF_F_NO_PREALLOC)", m.Flags)
+	}
+	if reflect.TypeOf(route_markRouteKey{}).Size() != 68 {
+		t.Errorf("route key mirror size = %d, want 68 (4 + 64)", reflect.TypeOf(route_markRouteKey{}).Size())
+	}
+	if reflect.TypeOf(route_markRouteVal{}).Size() != 8 {
+		t.Errorf("route value mirror size = %d, want 8", reflect.TypeOf(route_markRouteVal{}).Size())
+	}
+	if spec.Maps["route_marks"].KeySize != 68 || spec.Maps["route_marks"].ValueSize != 8 {
+		t.Errorf("route map key/value sizes = %d/%d, want 68/8", spec.Maps["route_marks"].KeySize, spec.Maps["route_marks"].ValueSize)
 	}
 }
