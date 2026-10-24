@@ -35,6 +35,13 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
+      # TR-40c (issue #189): the kernel-free companion. Every committed
+      # bundle shape (internal/operator/testdata/bundle-shapes) walks the
+      # compile pathway without a kernel: wire load gate, staging bounds,
+      # split verdicts. Host CI stays kernel-free; the verifier loads per
+      # bundle ride the rootful step below.
+      - name: Bundle-shape contract gate (kernel-free)
+        run: go test -v ./test/route-e2e/ -run TestBundleShapes
       # ROUTE_E2E_REQUIRED=1 turns every environment skip into a
       # failure: a job that cannot run the load never reads as green.
       - name: Route-class verifier load gate
