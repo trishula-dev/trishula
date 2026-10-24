@@ -34,9 +34,7 @@ type simObj struct {
 	Object
 	owner string // maps: the owning program; programs: ""
 	pin   string // non-empty: pinned at this BPFFS path
-	tcRef bool   // a TC filter references (keeps alive) this program
-	xdp   bool   // an attached XDP link references this program
-	coll  bool   // lives in the loader collection (fd closes on Close)
+	tcRef bool   // a live TC filter references (keeps alive) this program
 }
 
 type simKernel struct {
@@ -125,17 +123,16 @@ func dropObj(store *[]*simObj, o *simObj) {
 // install seeds the full production attach state on eth0: the XDP leg
 // (shield_xdp + 3 maps + the attach link, unpinned) and the TC leg
 // (tc_ingress_waf pinned under the subtree + 5 maps + ingress/egress
-// filters). It returns the XDP link and the pinned program.
-func (s *simKernel) install() (xdpLink, flow *simObj) {
-	shield := s.prog("shield_xdp")
-	shield.coll, shield.xdp = true, true
+// filters).
+func (s *simKernel) install() {
+	s.prog("shield_xdp")
 	for _, id := range []string{"ban_table", "verdict_cache", "acl4"} {
-		s.mp(id, "shield_xdp").owner = shield.ID
+		s.mp(id, "shield_xdp").owner = "shield_xdp"
 	}
 	l := &simObj{Object: Object{Class: ClassLink, ID: "shield_xdp", Where: "eth0"}}
 	s.links = append(s.links, l)
 
-	flow = s.prog("tc_ingress_waf")
+	flow := s.prog("tc_ingress_waf")
 	flow.pin = "/sys/fs/bpf/trishula/tc_ingress_waf"
 	for _, id := range []string{"ban_table", "events", "lost_events", "flow_stats", "probe_stats"} {
 		s.mp(id, "tc_ingress_waf").owner = flow.ID
@@ -144,38 +141,26 @@ func (s *simKernel) install() (xdpLink, flow *simObj) {
 	s.filter("eth0", "ingress", flow.ID)
 	s.filter("eth0", "egress", flow.ID)
 	flow.tcRef = true
-	return l, flow
 }
 
-// closeOnlyTeardown models the current uninstall surface: Loader.Close()
-// plus the attach harness's pin-file remove. What the kernels records:
-//
-//   - the link close detaches the XDP hook; the unpinned shield program
-//     and its maps lose the last reference
-//   - the collection close frees no pinned object
-//   - nothing removes the TC clsact filters; each filter holds its
-//     program, and the program holds its maps
-//   - the pin file went; the BPFFS subtree holds no file (a directory is
-//     not a census class)
-func (s *simKernel) closeOnlyTeardown() {
+// hasPin reports a live pin object at path.
+func (s *simKernel) hasPin(path string) bool {
+	for _, p := range s.pins {
+		if p.ID == path {
+			return true
+		}
+	}
+	return false
+}
+
+// hasLinkTo reports a live link that references prog.
+func (s *simKernel) hasLinkTo(prog string) bool {
 	for _, l := range s.links {
-		dropObj(&s.links, l)
-	}
-	for _, p := range append([]*simObj{}, s.progs...) {
-		alive := p.pin != "" || p.tcRef || (p.xdp && false)
-		if p.coll && !alive {
-			dropObj(&s.progs, p)
+		if l.ID == prog {
+			return true
 		}
 	}
-	for _, m := range append([]*simObj{}, s.maps...) {
-		if owner(s, m.owner) == nil &&
-			m.pin == "" {
-			dropObj(&s.maps, m)
-		}
-	}
-	for _, p := range append([]*simObj{}, s.pins...) {
-		dropObj(&s.pins, p)
-	}
+	return false
 }
 
 // owner returns the named program still alive in the state.
@@ -188,15 +173,111 @@ func owner(s *simKernel, id string) *simObj {
 	return nil
 }
 
-func mustClean(t *testing.T, st *simKernel, sc Scope) {
-	t.Helper()
-	r, err := Census(st, sc)
-	if err != nil {
-		t.Fatalf("census: %v", err)
+// dropUnreferenced applies the kernel refcount rule: a program survives
+// while a pin, a TC filter or a link holds it; a map survives while its
+// program holds it.
+func (s *simKernel) dropUnreferenced() {
+	sc := simScope()
+	for _, p := range append([]*simObj{}, s.progs...) {
+		if s.hasPin(p.pin) || p.tcRef || s.hasLinkTo(p.ID) {
+			continue
+		}
+		if !sc.hasProgram(p.ID) {
+			continue // foreign programs stay out of the sim's kernel drops
+		}
+		dropObj(&s.progs, p)
 	}
-	if !r.Clean() {
-		t.Fatalf("uninstall left kernel residue: %s", r)
+	for _, m := range append([]*simObj{}, s.maps...) {
+		if owner(s, m.owner) == nil && sc.hasMap(m.ID) {
+			dropObj(&s.maps, m)
+		}
 	}
+}
+
+// closeOnlyTeardown models the current uninstall surface: Loader.Close()
+// plus the attach harness's pin-file remove. What the kernel records:
+//
+//   - the link close detaches the XDP hook; the unpinned shield program
+//     and its maps lose the last reference
+//   - the collection close frees no pinned object
+//   - nothing removes the TC clsact filters; each filter holds its
+//     program, and the program holds its maps
+//   - the pin file went; the BPFFS subtree holds no file (a directory is
+//     not a census class)
+func (s *simKernel) closeOnlyTeardown() {
+	for _, l := range append([]*simObj{}, s.links...) {
+		dropObj(&s.links, l)
+	}
+	for _, p := range append([]*simObj{}, s.pins...) {
+		dropObj(&s.pins, p)
+	}
+	s.dropUnreferenced()
+}
+
+// ownsProg reports the program in the shield scope (the sim's
+// teardown-effect rule: the sweep touches only shield-scoped state).
+func ownsProg(id string) bool { return simScope().hasProgram(id) }
+
+// ownsFilterTC reports an owned TC filter. A filter that references a
+// scoped program or pins under the BPFFS root is the shield's filter.
+func ownsFilterTC(sc Scope, f *simObj) bool {
+	return sc.hasIface(f.Where) && (sc.hasProgram(f.ID) || sc.underRoot(f.ID))
+}
+
+// --- Uninstaller (the sim implementation of the teardown effects) -------
+
+// DetachXDP removes the XDP leg: the attach link, then the referenced
+// program and its maps that lose the last reference.
+func (s *simKernel) DetachXDP(iface string) error {
+	for _, l := range append([]*simObj{}, s.links...) {
+		dropObj(&s.links, l)
+	}
+	s.dropUnreferenced()
+	return nil
+}
+
+// DeleteTCFilters removes the shield's TC filters on iface. A foreign
+// filter (a program outside the scope or a pin outside the root) stays.
+func (s *simKernel) DeleteTCFilters(iface string) error {
+	sc := simScope()
+	kept := s.tc[iface][:0]
+	for _, f := range s.tc[iface] {
+		if !ownsFilterTC(sc, f) {
+			kept = append(kept, f)
+		}
+	}
+	s.tc[iface] = kept
+	s.refreshTcRefs()
+	s.dropUnreferenced()
+	return nil
+}
+
+// refreshTcRefs recomputes the live tcRef flags from the filters present.
+func (s *simKernel) refreshTcRefs() {
+	sc := simScope()
+	for _, p := range s.progs {
+		p.tcRef = false
+		for _, fs := range s.tc {
+			for _, f := range fs {
+				if f.ID == p.ID && ownsFilterTC(sc, f) {
+					p.tcRef = true
+				}
+			}
+		}
+	}
+}
+
+// SweepPins deletes the pinned files under root. Files outside the root
+// stay (foreign state); the root itself stays.
+func (s *simKernel) SweepPins(root string) error {
+	sc := simScope()
+	for _, p := range append([]*simObj{}, s.pins...) {
+		if sc.underRoot(p.ID) {
+			dropObj(&s.pins, p)
+		}
+	}
+	s.dropUnreferenced()
+	return nil
 }
 
 // TestCensusCountsInstalledClasses pins the census inventory over the
@@ -285,14 +366,108 @@ func (f *failingSource) ListMaps() ([]Object, error) {
 	return nil, errors.New("bpftool map show: exit 1")
 }
 
-// TestUninstallConformance: the uninstall contract. After the uninstall
-// path runs, the census reads zero owned objects on every class. The
-// current teardown surface is Loader.Close() — the TC filters stay (the
-// RED state); the uninstall sweep (TR-35a GREEN) removes per-hook state
-// and the BPFFS subtree, and the same assert reads zero.
-func TestUninstallConformance(t *testing.T) {
+// TestCensusCatchesCloseOnlyResidue: the census catches what the CURRENT
+// teardown surface leaves (Loader.Close plus the pin-file remove). This is
+// the RED row from the watched-RED run: one program, two TC filters, five
+// maps stay alive on the managed interface. It stays as the regression row
+// that proves the census still reads that residue.
+func TestCensusCatchesCloseOnlyResidue(t *testing.T) {
 	st := newSimKernel()
 	st.install()
 	st.closeOnlyTeardown()
-	mustClean(t, st, simScope())
+	r, err := Census(st, simScope())
+	if err != nil {
+		t.Fatalf("census: %v", err)
+	}
+	want := map[Class]int{
+		ClassMap: 5, ClassProgram: 1, ClassTCFilter: 2,
+	}
+	for c, n := range want {
+		if r.Counts[c] != n {
+			t.Fatalf("census %s = %d, want %d (full report: %s)", c, r.Counts[c], n, r)
+		}
+	}
+	if r.Clean() {
+		t.Fatal("close-only residue vanished from the census — the simulation drifted")
+	}
+}
+
+// TestUninstallConformance: the uninstall contract. The teardown order
+// (spec §16.4) runs over the managed interface: per-hook detach, TC filter
+// removal, the BPFFS subtree sweep — then the census reads zero.
+func TestUninstallConformance(t *testing.T) {
+	st := newSimKernel()
+	st.install()
+	r, err := Uninstall(st, st, simScope())
+	if err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if !r.Clean() {
+		t.Fatalf("uninstall left kernel residue: %s", r)
+	}
+}
+
+// TestUninstallKeepsForeignObjects: the sweep touches shield-scoped state
+// only. A foreign pin and a foreign filter keep running after uninstall,
+// and the census still reads clean.
+func TestUninstallKeepsForeignObjects(t *testing.T) {
+	st := newSimKernel()
+	st.install()
+	foreignPin := st.pin("/sys/fs/bpf/node_exporter/xdp_probe")
+	foreignFilter := st.filter("eth0", "ingress", "node_exporter_probe")
+	r, err := Uninstall(st, st, simScope())
+	if err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	if !r.Clean() {
+		t.Fatalf("uninstall left kernel residue: %s", r)
+	}
+	if !st.hasPin(foreignPin.ID) {
+		t.Fatal("the uninstall swept a foreign pin")
+	}
+	found := false
+	for _, f := range st.tc["eth0"] {
+		if f == foreignFilter {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the uninstall removed a foreign TC filter")
+	}
+}
+
+// TestUninstallIdempotent: a second uninstall over clean state stays clean.
+func TestUninstallIdempotent(t *testing.T) {
+	st := newSimKernel()
+	st.install()
+	if _, err := Uninstall(st, st, simScope()); err != nil {
+		t.Fatalf("uninstall: %v", err)
+	}
+	r, err := Uninstall(st, st, simScope())
+	if err != nil {
+		t.Fatalf("second uninstall: %v", err)
+	}
+	if !r.Clean() {
+		t.Fatalf("second uninstall left kernel residue: %s", r)
+	}
+}
+
+// TestUninstallFailsClosed: an effect that fails stops the uninstall and
+// reaches the caller; the census never prints a clean verdict.
+func TestUninstallFailsClosed(t *testing.T) {
+	st := newSimKernel()
+	st.install()
+	fail := &failingUninstaller{Uninstaller: st, failOn: "sweep"}
+	if _, err := Uninstall(st, fail, simScope()); err == nil {
+		t.Fatal("a failing teardown effect must fail the uninstall")
+	}
+}
+
+type failingUninstaller struct {
+	Uninstaller
+	failOn string
+}
+
+func (f *failingUninstaller) SweepPins(root string) error {
+	return errors.New("bpffs sweep: exit 1")
 }
