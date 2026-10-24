@@ -197,37 +197,43 @@ crane_manifest_evidence() {
 
 # fetch_chart_dir <image-ref> <dest> — official chart package via anonymous
 # crane (keychain-flaky environments); installs from the chart directory.
-# A failure names its stage with evidence (issue #198): the pull error, or
-# the live manifest when the artifact carries no chart package. The plain
-# "chart package unavailable" line named no gap and read as a store fact
-# with no proof behind it.
+# crane export reads the artifact's layer contents directly (the chart
+# tree): crane pull's legacy tarball names its blobs unpredictably across
+# hosts, and the runner-side search for a chart-package blob at the
+# extraction root found nothing where this host found the package
+# (issue #198, run 40082586664 — the gap branch, with the store evidence
+# line proving the layer publishes). A failure names its stage with
+# evidence: the export error, an empty stream, or the live manifest when
+# the artifact publishes no chart tree.
 fetch_chart_dir() {
-  local img="$1" dest="$2" work layer f
-  work="$(mktemp -d)"
-  if ! crane_anon pull "${img}" "${work}/chart.tar"; then
-    echo "chart package fetch failed at the crane pull stage (its error prints above)" >&2
+  local img="$1" dest="$2" flat
+  flat="$(mktemp)"
+  if ! crane_anon export "${img}" "${flat}"; then
+    echo "chart package fetch failed at the crane export stage (its error prints above)" >&2
     crane_manifest_evidence "${img}"
-    rm -rf "${work}"
+    rm -f "${flat}"
     return 1
   fi
-  tar -xf "${work}/chart.tar" -C "${work}"
-  layer=""
-  for f in "${work}"/*.tar.gz "${work}"/*.tgz; do
-    [ -f "${f}" ] || continue
-    if tar -tzf "${f}" 2>/dev/null | grep -q 'nginx-gateway-fabric/Chart.yaml'; then
-      layer="${f}"
-      break
-    fi
-  done
-  if test -z "${layer}" || ! test -s "${layer}"; then
-    echo "chart package gap: the pull carries no nginx-gateway-fabric chart package" >&2
+  if ! test -s "${flat}"; then
+    echo "chart package gap: the export of ${img} produced an empty stream" >&2
     crane_manifest_evidence "${img}"
-    rm -rf "${work}"
+    rm -f "${flat}"
     return 1
   fi
   mkdir -p "${dest}"
-  tar -xzf "${layer}" -C "${dest}"
-  rm -rf "${work}"
+  if ! tar -xf "${flat}" -C "${dest}"; then
+    echo "chart package gap: the export stream of ${img} is not a chart tarball" >&2
+    crane_manifest_evidence "${img}"
+    rm -f "${flat}"
+    return 1
+  fi
+  rm -f "${flat}"
+  if ! test -f "${dest}/nginx-gateway-fabric/Chart.yaml"; then
+    echo "chart package gap: the export of ${img} carries no nginx-gateway-fabric/Chart.yaml" >&2
+    crane_manifest_evidence "${img}"
+    return 1
+  fi
+  return 0
 }
 
 # install_ngf_1x <version> — the proven 1.x single-pod lane (control + data
@@ -251,9 +257,13 @@ install_ngf_1x() {
   chart_dir="$(mktemp -d)/chart"
   fetch_chart_dir "ghcr.io/nginx/charts/nginx-gateway-fabric:${version}" "${chart_dir}" || true
   test -d "${chart_dir}/nginx-gateway-fabric" || {
-    # direct extraction fallback: crane pull -> untar OCI layer
+    # direct extraction fallback: crane pull -> untar OCI layer (kept for
+    # hosts where export misbehaves; a failed pull prints its evidence)
     work="$(mktemp -d)"
-    crane_anon pull "ghcr.io/nginx/charts/nginx-gateway-fabric:${version}" "${work}/chart.tar"
+    crane_anon pull "ghcr.io/nginx/charts/nginx-gateway-fabric:${version}" "${work}/chart.tar" || {
+      echo "the direct extraction fallback also failed (the crane error prints above)" >&2
+      return 1
+    }
     tar -xf "${work}/chart.tar" -C "${work}"
     layer="$(for f in "${work}"/*.tar.gz; do tar -tzf "${f}" 2>/dev/null | grep -q 'Chart.yaml' && echo "${f}" && break; done)"
     mkdir -p "${chart_dir}" && tar -xzf "${layer}" -C "${chart_dir}"
