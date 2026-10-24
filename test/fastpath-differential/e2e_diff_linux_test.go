@@ -117,6 +117,12 @@ func TestKernelDecisionStream(t *testing.T) {
 	t.Logf("fastpath-differential kernel census: frames %d, fidelity %d/%d, deltas %d",
 		ran, fidelity, ran, deltas)
 	for _, v := range VerifyBudgets(live) {
+		if v.Class != "kernel-fidelity" {
+			// The kernel leg scores its own class only; the corpus census
+			// rows read on the kernel-free gate.
+			continue
+		}
+		t.Logf("fastpath-differential budget row %s: live %d, %s", v.Class, v.Live, v.Detail)
 		if !v.Holds {
 			t.Errorf("budget row %s: %s", v.Class, v.Detail)
 		}

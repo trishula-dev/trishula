@@ -253,4 +253,187 @@ capability claim stays out: tracked evaluation, not a v1 commitment.
 No measured figure exists for either cell. The one measured number this section carries is
 the template's LoC bound above.
 
+## 10. The shadow differential record (TR-40d)
+
+**Trishula record TR-40d** — the shadow differential leaf of the TR-40 compiler spike
+([TR-40 #52](https://github.com/trishula-dev/trishula/issues/52); the leaf record is
+[#190](https://github.com/trishula-dev/trishula/issues/190)). This section extends section 9:
+it adds the shadow harness, the match criterion, the mismatch budget and the kernel-gate
+posture, and section 11 adds the slow-path limitation list.
+
+Spec refs: [§9.9] · [§17.1 budget](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#17-performance-targets--benchmark-plan)
+
+Status: the record ships a kernel-free shadow harness with a kernel-gated leg. No enforcement
+claim and no wall ride the record. The [§9.9] contract holds across the section: tracked
+evaluation, not a v1 commitment.
+
+### 10.1 The streams
+
+Rule: the harness runs both decision streams per corpus case.
+
+| Stream | Surface | Home |
+| --- | --- | --- |
+| Fast-path decision stream | the route template semantics per frame: header checks, the bounded request-line scan, the LPM row match, the action | the committed `route_mark` object on the kernel leg; its userspace projection (`test/fastpath-differential` model) on every host |
+| Engine verdict stream | the loaded bundle evaluation: the seed CEL rule over the request view, else the policy default action | `internal/operator` Compile → Load → Eval, with the staged template rows as the compiled row truth |
+
+The decision streams parse one input, never two: the synthetic frame bytes feed the kernel
+program and the projection. The engine stream reads the case view. The fast path never
+enforces on this record; the shadow reads decisions only.
+
+### 10.2 The match criterion
+
+Rule: one corpus case reads matched when every row below holds for it.
+
+1. Both streams resolve the case.
+2. Every fast-path drop carries compiled drop-row backing: the mark names a staged drop row
+   (row truth over the staged rows).
+3. Every miss reads forward, with no mark (fail-open).
+4. On the kernel leg, the program's return value names the same outcome as the projection
+   (fidelity).
+
+The plane-split differences are reported, never scored. A compiled drop beside a non-decisive
+engine verdict, and a forward beside a decisive one, sit on the class split (section 6): the
+engine stays the detection authority, and a forward re-enters the engine budget (part 2,
+degradation rules).
+
+### 10.3 The corpus
+
+The corpus carries 19 name-ordered cases over 6 shape classes. The shapes pin the
+request-line scan bounds: the snapshot clamp at 96 bytes, the masked size word (a 256-byte
+line wraps to a parse miss), the 64-byte copy cap, the NUL-shortened key, the non-IPv4
+ethertype, the TCP data offset under 5, and the space-free line. The coverage gate counts
+the materialized classes; it never pins a remembered minimum.
+
+| Shape class | Cases |
+| --- | --- |
+| drop-row | 5 |
+| forward-row | 6 |
+| miss | 8 |
+| malformed-frame | 4 |
+| size-quirk | 2 |
+| nul-shape | 2 |
+
+### 10.4 The recorded census
+
+The census below is the stable run (3 runs on each leg, both legs green).
+
+The kernel-free gate, `go test ./test/fastpath-differential/ -count=1 -v`:
+
+```text
+=== RUN   TestFastPathDifferential
+    diffgate_test.go:32: fastpath-differential census: cases 19, ran 19, skipped 0
+    diffgate_test.go:34: fastpath-differential census: parity 19/19, pinned deltas 0
+    diffgate_test.go:40: fastpath-differential census: shapes drop-row 5 forward-row 6 miss 8 malformed-frame 4 size-quirk 2 nul-shape 2
+    diffgate_test.go:41: fastpath-differential census: plane-split 5 (drop-vs-nondecisive 4, forward-vs-decisive 1)
+    diffgate_test.go:48: fastpath-differential budget row unexplained: live 0, holds
+    diffgate_test.go:48: fastpath-differential budget row failopen-drop: live 0, holds
+    diffgate_test.go:48: fastpath-differential budget row unresolved-engine: live 0, holds
+    diffgate_test.go:48: fastpath-differential budget row kernel-fidelity: live 0, holds
+    diffgate_test.go:48: fastpath-differential budget row plane-split: live 5, holds
+--- PASS: TestFastPathDifferential (0.01s)
+=== RUN   TestCorpusCoversRouteDecisions
+    diffgate_test.go:82: fastpath-differential corpus: class drop-row carries 5 case(s)
+    diffgate_test.go:82: fastpath-differential corpus: class forward-row carries 6 case(s)
+    diffgate_test.go:82: fastpath-differential corpus: class miss carries 8 case(s)
+    diffgate_test.go:82: fastpath-differential corpus: class malformed-frame carries 4 case(s)
+    diffgate_test.go:82: fastpath-differential corpus: class size-quirk carries 2 case(s)
+    diffgate_test.go:82: fastpath-differential corpus: class nul-shape carries 2 case(s)
+--- PASS: TestCorpusCoversRouteDecisions (0.00s)
+```
+
+The kernel leg, `go test -tags fastpath_diff_e2e -v ./test/fastpath-differential/` under
+root (host: the dev VM, ubuntu 24.04 arm64, kernel 7.0.14-orbstack-00380-ga7e0a2dc9535):
+
+```text
+=== RUN   TestKernelDecisionStream
+    e2e_diff_linux_test.go:117: fastpath-differential kernel census: frames 19, fidelity 19/19, deltas 0
+    e2e_diff_linux_test.go:125: fastpath-differential budget row kernel-fidelity: live 0, holds
+--- PASS: TestKernelDecisionStream (2.05s)
+```
+
+The kernel leg drives the committed object through the test-run harness. All 19 frames read
+one outcome per stream: the userspace projection matches the kernel object, including the
+size-word wrap, the NUL-shortened key and the 64-byte copy cap.
+
+### 10.5 The mismatch budget
+
+The budget table carries the shadow mismatch classes. Zero-tolerance classes are recorded by
+design; the plane-split class is recorded from the census of section 10.4.
+
+| Class | Boundary | Recorded | Budget | Reads |
+| --- | --- | --- | --- | --- |
+| unexplained | a fast-path/engine pair outside every named class | 0 | 0 | gate |
+| failopen-drop | a drop without compiled drop-row backing | 0 | 0 | gate |
+| unresolved-engine | the engine stream fails to resolve a corpus case | 0 | 0 | gate |
+| kernel-fidelity | the kernel return value disagrees with the projection | 0 | 0 | gate |
+| plane-split | a compiled drop beside a non-decisive verdict, or a forward beside a decisive one | 5 | 5 | reported |
+
+Rules with teeth:
+
+1. The live census over a recorded ceiling reads as a regression and fails the gate.
+2. A ceiling never re-pins to pass a comparison; a maintainer re-pins with a fresh recorded
+   run.
+3. A new mismatch class reads unexplained until a budget row records it.
+
+### 10.6 The kernel gate and the test-run boundary
+
+The kernel leg runs as the tagged e2e: the linux build tag plus the `fastpath_diff_e2e` job
+tag plus the root/euid skip gate (BTF present). `FASTPATH_DIFF_E2E_REQUIRED=1` turns every
+environment skip into a failure, so a gate job that cannot run the leg never reads green.
+Host CI stays kernel-free: the go-build step never sets the tag, and darwin never compiles
+the file.
+
+Two boundary rows, recorded honestly:
+
+1. The program runs under the test-run harness only. No attach and no netns ride this leg;
+   the plan attaches nothing.
+2. The test-run surface returns the TC action only. The skb mark the template writes does
+   not read back there. The kernel leg therefore scores the decision outcome; the row-id and
+   mark legs stay userspace pins. A kernel mark read rides a later attach surface, not this
+   record.
+
+### 10.7 The §4.5 wall rows
+
+Rule: this record records no wall. The section 9.5 rows stay PENDING; the comparison protocol
+([§4.5](../socket-plane-fast-path.md#45-the-comparison-protocol-for-the-tr-40-pr)) owns both
+walls, and this harness records a verdict census, never a timing. Walls enter the record as
+real runs only.
+
+### 10.8 The decision record
+
+| Component | Decision | Record |
+| --- | --- | --- |
+| Shadow harness over both decision streams | adopt | 10.1–10.4 |
+| Match criterion (four rows) | adopt | 10.2 |
+| Mismatch budget with the recorded plane-split ceiling | adopt | 10.5 |
+| Kernel leg through test runs, no attach | adopt | 10.6 |
+| Mark unscoring on the test-run surface | adopt (boundary) | 10.6 |
+| Walls for the §4.5 cells | deferred | 10.7 |
+
+## 11. The slow-path limitation list (TR-40d)
+
+Rule: the list names the policy classes the fast path never enforces. Each class routes to
+the engine slow path (part 2, the ladder tiers). The list carries no kernel claim, at this
+record and at any later one.
+
+| Class | Boundary | Disposition |
+| --- | --- | --- |
+| Request and response bodies | body inspection never crosses the kernel plane; CRS/Coraza body evaluation is engine work ([§9.9]) | engine slow path, always |
+| Compression | gzip, brotli and deflate body (de)compression carry no kernel decode helper | engine slow path |
+| Non-event-driven policies | health checks and timer-driven behaviors carry no per-message event to parse | engine slow path (the recorded constraints of [§9.9]) |
+| Custom runtimes | WASM and Lua policy extensions carry no interpreter in the data plane | engine slow path |
+| Gate-locked classes | the hash/encode gate keeps JWT HS256 off the kernel path (section 2) | slow path; the gate re-reads on the recorded upstream trigger |
+
+The anti-claim rows hold on top of the table:
+
+1. The fast path claims no WAF detection. CRS rule evaluation, the CEL plane and every
+   body-carried class stay engine work.
+2. A slow-path class never routes back into a kernel claim. The compile-split surface
+   (section 6) reports the per-field dispositions, and a bundle never reads "enforced" when
+   part of it fell back.
+3. The list grows when a new slow-path class lands on the census. A limitation row is a
+   boundary statement, never an open capability gap.
+
+[§9.9]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-tracked-evaluation-not-a-v1-commitment
+
 [§17]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#17-performance-targets--benchmark-plan

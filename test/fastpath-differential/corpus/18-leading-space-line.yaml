@@ -1,5 +1,5 @@
 name: 18-leading-space-line
-surface: a leading-space line keys its path from the second space; the row still matches
+surface: a leading-space line keys the bytes past its first in-bound space (the HTTP/1.1 token); no staged row matches and the miss forwards
 skipped: false
 policy:
   defaultAction: pass
@@ -19,8 +19,7 @@ view:
   query: ''
   rate5m: 0
 classes:
-- forward-row
+- miss
 expect:
   outcome: forward
-  marked: true
-  rowid: 0
+  marked: false

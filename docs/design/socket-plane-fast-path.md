@@ -154,6 +154,10 @@ and the envelope. Its PR evidence follows this protocol:
    footnote.
 5. A rerun under runner contention: judge attempt 2 before any verdict. Budget rows never
    re-pin to pass a comparison; only the maintainer re-pins.
+6. The PR carries walls as recorded-run outputs only. A cell without a live PRE and POST
+   pair from one harness and node class renders a PENDING row — never an estimate, never a
+   figure borrowed from another run. The parity census and the mismatch budget ride the
+   same record, and a budget row re-pins only with a fresh recorded run (rule 5 applies).
 
 ## 5. Closure record
 
