@@ -180,6 +180,23 @@ type Parser struct {
 	released map[uint32]bool
 }
 
+// ResetStats is one connection's frame accounting for the h2 rapid-reset
+// shape (the ban plane's DoS-response section, TR-31): Heads counts the
+// header blocks consumed (each opens one stream view), Resets counts the
+// stream resets seen. The reset ratio over the head count is the
+// rapid_reset_suspect input; the counters say nothing about verdicts.
+type ResetStats struct {
+	Heads  uint64
+	Resets uint64
+}
+
+// Stats returns the counters so far. Read-only: the walk keeps its state
+// and the counters never gate it (fail-open: an under-reporting parser
+// cannot block a stream, only under-evidence a cue).
+func (p *Parser) Stats() ResetStats {
+	return ResetStats{} // inert stub; the TR-31 GREEN commit fills
+}
+
 // New builds a connection parser over w. opts may be nil (defaults apply).
 func New(w WireReader, opts *Options) *Parser {
 	if opts == nil {

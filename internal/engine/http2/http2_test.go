@@ -154,6 +154,92 @@ func mustNext(t *testing.T, p *Parser) *Request {
 
 // --- the watched-RED suite (TR-15) --------------------------------------
 
+// TestResetAccountingRows pins the per-connection frame accounting the ban
+// plane's rapid-reset shape consumes (TR-31). The counters live on the
+// parser (the only home that sees every frame) and never gate the walk.
+// One function, not rows of an existing table: these assertions run over a
+// whole connection wire, not over one head; the comment carries the slice.
+func TestResetAccountingRows(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		build      func(b *wireBuilder)
+		nextHeads  int
+		walkTail   bool // walk Next past the last head, to io.EOF
+		wantHeads  uint64
+		wantResets uint64
+	}{
+		{
+			name: "clean multiplexing: heads only",
+			build: func(b *wireBuilder) {
+				b.head(1, true, hf(":method", "GET", ":path", "/a", ":scheme", "http"))
+				b.head(3, true, hf(":method", "GET", ":path", "/b", ":scheme", "http"))
+			},
+			nextHeads: 2,
+			wantHeads: 2, wantResets: 0,
+		},
+		{
+			name: "trailers + a mid-flight RST count in place",
+			build: func(b *wireBuilder) {
+				b.head(1, false, hf(":method", "POST", ":path", "/pkg.Svc/Run",
+					":scheme", "http", "content-type", "application/grpc"))
+				b.head(1, true, hf("grpc-status", "0"))
+				b.framer().WriteRSTStream(9, http2.ErrCodeCancel)
+				b.head(11, true, hf(":method", "GET", ":path", "/after", ":scheme", "http"))
+			},
+			nextHeads: 2,
+			walkTail:  true,
+			wantHeads: 3, wantResets: 1,
+		},
+		{
+			name: "open-then-cancel storm: every head followed by its RST",
+			build: func(b *wireBuilder) {
+				for i := uint32(1); i <= 16; i++ {
+					b.head(i, true, hf(":method", "GET", ":path", "/s", ":scheme", "http"))
+					b.framer().WriteRSTStream(i, http2.ErrCodeCancel)
+				}
+			},
+			nextHeads: 16,
+			walkTail:  true,
+			wantHeads: 16, wantResets: 16,
+		},
+		{
+			name: "cancel-heavy but under the storm: resets trail the heads",
+			build: func(b *wireBuilder) {
+				for i := uint32(1); i <= 40; i++ {
+					b.head(i, true, hf(":method", "GET", ":path", "/s", ":scheme", "http"))
+				}
+				for i := uint32(1); i <= 7; i++ {
+					b.framer().WriteRSTStream(i, http2.ErrCodeCancel)
+				}
+			},
+			nextHeads: 40,
+			walkTail:  true,
+			wantHeads: 40, wantResets: 7,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &fakeClock{t: time.Unix(1_000_000, 0)}
+			wb := &wireBuilder{}
+			tc.build(wb)
+			p := New(newWireStub(wb.bytes(), c), optsStd(c, time.Second, 200))
+			for i := 0; i < tc.nextHeads; i++ {
+				mustNext(t, p)
+			}
+			if tc.walkTail {
+				for i := 0; i < 4; i++ { // consume the trailing frames, then io.EOF
+					if _, err := p.Next(); err == nil || errors.Is(err, io.EOF) {
+						break
+					}
+				}
+			}
+			st := p.Stats()
+			if st.Heads != tc.wantHeads || st.Resets != tc.wantResets {
+				t.Errorf("row %s: Stats=+%v, want {heads:%d resets:%d}", tc.name, st, tc.wantHeads, tc.wantResets)
+			}
+		})
+	}
+}
+
 // TestCleanGRPCHeadReconstructs is the core deliverable row: one gRPC head
 // (POST package.Service/Method, application/grpc) reconstructed into the
 // request view — method, path, version, scheme, authority, headers, kind,
