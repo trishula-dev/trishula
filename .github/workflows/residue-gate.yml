@@ -1,0 +1,42 @@
+# TR-35b (issue #168, spec section 21 M7): the zero-residue gate after a
+# live teardown. The job loads the shield on the runner kernel: the XDP
+# leg on a bpf_link, the TC leg (2 filters, 1 pin). It runs the full
+# uninstall, then the census sweep asserts zero objects. Residue fails
+# the job.
+#
+# The gate runs on every pull request head, nightly and on demand. The
+# M7 gate row reads green per release from the latest run.
+name: residue-gate
+
+on:
+  pull_request:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "20 3 * * *" # nightly, 03:20 UTC — off-peak
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trishula-residue-gate
+  cancel-in-progress: false
+
+jobs:
+  residue-gate:
+    name: "M7 zero-residue gate (live teardown)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      # Some runner images ship no bpffs mount. The sweep needs /sys/fs/bpf.
+      - name: Mount bpffs when the image misses it
+        run: sudo mountpoint -q /sys/fs/bpf || sudo mount -t bpf bpf /sys/fs/bpf
+      # RESIDUE_E2E_REQUIRED=1 turns every environment skip into a
+      # failure: a job that cannot run the sweep never reads as green.
+      - name: Zero-residue gate
+        run: sudo env PATH="$PATH" HOME="$HOME" RESIDUE_E2E_REQUIRED=1 go test -tags residue_e2e -v ./test/residue-e2e/
