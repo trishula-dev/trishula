@@ -430,17 +430,90 @@ func TestResidueGateE2E(t *testing.T) {
 	c1, c2, xdp := installShield(t)
 	assertInstallCensus(t, kr, sc)
 
-	// Watched RED: the close-only teardown (the current surface) holds no
-	// TC filter removal and no BPFFS subtree sweep. The gate asserts zero.
-	_ = xdp.Close()
-	c1.Close()
-	c2.Close()
-	_ = os.Remove(pinProg)
-
-	r := settleCensus(t, kr, sc)
-	if !r.Clean() {
-		t.Fatalf("live teardown left kernel residue: %s", r)
+	// The full teardown (the §16.4 order) rides the injected Uninstaller:
+	// per-hook detach, per-interface TC filter removal, the BPFFS subtree
+	// sweep. The sweep must read zero after the settle poll.
+	un := &liveUninstaller{sc: sc, xdp: xdp, c1: c1, c2: c2}
+	r0, err := residue.Uninstall(kr, un, sc)
+	if err != nil {
+		t.Fatalf("uninstall: %v", err)
 	}
+	r := r0
+	if !r0.Clean() {
+		r = settleCensus(t, kr, sc)
+	}
+	if !r.Clean() {
+		t.Fatalf("uninstall left kernel residue: %s", r)
+	}
+}
+
+// liveUninstaller binds the TR-35a Uninstaller effects to the live kernel:
+// the effects ride the exact surface the conformance contract models (the
+// kernel-free suite over the same Scope).
+type liveUninstaller struct {
+	sc  residue.Scope
+	xdp link.Link
+	c1  *ebpf.Collection
+	c2  *ebpf.Collection
+}
+
+// DetachXDP closes the bpf_link and the shield collection. The link close
+// detaches the hook; the unpinned program and its maps lose the last
+// reference.
+func (u *liveUninstaller) DetachXDP(iface string) error {
+	first := u.xdp.Close()
+	u.c1.Close()
+	if first != nil {
+		return fmt.Errorf("residue uninstall: detach xdp on %s: %w", iface, first)
+	}
+	return nil
+}
+
+// DeleteTCFilters removes the shield's filters on one interface and closes
+// the TC collection (the loader-side fds drop with the hooks). A row whose
+// program identity stays outside the scope keeps running.
+func (u *liveUninstaller) DeleteTCFilters(iface string) error {
+	for _, dir := range []string{"ingress", "egress"} {
+		filters, err := parseTCFilters(iface, dir)
+		if err != nil {
+			return err
+		}
+		for _, f := range filters {
+			if !u.sc.Owned(residue.Object{
+				Class: residue.ClassTCFilter, ID: f.name, Where: tcWhere(f, iface),
+			}) {
+				continue
+			}
+			args := []string{"tc", "filter", "del", "dev", iface, dir, "pref", f.pref}
+			if f.handle != "" {
+				args = append(args, "handle", f.handle)
+			}
+			out, derr := exec.Command(args[0], args[1:]...).CombinedOutput()
+			if derr != nil && f.handle != "" {
+				// handle-free retry (the del grammar holds both forms)
+				out, derr = exec.Command("tc", "filter", "del", "dev", iface, dir, "pref", f.pref).CombinedOutput()
+			}
+			if derr != nil {
+				return fmt.Errorf("residue uninstall: tc filter del dev %s %s: %w:\n%s", iface, dir, derr, out)
+			}
+		}
+	}
+	u.c2.Close()
+	return nil
+}
+
+// SweepPins deletes the pin files under the scope root. The root dir and
+// any subdirs stay (dirs are no census class).
+func (u *liveUninstaller) SweepPins(root string) error {
+	return filepath.WalkDir(root, func(p string, d fs.DirEntry, werr error) error {
+		if werr != nil {
+			return werr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		return os.Remove(p)
+	})
 }
 
 // settleCensus re-reads the census while the kernel drains its deferred
