@@ -239,3 +239,30 @@ func TestBudgetRowVerdictClassesPairedSamples(t *testing.T) {
 		}
 	}
 }
+
+// The TR-199 watch, carried from the RED commit. The RED state ran this
+// named test against the TR-92a classes: a quiet-pair raw miss read
+// unmet, and the unmet-count gate turned the sub-blowup miss into a
+// row-count coin toss under runner contention (issue #199: three CI runs
+// in one hour read 4, 4, then 5 unmet rows while the paired samples read
+// 1.00-1.01). The pair samples before and after the row: the probes read
+// instants, the row measures an interval, so a row inside a contention
+// window reads factor 1.00 on both sides while its walls inflate. The
+// GREEN state classifies a quiet-pair ceiling miss below the blowup
+// bound as retained-with-variance: the pair cannot witness the row
+// window's load, so the miss cannot settle as code evidence.
+func TestBudgetRowVerdictUnderQuietPairShallowMiss(t *testing.T) {
+	cat := gateCat()
+	// The pair reads quiet on both sides; the raw p99 rides load the
+	// row window carried and the pair never sampled: 3000 us at 2x
+	// the 1500 us row, under the blowup bound (6000 us at 4x).
+	rep := Report{RecipeID: "steady-json-8k", BudgetID: "e2e-inline-hop-8k", P99us: 3000}
+	row, err := EvaluateRow(RowInput{Report: rep, PreFactor: 1.0, PostFactor: 1.0}, cat)
+	if err != nil {
+		t.Fatalf("EvaluateRow: %v", err)
+	}
+	if row.Verdict != RowRetainedWithVariance {
+		t.Fatalf("recipe %s: verdict = %q, want %q: the pair cannot witness the row window's load, so the sub-blowup miss cannot settle as code evidence",
+			rep.RecipeID, row.Verdict, RowRetainedWithVariance)
+	}
+}
