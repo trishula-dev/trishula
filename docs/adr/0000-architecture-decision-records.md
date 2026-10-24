@@ -12,6 +12,7 @@ decided, why, and what it supersedes.
 | [0001](0001-record-format.md) | ADR record format | accepted |
 | [0002](0002-asd-ste100-standard.md) | Adopt ASD-STE100 for every written text | accepted |
 | [0003](0003-release-naming.md) | Name releases on the calendar rc ladder | accepted |
+| [0004](0004-record-topology.md) | Record topology: decisions, topic records, and spec pointers | accepted |
 
 ## When an ADR is required
 
