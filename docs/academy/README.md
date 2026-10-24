@@ -29,3 +29,4 @@ and every rule example in it cites its wire anatomy.
 |---|---|---|---|
 | 1 | the wire: HTTP/1.1, HTTP/2, smuggling | [module-1.md](module-1.md) | [lab/module-1](../../lab/module-1/README.md) |
 | 3 | eBPF as a platform | [module-3.md](module-3.md) | [lab/module-3](../../lab/module-3/README.md) |
+| 4 | security modeling | [module-4.md](module-4.md) | [lab/module-4](../../lab/module-4/README.md) |
