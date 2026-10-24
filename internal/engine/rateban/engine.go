@@ -135,6 +135,7 @@ type eventRec struct {
 	atSec  int64
 	kind   string
 	weight float64
+	note   string
 }
 
 // Engine is ScoredWindowBan v1 (the spec's ban algorithm) in shadow. It is safe for
@@ -180,7 +181,7 @@ func (e *Engine) Ingest(key string, kind EventKind, atSec int64, note string) er
 		s = &keyState{}
 		e.state[key] = s
 	}
-	s.events = append(s.events, eventRec{atSec: atSec, kind: string(kind), weight: w})
+	s.events = append(s.events, eventRec{atSec: atSec, kind: string(kind), weight: w, note: note})
 	e.upkeep(s, atSec)
 	return nil
 }
@@ -250,6 +251,11 @@ func (e *Engine) Assess(key string, atSec int64) []BanEvidence {
 	}
 	s.recidivism++                  // ban-algorithm step 3: recidivism[s] += 1
 	s.untilSec = atSec + untilDelta // the shadow state still tracks the would-be window
+	// The record note (the R11 note contract): the newest contributing
+	// event's note — the reading that crossed the threshold (the DoS cue
+	// path puts the cue class + measured shape there). An empty newest
+	// note keeps the record note empty (v0 contract).
+	var newest string
 	for _, ev := range s.events {
 		age := atSec - ev.atSec
 		if age < 0 || age > FindtimeSec {
@@ -259,6 +265,10 @@ func (e *Engine) Assess(key string, atSec int64) []BanEvidence {
 		if !contains(rec.ReasonCodes, ev.kind) {
 			rec.ReasonCodes = append(rec.ReasonCodes, ev.kind)
 		}
+		newest = ev.note
+	}
+	if newest != "" {
+		rec.Note = newest
 	}
 	if err := e.sink.Record(rec); err != nil {
 		// Ban observability: every ban decision emits its record. A sink failure

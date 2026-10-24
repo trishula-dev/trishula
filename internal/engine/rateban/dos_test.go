@@ -148,13 +148,15 @@ func TestIngestCueWiring(t *testing.T) {
 		t.Errorf("row live-ban-holds: records=%d err=%v, want none (active ban, no re-scoring)", len(out2), err2)
 	}
 
-	// A lone cue never bans; a fresh key crosses on its own window.
+	// A lone cue never bans (3 x 3 under T); a fresh key crosses on its
+	// own window (4 x 3 over T) in the same walk.
 	e2 := New(func() int64 { return now }, sink)
 	lone := []Cue{
 		{Key: "8.8.8.8", Class: CueSlowloris, AtSec: now, Note: "slowloris_suspect (segs=28 bytes/seg=10 span=34s)"},
 		{Key: "7.7.7.7", Class: CueSlowloris, AtSec: now + 1, Note: "slowloris_suspect (segs=64)"},
 		{Key: "7.7.7.7", Class: CueSlowloris, AtSec: now + 2, Note: "slowloris_suspect (segs=96)"},
 		{Key: "7.7.7.7", Class: CueSlowloris, AtSec: now + 3, Note: "slowloris_suspect (segs=128)"},
+		{Key: "7.7.7.7", Class: CueSlowloris, AtSec: now + 4, Note: "slowloris_suspect (segs=160)"},
 	}
 	got, errCues := e2.IngestCues(lone)
 	if errCues != nil {
@@ -169,8 +171,9 @@ func TestIngestCueWiring(t *testing.T) {
 }
 
 // TestNotePropagation pins the evidence-note rule the cue path relies on:
-// a would-ban whose contributing window shares one non-empty note names it;
-// disagreeing notes leave the record note empty (the v0 contract).
+// the record note is the newest contributing event's note — the reading
+// that crossed the threshold; an empty crossing note keeps the record
+// note empty (the v0 contract).
 func TestNotePropagation(t *testing.T) {
 	var recs []BanEvidence
 	e := New(func() int64 { return 100 }, EvidenceSinkFunc(func(r BanEvidence) error {
@@ -199,20 +202,21 @@ func TestNotePropagation(t *testing.T) {
 		t.Errorf("row shared-note: Note=%q, want shared-shape-note", recs[0].Note)
 	}
 
-	e2 := New(func() int64 { return 100 }, EvidenceSinkFunc(func(r BanEvidence) error {
+	e2 := New(func() int64 { return 103 }, EvidenceSinkFunc(func(r BanEvidence) error {
 		recs = append(recs, r)
 		return nil
 	}))
-	// 4 x 3 = 12: the window crosses with notes that disagree.
+	// 4 x 3 = 12: the window crosses with notes that differ; the crossing
+	// reading (the newest event) names the record.
 	for i, note := range []string{"note-a", "note-b", "note-c", "note-d"} {
 		if err := e2.Ingest("6.6.6.6", KindKernelBurstFlag, int64(100+i), note); err != nil {
 			t.Fatalf("ingest: %v", err)
 		}
 	}
-	e2.Assess("6.6.6.6", 100)
+	e2.Assess("6.6.6.6", 103)
 	last := recs[len(recs)-1]
-	if last.Note != "" {
-		t.Errorf("row disagreeing-notes: Note=%q, want empty", last.Note)
+	if last.Note != "note-d" {
+		t.Errorf("row crossing-note: Note=%q, want note-d (the newest event's note)", last.Note)
 	}
 }
 
