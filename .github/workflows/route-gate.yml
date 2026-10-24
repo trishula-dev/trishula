@@ -1,0 +1,41 @@
+# TR-40b (issue #188, child of TR-40 #52): the route-class verifier load
+# gate. The job runs the compile pathway end to end on the runner kernel:
+# WAFPolicy → compile → template instantiation → a verifier-accepted load
+# of the one route-mark program, then the compile-split read-back. The
+# census record carries the boundary (docs/design/socket-plane/
+# 4-compiler-census.md) and the assembly note's section 4.5 owns the bench
+# protocol; this gate proves the load path only.
+#
+# The gate runs on every pull request head, nightly and on demand. The
+# posture mirrors the TR-35 residue gate (rootful kernel, fail-loud env).
+name: route-gate
+
+on:
+  pull_request:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "45 3 * * *" # nightly, 03:45 UTC — off-peak
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trishula-route-gate
+  cancel-in-progress: false
+
+jobs:
+  route-gate:
+    name: "TR-40b route-class verifier load gate"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      # ROUTE_E2E_REQUIRED=1 turns every environment skip into a
+      # failure: a job that cannot run the load never reads as green.
+      - name: Route-class verifier load gate
+        run: sudo env PATH="$PATH" HOME="$HOME" ROUTE_E2E_REQUIRED=1 go test -tags route_e2e -v ./test/route-e2e/
