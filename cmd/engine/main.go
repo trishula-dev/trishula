@@ -265,6 +265,8 @@ func main() {
 	upstream := flag.String("upstream", "", "upstream URL the engine transparently forwards to (required)")
 	hop := flag.String("hop", "engine", "value for the X-Trishula-Hop response header (empty omits it)")
 	bundlePath := flag.String("bundle", "", "path the operator's bundle JSON is loaded from (internal/operator wire format v1); first valid content activates the consult, changes hot-reload (TR-08c)")
+	tlsCert := flag.String("tls-cert", "", "cert PEM to terminate TLS on the engine listener (TR-34 secondary mode, feature-gated; requires -tls-key; off = the default gateway-owned termination)")
+	tlsKey := flag.String("tls-key", "", "key PEM for -tls-cert (TR-34 secondary mode)")
 	flag.Parse()
 
 	if *upstream == "" {
@@ -279,8 +281,17 @@ func main() {
 		handler = newEngineHandler(*upstream, *hop)
 	}
 	addr := *listen
-	log.Printf("engine: listening on %s, forwarding to %s", addr, *upstream)
-	if err := http.ListenAndServe(addr, handler); err != nil {
+	ln, err := engineListener(addr, *tlsCert, *tlsKey)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if *tlsCert != "" {
+		log.Printf("engine: TLS termination active on %s (TR-34 secondary mode; the default stays gateway-owned termination)", addr)
+	} else {
+		log.Printf("engine: listening on %s (plaintext), forwarding to %s", addr, *upstream)
+	}
+	srv := &http.Server{Handler: handler}
+	if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
 }
