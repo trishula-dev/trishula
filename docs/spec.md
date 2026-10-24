@@ -1127,6 +1127,8 @@ eBPF contributes cheap counters (§9.5); the parser contributes payload features
 
 `doc_ref` is the teach-the-web hook (§7.2): every machine verdict points at the human explanation of the mechanism that fired it.
 
+The stage-stamp vocabulary follows the verdict record at [docs/design/stage-stamps-verdict.md](design/stage-stamps-verdict.md).
+
 ### 15.3 Kernel-plane counters (shield)
 
 The shield exports this counter set:
