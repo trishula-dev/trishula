@@ -31,15 +31,6 @@ var pinnedUnmet = []string{"ladder-form-dense-1k", "ladder-form-dense-8k"}
 // the recorded reference run reads 10x and 81x over).
 const PinUnmetMargin = 4.0
 
-// VioBudgetBlowupLimit bounds every latency cell: p99 at most this
-// factor over its budget row (the explosion-alarm bound; a stable cell
-// does not collapse 4x inside one run, a host tail cannot reach it).
-// The M2 cells carry the same band: hosted CI runs test packages in
-// parallel and shared runners carry sibling load, so the strict 1.5 ms
-// M2 assert needs the dedicated sequential bench job — the live guard
-// records the strict verdict and gates the blowup band.
-const VioBudgetBlowupLimit = 4.0
-
 // borderlineUnmet names the row whose verdict no pin holds: json-64k
 // read 0.34x its row on the recorded run and 1.9x under host load —
 // both far from the blowup bound, far from a strict-assert margin.
@@ -131,7 +122,7 @@ func TestBudgetVerdictsOnLivePath(t *testing.T) {
 			}
 			postMF := SampleMachineFactor()
 			rep := res.Report
-			row, err := EvaluateRow(RowInput{Report: rep, PreFactor: preMF, PostFactor: postMF}, cat)
+			row, err := EvaluateRow(RowInput{Report: rep, PreFactor: preMF, PostFactor: postMF, Pinned: unmetListed(pinnedUnmet, rec.ID)}, cat)
 			if err != nil {
 				t.Errorf("recipe %s: gate: %v", rec.ID, err)
 				continue
