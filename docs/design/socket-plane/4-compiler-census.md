@@ -15,7 +15,8 @@
 
 Status: design record. The record ships a kernel-free skeleton package and makes no capability
 claim. The [§9.9] contract holds across the record: tracked evaluation, not a v1 commitment.
-No template, no load and no enforcement exist at this record.
+No template, no load and no enforcement exist at this record. Section 9 carries the TR-40b
+route-class update: the first kernel-path rows, the template and the load gate.
 
 [§9.9]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-tracked-evaluation-not-a-v1-commitment
 
@@ -184,5 +185,72 @@ The split surface claims no enforcement. It records per-field dispositions.
   land with the later leaves.
 - No performance claim rides on this record. The assembly note's performance protocol owns the
   walls, and the budgets stay targets until a recorded run.
+
+## 9. The route-class template record (TR-40b)
+
+**Trishula record TR-40b** — the end-to-end leaf of TR-40
+([#52](https://github.com/trishula-dev/trishula/issues/52); the leaf record is
+[#188](https://github.com/trishula-dev/trishula/issues/188)). This section extends section 3
+with the first kernel-path rows and records the template instantiation.
+
+Spec refs: [§9.9] · [§8.2 component map](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#82-component-map) · [§17]
+
+Status: the compile→load round-trip runs in CI, and the compile-split reads back per bundle.
+No bench wall rides this section, and no enforcement claim rides the split. The [§9.9]
+contract holds across the section: tracked evaluation, not a v1 commitment.
+
+### 9.1 The surface growth
+
+`spec.routes[]` lands on the surface with two rows: the prefix
+(`spec.routes[].prefix`) and the action (`spec.routes[].action`). Both carry class `route`
+with an open gate, so both carry the kernel verdict. The census now carries 12 classified
+rows and the reserved `status` row. The coverage walk still runs over the spec tree only:
+`status.conditions` is the split surface itself, not a classified field.
+
+### 9.2 The template
+
+`bpf/route_mark.c` carries the route template v1. It holds one TC program, one LPM route
+map (8 rows max) and one rodata placeholder (the miss forward). Bounds: 64 bytes per
+prefix, 96 snapshot bytes per read, compile-time loop bounds, no tail calls. The
+machine-checked LoC measure is 68: the counter strips comment and blank lines. The compile
+stages a bundle's route classes onto the kernel path. `internal/fastpath/routetemplate`
+re-checks every bound and names any offending cell. It then loads the committed object
+through the verifier. The v1 object carries no pinning and the loader attaches nothing.
+
+The verifier shaped the size word. The load proof failed twice before it loaded: first on
+an unbounded size register, then on a zero-sized read. The landed form masks the word and
+re-clamps it to the 1-to-96 range before the helper call. Both rejections stayed
+fail-closed: the apply failed, and no request saw the program.
+
+### 9.3 The compile-split write
+
+The write rides the existing compile path. The bundle carries the split map. The reconcile
+stamps the annotation (`trishula.security/compile-split`) onto the policy object it holds.
+The summary condition (`FastPathCompiled`) lands in two stages. The compile stamps only
+`NoKernelFields` — classification alone proves it. The round-trip stamps `Compiled` after
+a verifier-accepted load, and `VerifierRejected` after a failed load. The write adds no
+CRD version and no new write plumbing. A failed compile carries no stamp.
+
+### 9.4 The load gate
+
+The gate is CI-asserted, in the residue-gate posture. `route-gate.yml` (pull_request,
+nightly, workflow_dispatch) runs the tagged e2e (`route_e2e`, `ROUTE_E2E_REQUIRED=1`)
+under root. A skip never reads green, and an oversized or malformed route list fails the
+compile with the offending cell named.
+
+### 9.5 The bench rows — the §4.5 protocol obligation
+
+The assembly note's [§4.5](../socket-plane-fast-path.md#45-the-comparison-protocol-for-the-tr-40-pr)
+comparison protocol owns every wall. This record claims no wall. The rows below read
+PENDING until a recorded run supplies both walls from one harness and node class. The
+capability claim stays out: tracked evaluation, not a v1 commitment.
+
+| Cell | Budget | Recorded wall | Verdict |
+| --- | --- | --- | --- |
+| Route-mark TC program, per message | the §17.1 TC cell | PENDING | PENDING |
+| T2/T3 forward share with the route class | §4.5 rule 4 | PENDING | PENDING |
+
+No measured figure exists for either cell. The one measured number this section carries is
+the template's LoC bound above.
 
 [§17]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#17-performance-targets--benchmark-plan
