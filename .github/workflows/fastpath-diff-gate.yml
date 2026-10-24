@@ -1,0 +1,49 @@
+# TR-40d (issue #224, rider 1): the shadow-differential kernel-leg gate.
+# The job wires the differential e2e leg into CI in the route-gate
+# posture (#188): the kernel-free census companion reports first, then
+# the rootful leg loads the committed route-mark object and drives all
+# 19 corpus frames through BPF_PROG_TEST_RUN. The leg's own env gate is
+# FASTPATH_DIFF_E2E_REQUIRED — distinct from ROUTE_E2E_REQUIRED — and
+# every environment skip becomes a failure, so a job that cannot run the
+# kernel leg never reads as green.
+#
+# The leg scores decisions, never a timing: the walls record carries no
+# wall from this job (the census record section 10.7; the §4.5 comparison
+# protocol owns both walls).
+name: fastpath-diff-gate
+
+on:
+  pull_request:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "45 4 * * *" # nightly, 04:45 UTC — off-peak, after route-gate
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trishula-fastpath-diff-gate
+  cancel-in-progress: false
+
+jobs:
+  fastpath-diff-gate:
+    name: "TR-40d shadow-differential kernel-leg gate"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      # The kernel-free companion: the corpus census, the mismatch budget
+      # read, the class-coverage gate and the walls record contract.
+      # go-build.yml runs the same package repo-wide; this step keeps the
+      # census lines beside the kernel leg in one job log.
+      - name: Shadow differential census (kernel-free)
+        run: go test -count=1 -v ./test/fastpath-differential/
+      # FASTPATH_DIFF_E2E_REQUIRED=1 turns every environment skip into a
+      # failure: a job that cannot run the kernel leg never reads as green.
+      - name: Shadow-differential kernel-leg gate
+        run: sudo env PATH="$PATH" HOME="$HOME" FASTPATH_DIFF_E2E_REQUIRED=1 go test -tags fastpath_diff_e2e -v ./test/fastpath-differential/
