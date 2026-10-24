@@ -1,0 +1,26 @@
+name: 14-ethertype-ipv6
+surface: a non-IPv4 ethertype returns the miss forward before any parse
+skipped: false
+policy:
+  defaultAction: pass
+  routes:
+  - prefix: /v1/chat
+    action: forward
+  - prefix: /v1/admin
+    action: drop
+frame:
+  ethertype: ipv6
+  tcpDoff: 5
+  line: GET /v1/admin HTTP/1.1
+  pad: 0
+view:
+  method: GET
+  path: /v1/admin
+  query: ''
+  rate5m: 0
+classes:
+- malformed-frame
+- miss
+expect:
+  outcome: forward
+  marked: false

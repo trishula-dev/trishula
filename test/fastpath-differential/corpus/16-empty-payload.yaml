@@ -1,0 +1,26 @@
+name: 16-empty-payload
+surface: a frame with no request bytes forwards
+skipped: false
+policy:
+  defaultAction: pass
+  routes:
+  - prefix: /v1/chat
+    action: forward
+  - prefix: /v1/admin
+    action: drop
+frame:
+  ethertype: ipv4
+  tcpDoff: 5
+  line: ''
+  pad: 0
+view:
+  method: GET
+  path: ''
+  query: ''
+  rate5m: 0
+classes:
+- malformed-frame
+- miss
+expect:
+  outcome: forward
+  marked: false

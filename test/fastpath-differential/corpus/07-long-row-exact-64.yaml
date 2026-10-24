@@ -1,0 +1,28 @@
+name: 07-long-row-exact-64
+surface: a 64-byte drop row matches its exact path
+skipped: false
+policy:
+  defaultAction: pass
+  routes:
+  - prefix: /v1/chat
+    action: forward
+  - prefix: /v1/admin
+    action: drop
+  - prefix: /v1/blob/kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk
+    action: drop
+frame:
+  ethertype: ipv4
+  tcpDoff: 5
+  line: GET /v1/blob/kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk HTTP/1.1
+  pad: 0
+view:
+  method: GET
+  path: /v1/blob/kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk
+  query: ''
+  rate5m: 0
+classes:
+- drop-row
+expect:
+  outcome: drop
+  marked: true
+  rowid: 2
