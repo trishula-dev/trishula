@@ -194,8 +194,8 @@ func TestRouteTemplateObjectContract(t *testing.T) {
 	if prog.Type != ebpf.SchedCLS {
 		t.Errorf("route_mark type = %v, want SchedCLS", prog.Type)
 	}
-	if got := len(prog.Instructions); got > routeEnvelopeInstructions {
-		t.Errorf("route_mark carries %d instructions past the %d-instruction envelope", got, routeEnvelopeInstructions)
+	if got := len(prog.Instructions); got > fastpath.RouteEnvelopeInstructions {
+		t.Errorf("route_mark carries %d instructions past the %d-instruction envelope", got, fastpath.RouteEnvelopeInstructions)
 	}
 	if spec.Variables["route_cfg"] == nil {
 		t.Error("the object misses the route_cfg placeholder")
