@@ -318,3 +318,117 @@ func showByte(b []byte, i int) string {
 	}
 	return string(b[lo:hi])
 }
+
+// routeClassYAML is the TR-40b fixture: the route-marking class on the
+// surface (spec.routes) plus the status split subresource fields.
+const routeClassYAML = `apiVersion: trishula.security/v1alpha1
+kind: WAFPolicy
+metadata:
+  name: route-class
+  namespace: ai-platform
+spec:
+  defaultAction: block
+  modeFlags:
+    inline: true
+    shield: true
+    shadow: false
+  routes:
+  - prefix: /v1/chat
+    action: forward
+  - prefix: /v1/admin
+    action: drop
+status:
+  conditions:
+  - type: FastPathCompiled
+    status: "False"
+    reason: NoKernelFields
+    message: nothing on the kernel path at compile time
+    lastTransitionTime: "2026-10-24T00:00:00Z"
+    observedGeneration: 1
+`
+
+// TestRouteClassRoundTrip proves the TR-40b surface decodes through the
+// scheme: the route classes pin byte-for-byte, and the status condition
+// round-trips with its fields. New fixture, so a new function: the TR-08a
+// fixture above pins the minimal surface and stays byte-frozen.
+func TestRouteClassRoundTrip(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	codecs := serializer.NewCodecFactory(scheme)
+	obj, _, err := codecs.UniversalDeserializer().Decode([]byte(routeClassYAML), nil, nil)
+	if err != nil {
+		t.Fatalf("decode route fixture: %v", err)
+	}
+	wp, ok := obj.(*WAFPolicy)
+	if !ok {
+		t.Fatalf("decoded type %T, want *WAFPolicy", obj)
+	}
+	if len(wp.Spec.Routes) != 2 {
+		t.Fatalf("spec.routes: got %d entries, want 2", len(wp.Spec.Routes))
+	}
+	if wp.Spec.Routes[0].Prefix != "/v1/chat" || wp.Spec.Routes[0].Action != RouteActionForward {
+		t.Errorf("spec.routes[0] = %+v, want /v1/chat forward", wp.Spec.Routes[0])
+	}
+	if wp.Spec.Routes[1].Prefix != "/v1/admin" || wp.Spec.Routes[1].Action != RouteActionDrop {
+		t.Errorf("spec.routes[1] = %+v, want /v1/admin drop", wp.Spec.Routes[1])
+	}
+	if len(wp.Status.Conditions) != 1 || wp.Status.Conditions[0].Type != "FastPathCompiled" {
+		t.Fatalf("status.conditions = %+v, want one FastPathCompiled row", wp.Status.Conditions)
+	}
+	if wp.Status.Conditions[0].Reason != "NoKernelFields" {
+		t.Errorf("condition reason = %q, want NoKernelFields", wp.Status.Conditions[0].Reason)
+	}
+
+	info, ok := runtime.SerializerInfoForMediaType(codecs.SupportedMediaTypes(), "application/yaml")
+	if !ok {
+		t.Fatalf("no application/yaml serializer registered by the codec factory")
+	}
+	encoded, err := runtime.Encode(codecs.EncoderForVersion(info.Serializer, GroupVersion), wp)
+	if err != nil {
+		t.Fatalf("encode round-trip: %v", err)
+	}
+	wp2, _, err := codecs.UniversalDeserializer().Decode(encoded, nil, nil)
+	if err != nil {
+		t.Fatalf("re-decode encoded form: %v", err)
+	}
+	if !reflect.DeepEqual(wp, wp2) {
+		t.Errorf("round-trip mismatch:\nfixture: %+v\nencoded: %+v", wp, wp2)
+	}
+}
+
+// TestRouteClassSchemaValidationApplyParse validates the route class the
+// way kubectl apply meets the CRD schema: a valid routes list passes, and
+// an action outside the enum is rejected with the offending cell named.
+// Two rows, so an extension of the existing apply-parse test.
+func TestRouteClassSchemaValidationApplyParse(t *testing.T) {
+	crd := loadCommittedCRD(t)
+	schemaValidator, _, err := validation.NewSchemaValidator(crd.Spec.Validation.OpenAPIV3Schema)
+	if err != nil {
+		t.Fatalf("build schema validator: %v", err)
+	}
+
+	if errs := validation.ValidateCustomResource(nil, unstructured(t, routeClassYAML), schemaValidator); len(errs) != 0 {
+		t.Errorf("valid route fixture rejected by the CRD schema: %v", errs.ToAggregate())
+	}
+
+	invalidYAML := strings.Replace(routeClassYAML, "    action: drop", "    action: discard", 1)
+	if invalidYAML == routeClassYAML {
+		t.Fatal("self-test failed: the invalid-fixture rewrite was a no-op")
+	}
+	errs := validation.ValidateCustomResource(nil, unstructured(t, invalidYAML), schemaValidator)
+	if len(errs) == 0 {
+		t.Fatalf("route action %q accepted: enum validation missing", "discard")
+	}
+	named := false
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "action") {
+			named = true
+			break
+		}
+	}
+	if !named {
+		t.Errorf("enum rejection does not name the route action: %v", errs.ToAggregate())
+	}
+}

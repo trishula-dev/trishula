@@ -3,10 +3,12 @@ package operator
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/trishula-dev/trishula/api/v1alpha1"
 	"github.com/trishula-dev/trishula/internal/engine/cel"
+	"github.com/trishula-dev/trishula/internal/fastpath"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -134,9 +136,165 @@ func TestLoadRejectsTenantlessBundle(t *testing.T) {
 	}
 }
 
+// routeClassPolicy is the fixture policy carrying the route class: one
+// forward class and one drop class, rule sets absent.
+func routeClassPolicy() v1alpha1.WAFPolicy {
+	return v1alpha1.WAFPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "route-class", Namespace: "ai-platform"},
+		Spec: v1alpha1.WAFPolicySpec{
+			DefaultAction: v1alpha1.DefaultActionBlock,
+			ModeFlags:     v1alpha1.PolicyModeFlags{Inline: true, Shield: true},
+			Routes: []v1alpha1.RouteMark{
+				{Prefix: "/v1/chat", Action: v1alpha1.RouteActionForward},
+				{Prefix: "/admin", Action: v1alpha1.RouteActionDrop},
+			},
+		},
+	}
+}
+
+// TestCompileRouteClassCarriesKernelLeg pins the TR-40b compile leg: a
+// WAFPolicy carrying the route class compiles through the census class set
+// into the bundle's kernel leg (the template's placeholders), and the
+// compile-split map rides beside it. The seed CEL plane stays intact.
+func TestCompileRouteClassCarriesKernelLeg(t *testing.T) {
+	bundle, err := Compile(routeClassPolicy())
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	want := []FastPathRoute{
+		{Prefix: "/v1/chat", Action: fastpath.RouteTemplateActionForward},
+		{Prefix: "/admin", Action: fastpath.RouteTemplateActionDrop},
+	}
+	if bundle.FastPath == nil {
+		t.Fatalf("bundle.FastPath = nil, want the route leg with %d rows", len(want))
+	}
+	if !reflect.DeepEqual(bundle.FastPath.Routes, want) {
+		t.Errorf("bundle.FastPath.Routes = %v, want %v", bundle.FastPath.Routes, want)
+	}
+	if got, ok := bundle.Split["spec.routes[].prefix"]; !ok || got != fastpath.VerdictKernel.String() {
+		t.Errorf("bundle.Split[spec.routes[].prefix] = %q ok=%v, want %q", got, ok, fastpath.VerdictKernel)
+	}
+	if got, ok := bundle.Split["spec.defaultAction"]; !ok || got != fastpath.VerdictSlowPath.String() {
+		t.Errorf("bundle.Split[spec.defaultAction] = %q ok=%v, want %q", got, ok, fastpath.VerdictSlowPath)
+	}
+	if len(bundle.Split) != 7 {
+		t.Errorf("bundle.Split carries %d pairs, want 7 (5 present slow-path rows + 2 route rows)", len(bundle.Split))
+	}
+	if len(bundle.RulePacks) != 1 || bundle.RulePacks[0].Rules[0].ID != wantSeedRuleID {
+		t.Errorf("seed CEL plane lost: %v", bundle.RulePacks)
+	}
+}
+
+// TestCompileRouteClassNoKernelLeg pins the honesty zero of the compile:
+// a policy without the route class compiles NO kernel leg. The bundle
+// carries the split map only, and an engine keeps loading it unchanged.
+func TestCompileRouteClassNoKernelLeg(t *testing.T) {
+	bundle, err := Compile(fixturePolicy())
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if bundle.FastPath != nil {
+		t.Errorf("bundle.FastPath = %+v, want nil on a policy without the route class", bundle.FastPath)
+	}
+	if _, ok := bundle.Split["spec.routes[].prefix"]; ok {
+		t.Errorf("bundle.Split carries a route row on a policy without routes: %v", bundle.Split)
+	}
+	if len(bundle.Split) == 0 {
+		t.Errorf("bundle.Split carries no pairs; the present slow-path rows are missing")
+	}
+}
+
+// TestCompileRouteClassFailClosed pins the compile-side template bounds:
+// every contract violation fails closed with the offending cell named,
+// and no bundle leaves the compile.
+func TestCompileRouteClassFailClosed(t *testing.T) {
+	long := strings.Repeat("a", fastpath.RouteTemplatePrefixMaxBytes+1)
+	rows := []struct {
+		name    string
+		routes  []v1alpha1.RouteMark
+		wantErr string
+	}{
+		{
+			name:    "empty prefix",
+			routes:  []v1alpha1.RouteMark{{Prefix: "", Action: v1alpha1.RouteActionForward}},
+			wantErr: "spec.routes[0].prefix",
+		},
+		{
+			name:    "65-byte prefix",
+			routes:  []v1alpha1.RouteMark{{Prefix: long, Action: v1alpha1.RouteActionForward}},
+			wantErr: "spec.routes[0].prefix",
+		},
+		{
+			name:    "control byte inside the prefix",
+			routes:  []v1alpha1.RouteMark{{Prefix: "/api\n", Action: v1alpha1.RouteActionForward}},
+			wantErr: "spec.routes[0].prefix",
+		},
+		{
+			name:    "nine routes",
+			routes:  []v1alpha1.RouteMark{{Prefix: "/a", Action: v1alpha1.RouteActionForward}, {Prefix: "/b", Action: v1alpha1.RouteActionForward}, {Prefix: "/c", Action: v1alpha1.RouteActionForward}, {Prefix: "/d", Action: v1alpha1.RouteActionForward}, {Prefix: "/e", Action: v1alpha1.RouteActionDrop}, {Prefix: "/f", Action: v1alpha1.RouteActionDrop}, {Prefix: "/g", Action: v1alpha1.RouteActionDrop}, {Prefix: "/h", Action: v1alpha1.RouteActionDrop}, {Prefix: "/i", Action: v1alpha1.RouteActionDrop}},
+			wantErr: "spec.routes",
+		},
+		{
+			name:    "duplicate prefix",
+			routes:  []v1alpha1.RouteMark{{Prefix: "/api", Action: v1alpha1.RouteActionForward}, {Prefix: "/api", Action: v1alpha1.RouteActionDrop}},
+			wantErr: "spec.routes[1].prefix",
+		},
+	}
+	for _, row := range rows {
+		policy := routeClassPolicy()
+		policy.Spec.Routes = row.routes
+		bundle, err := Compile(policy)
+		if err == nil {
+			t.Errorf("%s: Compile succeeded, want a named compile failure", row.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), row.wantErr) {
+			t.Errorf("%s: Compile err = %v, want it to name %q", row.name, err, row.wantErr)
+		}
+		if bundle.FormatVersion != 0 {
+			t.Errorf("%s: Compile returned a bundle on the failure path", row.name)
+		}
+	}
+}
+
+// TestLoadGateValidatesFastPathLeg pins the load-side staging gate: a
+// bundle whose kernel leg carries data the template contract cannot stage
+// fails the load (tamper and corruption never reach the loader).
+func TestLoadGateValidatesFastPathLeg(t *testing.T) {
+	bundle, err := Compile(routeClassPolicy())
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	rows := []struct {
+		name    string
+		routes  []FastPathRoute
+		wantErr string
+	}{
+		{
+			name:    "unknown action code",
+			routes:  []FastPathRoute{{Prefix: "/admin", Action: 7}},
+			wantErr: "spec.routes[0].action",
+		},
+		{
+			name:    "65-byte prefix",
+			routes:  []FastPathRoute{{Prefix: strings.Repeat("a", fastpath.RouteTemplatePrefixMaxBytes+1), Action: 0}},
+			wantErr: "spec.routes[0].prefix",
+		},
+	}
+	for _, row := range rows {
+		tampered := bundle
+		tampered.FastPath = &FastPathValues{Routes: row.routes}
+		if _, err := Load(tampered); err == nil {
+			t.Errorf("%s: Load accepted the kernel leg, want a staged gate failure", row.name)
+			continue
+		}
+	}
+}
+
 // TestBundleRoundTripsThroughBytes pins the bundle's wire format: the
 // JSON encoding decodes to an equal bundle (the spec's architecture: bundles are the signed
-// distribution unit; the format is JSON, version 1).
+// distribution unit; the format is JSON, version 1). The TR-40b legs carry
+// optional JSON legs and round-trip the same way.
 func TestBundleRoundTripsThroughBytes(t *testing.T) {
 	bundle, err := Compile(fixturePolicy())
 	if err != nil {

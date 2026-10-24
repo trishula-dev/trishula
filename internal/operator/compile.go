@@ -28,7 +28,16 @@
 //	  "kernelValues": {       // the spec's kernel map values, stub shape (TR-08b)
 //	    "acl4": {}, "acl6": {}, "verdicts": {}
 //	  },
-//	  "rulePackDigests": ["sha256-<hex>"]  // per pack, canonical JSON digest
+//	  "rulePackDigests": ["sha256-<hex>"],  // per pack, canonical JSON digest
+//	  "fastPath": {"routes": [{"prefix", "action"}]},
+//	                        // TR-40b kernel-path leg: the route template's
+//	                        // placeholders; absent when no classified field
+//	                        // carries a kernel verdict (optional leg; Load
+//	                        // validates it when present)
+//	  "split": {"spec.routes[].prefix": "kernel"}
+//	                        // TR-40b compile-split honesty map: one census
+//	                        // field path per present field, to its verdict
+//	                        // (the round-trip stamps it as the annotation)
 //	}
 //
 // The v0 CEL plane is the TR-02 seed rule pack (rules/cel/seed.yaml: the
@@ -120,6 +129,34 @@ type Bundle struct {
 	// (the spec's multi-tenancy requirement R8). Compile stamps it; Load rejects the empty value (fail
 	// closed — an unqualified bundle cannot bind a tenant).
 	Tenant string `json:"tenant"`
+	// FastPath carries the kernel-path parameter leg (TR-40b): the route
+	// classes the compile marks on the kernel path. nil when no classified
+	// field carries a kernel verdict; v0-shaped bundles load unchanged.
+	FastPath *FastPathValues `json:"fastPath,omitempty"`
+	// Split records the compile-split honesty map (the census record's
+	// split section): one census field path per present field, each to its
+	// verdict string. The compile-to-load round-trip stamps it as the
+	// policy annotation; the compile gate reports from it.
+	Split map[string]string `json:"split,omitempty"`
+}
+
+// FastPathRoute is one kernel-path route class: the raw staging inputs of
+// the route template (the census record's template contract).
+type FastPathRoute struct {
+	// Prefix is the request-path prefix (printable ASCII; the compile and
+	// the loader both re-check the template bounds).
+	Prefix string `json:"prefix"`
+	// Action is the kernel-path action code (0 forward, 1 drop; the
+	// fastpath constants carry the vocabulary).
+	Action uint8 `json:"action"`
+}
+
+// FastPathValues is the kernel-path parameter leg (TR-40b): the route
+// template's placeholders, filled from the compiled policy.
+type FastPathValues struct {
+	// Routes are the route classes in policy order. Bounded by the
+	// template contract (8 rows).
+	Routes []FastPathRoute `json:"routes"`
 }
 
 // seedPackPath locates the seed rule pack relative to this package

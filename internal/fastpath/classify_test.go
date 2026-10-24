@@ -107,6 +107,42 @@ func TestClassifyUnknownFailsClosed(t *testing.T) {
 	}
 }
 
+// TestCensusRouteRows pins the TR-40b census growth: the route-marking
+// fields land on the surface, they carry the route class with an open
+// gate, and the census carries exactly 12 rows. The record's growth rule
+// governs: a class takes its row when its field lands, and the coverage
+// test walks the tree against the row set.
+func TestCensusRouteRows(t *testing.T) {
+	rows := []struct {
+		field     string
+		wantClass Class
+		wantGate  GateState
+		wantV     Verdict
+	}{
+		{"spec.routes[].prefix", ClassRoute, GateOpen, VerdictKernel},
+		{"spec.routes[].action", ClassRoute, GateOpen, VerdictKernel},
+	}
+	for _, row := range rows {
+		class, err := Classify(row.field)
+		if err != nil {
+			t.Errorf("Classify(%q): %v", row.field, err)
+			continue
+		}
+		if class != row.wantClass {
+			t.Errorf("Classify(%q) = %q, want %q", row.field, class, row.wantClass)
+		}
+		if class.Gate() != row.wantGate {
+			t.Errorf("Classify(%q).Gate() = %q, want %q", row.field, class.Gate(), row.wantGate)
+		}
+		if class.Verdict() != row.wantV {
+			t.Errorf("Classify(%q).Verdict() = %q, want %q", row.field, class.Verdict(), row.wantV)
+		}
+	}
+	if got, want := len(CensusRows()), 12; got != want {
+		t.Errorf("CensusRows() carries %d rows, want %d (10 classified + 2 route rows)", got, want)
+	}
+}
+
 // TestClassSetEligibilityAndGate pins the class semantics: the five subset
 // classes of the spec's fast-path section sit kernel-eligible, ClassSlowPath
 // sits outside, and the JWT hash/encode gate stays locked at the tracked
