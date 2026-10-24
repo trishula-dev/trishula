@@ -84,7 +84,7 @@ func TestClassifyV0SlowPathAllFields(t *testing.T) {
 			t.Errorf("Classify(%q) = %q, the census row carries %q", row.Field, class, row.Class)
 		}
 		if class.KernelEligible() {
-			t.Errorf("v0 field %q classifies into kernel-eligible class %q — no v0 field sits in the §9.9 subset", row.Field, class)
+			t.Errorf("v0 field %q classifies into kernel-eligible class %q — no v0 field sits in the kernel-offloadable subset", row.Field, class)
 		}
 		if class.Verdict() == VerdictKernel {
 			t.Errorf("v0 field %q carries the kernel verdict %q — the tracked surface compiles no field to the kernel path", row.Field, VerdictKernel)
@@ -108,9 +108,10 @@ func TestClassifyUnknownFailsClosed(t *testing.T) {
 }
 
 // TestClassSetEligibilityAndGate pins the class semantics: the five subset
-// classes of §9.9 sit kernel-eligible and ClassSlowPath sits outside, and the
-// JWT hash/encode gate stays locked at the tracked evaluation (the
-// kernel-module record: docs/design/socket-plane/1-mechanism.md).
+// classes of the spec's fast-path section sit kernel-eligible, ClassSlowPath
+// sits outside, and the JWT hash/encode gate stays locked at the tracked
+// evaluation (the kernel-module record:
+// docs/design/socket-plane/1-mechanism.md).
 func TestClassSetEligibilityAndGate(t *testing.T) {
 	rows := []struct {
 		class        Class
@@ -136,8 +137,8 @@ func TestClassSetEligibilityAndGate(t *testing.T) {
 
 // TestClassVerdictSplit pins the split vocabulary: outside the subset routes
 // to the slow path, an open gate compiles to the kernel path, a locked gate
-// reports gate-locked. The compile-split surface (the record's §5) records
-// these values per field, never a wholesale enforced claim.
+// reports gate-locked. The compile-split surface (the record's split section)
+// records these values per field, never a wholesale enforced claim.
 func TestClassVerdictSplit(t *testing.T) {
 	rows := []struct {
 		class Class

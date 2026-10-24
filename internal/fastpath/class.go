@@ -28,9 +28,10 @@ package fastpath
 
 // Class is one compile class a WAFPolicy field lands in.
 //
-// The five subset classes carry the [§9.9] kernel-offloadable set; ClassSlowPath
-// collects everything else. The classes carry vocabulary only — the classifier
-// (classify.go) assigns them per field path.
+// The five subset classes carry the kernel-offloadable set of the spec's
+// socket-plane fast-path section (the package comment carries the [§9.9]
+// link); ClassSlowPath collects everything else. The classes carry vocabulary
+// only — the classifier (classify.go) assigns them per field path.
 type Class string
 
 // The census classes (the record's class set:
@@ -56,10 +57,17 @@ const (
 // String returns the class name.
 func (c Class) String() string { return string(c) }
 
-// KernelEligible reports membership in the [§9.9] kernel-offloadable subset.
-//
-// stub: RED (TR-40a) — the class semantics land with the GREEN commit.
-func (c Class) KernelEligible() bool { return false }
+// KernelEligible reports membership in the kernel-offloadable subset (the
+// [§9.9] link lives in the package comment): the five header-class classes
+// the record names. ClassSlowPath sits outside.
+func (c Class) KernelEligible() bool {
+	switch c {
+	case ClassJWTAuthz, ClassRBACAllowlist, ClassRoute, ClassTelemetry, ClassHeaderMutation:
+		return true
+	default:
+		return false
+	}
+}
 
 // GateState is the hash/encode kernel-coverage gate state. The mechanism
 // record (docs/design/socket-plane/1-mechanism.md) owns the gate: it skips
@@ -81,10 +89,14 @@ func (g GateState) String() string { return string(g) }
 
 // Gate reports the hash/encode kernel-coverage gate state of the class.
 // ClassJWTAuthz stays locked at the tracked evaluation; the other classes sit
-// open. The gate question decides inside the subset only.
-//
-// stub: RED (TR-40a) — the gate mapping lands with the GREEN commit.
-func (c Class) Gate() GateState { return GateOpen }
+// open. The gate question decides inside the subset only — ClassSlowPath
+// reads open and never reaches a kernel artifact.
+func (c Class) Gate() GateState {
+	if c == ClassJWTAuthz {
+		return GateLocked
+	}
+	return GateOpen
+}
 
 // Verdict is the compile-split value the honesty surface records per field:
 // one value per field, kernel or slow route or a locked gate, never a
@@ -108,6 +120,12 @@ func (v Verdict) String() string { return string(v) }
 // Verdict reports the compile-split value of the class: outside the subset →
 // the slow path; inside with a locked gate → gate-locked; inside with an open
 // gate → kernel.
-//
-// stub: RED (TR-40a) — the split mapping lands with the GREEN commit.
-func (c Class) Verdict() Verdict { return VerdictSlowPath }
+func (c Class) Verdict() Verdict {
+	if !c.KernelEligible() {
+		return VerdictSlowPath
+	}
+	if c.Gate() == GateLocked {
+		return VerdictGateLocked
+	}
+	return VerdictKernel
+}
