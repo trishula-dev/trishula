@@ -464,66 +464,53 @@ func assertInstallVisible(t *testing.T, kr residue.KernelRead, sc residue.Scope,
 		t.Fatalf("census over the live install: %v", err)
 	}
 
-	maps, err := kr.ListMaps()
-	if err != nil {
-		t.Fatalf("live map list: %v", err)
-	}
-	seen := map[ebpf.MapID]string{}
-	for _, o := range maps {
-		id, err := mapIDByName(o.ID)
-		if err != nil {
-			t.Fatalf("map id for %s: %v", o.ID, err)
+	listIDs := func() (map[ebpf.MapID]string, error) {
+		seen := map[ebpf.MapID]string{}
+		var prev ebpf.MapID
+		for {
+			id, err := ebpf.MapGetNextID(prev)
+			if err != nil {
+				if !errors.Is(err, os.ErrNotExist) {
+					return nil, fmt.Errorf("residue census: map id after %d: %w", prev, err)
+				}
+				return seen, nil
+			}
+			prev = id
+			m, err := ebpf.NewMapFromID(id)
+			if err != nil {
+				continue // the map vanished mid-walk; the list moves on
+			}
+			info, err := m.Info()
+			_ = m.Close()
+			if err != nil {
+				return nil, fmt.Errorf("residue census: map %d info: %w", id, err)
+			}
+			seen[id] = info.Name
 		}
-		seen[id] = o.ID
 	}
+	seen, err := listIDs()
+	if err != nil {
+		t.Fatalf("live map id walk: %v", err)
+	}
+	// 1. every snapshot identity shows in the kernel with its install name
 	for id, name := range snap.MapIDs {
-		if _, ok := seen[id]; !ok {
+		if got, ok := seen[id]; !ok || got != name {
 			t.Fatalf("the census cannot see installed map %s (id %d): the census read is incomplete", name, id)
 		}
 	}
-	owners := map[string]ebpf.MapID{}
-	for id, name := range snap.MapIDs {
-		if owners[name] != 0 {
-			t.Fatalf("two installed maps share the name %s; the name-based ownership is ambiguous for this run", name)
-		}
-		owners[name] = id
-	}
-	for _, o := range maps {
-		if !sc.Owned(o) {
+	// 2. the poisoning check: an owned kernel map outside the snapshot is
+	// stale state from another install with the same name. Name ownership
+	// cannot tell installs apart; the ids can. Fail loud with both.
+	for id, name := range seen {
+		if _, ok := snap.MapIDs[id]; ok {
 			continue
 		}
-		id, err := mapIDByName(o.ID)
-		if err != nil {
+		if !sc.Owned(residue.Object{Class: residue.ClassMap, ID: name}) {
 			continue
 		}
-		if _, ok := snap.MapIDs[id]; !ok {
-			t.Fatalf("the census reads an owned map outside the snapshot: %q id %d — a stale same-named object is present; clean it before the gate runs", o.ID, id)
-		}
+		t.Fatalf("the census reads an owned map outside the snapshot: %q id %d — stale state from another install; clean it before the gate runs", name, id)
 	}
 	return installed
-}
-
-func mapIDByName(name string) (ebpf.MapID, error) {
-	var prev ebpf.MapID
-	for {
-		id, err := ebpf.MapGetNextID(prev)
-		if err != nil {
-			return 0, fmt.Errorf("residue census: map id after %d: %w", prev, err)
-		}
-		prev = id
-		m, err := ebpf.NewMapFromID(id)
-		if err != nil {
-			continue
-		}
-		info, err := m.Info()
-		_ = m.Close()
-		if err != nil {
-			continue
-		}
-		if info.Name == name {
-			return id, nil
-		}
-	}
 }
 
 func progIDByName(name string) (ebpf.ProgramID, error) {
