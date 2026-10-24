@@ -34,6 +34,7 @@
 set -euo pipefail
 
 DX1_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "${DX1_DIR}/../.." && pwd)"
 
 NGF_CHART_VERSION="${NGF_CHART_VERSION:-2.7.2}"
 NGF_RELEASE="${NGF_RELEASE:-dx1}"
@@ -41,7 +42,10 @@ NGF_NS="${NGF_NS:-nginx-gateway}"
 GATEWAY_NAME="${GATEWAY_NAME:-edge-gateway}"
 NODE_HTTP_PORT="${NODE_HTTP_PORT:-31437}"
 NGF_INSTALLED_NEW="0"   # 1 once this run helm-installs NGF (the rollout-status gates)
-MANIFESTS_DIR="${DX1_DIR}/manifests"
+# The derived manifests: internal/cuegen generates them into the deployment
+# tree from the CUE sources (cue/lab/dx1; TR-46, issue #192). Hand edits
+# fail the golden-diff gate.
+MANIFESTS_DIR="${REPO_DIR}/deployment/dx1/manifests"
 OUT_IMG="${OUT_IMG:-trishula-engine:dx1}"   # local tag for the engine image
 BIN="${BIN:-/tmp/engine-linux-arm64}"       # linux/$LOCALARCH build of cmd/engine (TR-06a)
 LOCALARCH="$(go env GOARCH 2>/dev/null || echo arm64)"

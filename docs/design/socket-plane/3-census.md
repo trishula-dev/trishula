@@ -61,7 +61,7 @@ Classification rule, applied uniformly:
 The CEL corpus is the surface the repo actually compiles today:
 
 - `rules/cel/seed.yaml` and its wire copy `internal/operator/seed_pack.yaml` (rule TR02-001);
-- the DX1 lab packs `lab/dx1/manifests/dx1-rulepack-sqli.yaml` (DX-LAB-001) and the
+- the DX1 lab packs `deployment/dx1/manifests/dx1-rulepack-sqli.yaml` (DX-LAB-001) and the
   compile-gate fixture `dx1-broken-pack.yaml`;
 - the checker fixture `internal/engine/cel/testdata/bad_expr_rules.yaml` (BAD-001).
 

@@ -158,7 +158,7 @@ The §7.2 rule in action. Each row names the bytes the rule reads.
 
 | Rule | Expression | Wire anatomy |
 |---|---|---|
-| `DX-LAB-001` — the enforced DX1 lab rule ([`lab/dx1/manifests/dx1-rulepack-sqli.yaml`](../../lab/dx1/manifests/dx1-rulepack-sqli.yaml)) | `request.method == "POST" && path.matches("/v1/chat/*") && request.query.contains("UNION")` | the request line: the method token, the target, and the query part of the target (the bytes after `?`) |
+| `DX-LAB-001` — the enforced DX1 lab rule ([`deployment/dx1/manifests/dx1-rulepack-sqli.yaml`](../../deployment/dx1/manifests/dx1-rulepack-sqli.yaml)) | `request.method == "POST" && path.matches("/v1/chat/*") && request.query.contains("UNION")` | the request line: the method token, the target, and the query part of the target (the bytes after `?`) |
 | `TR02-001` — the shipped seed rule ([`rules/cel/seed.yaml`](../../rules/cel/seed.yaml), action `log`) | `request.method == "POST" && path.matches("/v1/chat/*") && request.rate_windows["5m"].requests > 40` | the request line again, plus the per-source request counters behind `request.rate_windows` ([§9.5](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#95-kernel-side-rate-accounting-feed-13)) |
 | the §11.3 spec example | `request.body.?json.messages.size() > 128` | the message body; the lesson-2 framing rule decides where that body ends |
 

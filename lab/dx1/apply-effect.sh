@@ -87,16 +87,16 @@ if kind get clusters 2>/dev/null | grep -q .; then
 else
   echo "provider kubernetes (OrbStack): ${OPERATOR_IMG} visible to the node via the shared docker daemon"
 fi
-kubectl apply -f "${DX1_DIR}/manifests/dx1-operator-rbac.yaml" >/dev/null
-kubectl apply -f "${DX1_DIR}/manifests/dx1-operator-svc.yaml" >/dev/null
-kubectl apply -f "${DX1_DIR}/manifests/dx1-operator.yaml" >/dev/null
+kubectl apply -f "${REPO_DIR}/deployment/dx1/manifests/dx1-operator-rbac.yaml" >/dev/null
+kubectl apply -f "${REPO_DIR}/deployment/dx1/manifests/dx1-operator-svc.yaml" >/dev/null
+kubectl apply -f "${REPO_DIR}/deployment/dx1/manifests/dx1-operator.yaml" >/dev/null
 kubectl rollout status --timeout=3m -n "${ENGINE_NS}" deployment/dx1-operator >/dev/null
 
 # The rule pack (the enforced DX-LAB-001) + the failure-path fixture (the
 # uncompilable dx1-broken pack the broken policy's ruleSets[0] resolves to)
 # + ensure a clean policy slate.
-kubectl apply -f "${DX1_DIR}/manifests/dx1-rulepack-sqli.yaml" >/dev/null
-kubectl apply -f "${DX1_DIR}/manifests/dx1-broken-pack.yaml" >/dev/null
+kubectl apply -f "${REPO_DIR}/deployment/dx1/manifests/dx1-rulepack-sqli.yaml" >/dev/null
+kubectl apply -f "${REPO_DIR}/deployment/dx1/manifests/dx1-broken-pack.yaml" >/dev/null
 kubectl -n "${ENGINE_NS}" delete wafpolicy --all >/dev/null 2>&1 || true
 kubectl -n "${ENGINE_NS}" delete configmap dx1-wafpolicy-bundle --ignore-not-found >/dev/null
 
@@ -117,7 +117,7 @@ log "pre-policy baseline: the benign probe passes transparently (200)"
 # --- (b) t0: kubectl apply the WAFPolicy CR ---------------------------------
 log "(b) t0 — kubectl apply dx1-wafpolicy.yaml"
 T0_NS="$(date +%s%N)"
-kubectl apply -f "${DX1_DIR}/manifests/dx1-wafpolicy.yaml" >/dev/null || \
+kubectl apply -f "${REPO_DIR}/deployment/dx1/manifests/dx1-wafpolicy.yaml" >/dev/null || \
   fail_with "t0 apply of dx1-wafpolicy.yaml failed (rc=$?)"
 
 # --- (c) wait for compile + pickup: the operator's bundle configmap, fed
@@ -182,7 +182,7 @@ printf '%s %s\n' "${T0_NS}" "${EFFECT_MS}" > "${DX1_TIMING_FILE:-/tmp/dx1-apply-
 log "failure path — apply dx1-wafpolicy-broken.yaml (uncompilable CEL rule)"
 kubectl delete wafpolicy chat-completions-gate -n "${ENGINE_NS}" >/dev/null
 BT0="$(date +%s%N)"
-kubectl apply -f "${DX1_DIR}/manifests/dx1-wafpolicy-broken.yaml" >/dev/null
+kubectl apply -f "${REPO_DIR}/deployment/dx1/manifests/dx1-wafpolicy-broken.yaml" >/dev/null
 COMPILE_FAILED=""
 for _ in $(seq 1 100); do
   kubectl -n "${ENGINE_NS}" logs deploy/dx1-operator --tail=20 2>/dev/null | grep -q "COMPILE FAILED dx1/broken-rule-gate" && { COMPILE_FAILED=1; break; }
