@@ -65,11 +65,13 @@ func TestCensusMatchesSpecSurface(t *testing.T) {
 	}
 }
 
-// TestClassifyV0SlowPathAllFields pins the honesty zero of the record: at the
-// tracked v0 surface, every classified field routes to the slow path and no
-// field carries the kernel verdict. The classifier test is the executable
-// form of the record's census statement.
-func TestClassifyV0SlowPathAllFields(t *testing.T) {
+// TestClassifyKernelVerdictOnlyRouteRows pins the executable census
+// statement after the TR-40b growth: the route rows are the only fields
+// that carry the kernel verdict, every other row stays slow-path, and the
+// kernel-carrying rows sit at an open gate. The v0 zero (10 slow-path
+// rows, no kernel verdict) moved with the route class; the record's
+// growth rule governs the move.
+func TestClassifyKernelVerdictOnlyRouteRows(t *testing.T) {
 	rows := CensusRows()
 	if len(rows) == 0 {
 		t.Fatal("the census carries 0 rows")
@@ -83,11 +85,13 @@ func TestClassifyV0SlowPathAllFields(t *testing.T) {
 		if class != row.Class {
 			t.Errorf("Classify(%q) = %q, the census row carries %q", row.Field, class, row.Class)
 		}
-		if class.KernelEligible() {
-			t.Errorf("v0 field %q classifies into kernel-eligible class %q — no v0 field sits in the kernel-offloadable subset", row.Field, class)
+		isRoute := strings.HasPrefix(row.Field, "spec.routes[].")
+		hasKernel := class.Verdict() == VerdictKernel
+		if hasKernel != isRoute {
+			t.Errorf("census row %q carries verdict %q; the kernel verdict belongs to the route rows only", row.Field, class.Verdict())
 		}
-		if class.Verdict() == VerdictKernel {
-			t.Errorf("v0 field %q carries the kernel verdict %q — the tracked surface compiles no field to the kernel path", row.Field, VerdictKernel)
+		if hasKernel && class.Gate() != GateOpen {
+			t.Errorf("kernel-verdict row %q carries gate %q, want an open gate", row.Field, class.Gate())
 		}
 	}
 }
@@ -104,6 +108,42 @@ func TestClassifyUnknownFailsClosed(t *testing.T) {
 		if class != "" {
 			t.Errorf("Classify(%q) class = %q, want the empty class on failure", field, class)
 		}
+	}
+}
+
+// TestCensusRouteRows pins the TR-40b census growth: the route-marking
+// fields land on the surface, they carry the route class with an open
+// gate, and the census carries exactly 12 rows. The record's growth rule
+// governs: a class takes its row when its field lands, and the coverage
+// test walks the tree against the row set.
+func TestCensusRouteRows(t *testing.T) {
+	rows := []struct {
+		field     string
+		wantClass Class
+		wantGate  GateState
+		wantV     Verdict
+	}{
+		{"spec.routes[].prefix", ClassRoute, GateOpen, VerdictKernel},
+		{"spec.routes[].action", ClassRoute, GateOpen, VerdictKernel},
+	}
+	for _, row := range rows {
+		class, err := Classify(row.field)
+		if err != nil {
+			t.Errorf("Classify(%q): %v", row.field, err)
+			continue
+		}
+		if class != row.wantClass {
+			t.Errorf("Classify(%q) = %q, want %q", row.field, class, row.wantClass)
+		}
+		if class.Gate() != row.wantGate {
+			t.Errorf("Classify(%q).Gate() = %q, want %q", row.field, class.Gate(), row.wantGate)
+		}
+		if class.Verdict() != row.wantV {
+			t.Errorf("Classify(%q).Verdict() = %q, want %q", row.field, class.Verdict(), row.wantV)
+		}
+	}
+	if got, want := len(CensusRows()), 12; got != want {
+		t.Errorf("CensusRows() carries %d rows, want %d (10 classified + 2 route rows)", got, want)
 	}
 }
 

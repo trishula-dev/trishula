@@ -82,6 +82,39 @@ type RuleSetRef struct {
 	Source RuleSetSource `json:"source"`
 }
 
+// RouteAction is the kernel-path verdict one route class carries (the
+// part-1 action primitives: forward, drop; the census record's class
+// `route` carries one action per prefix).
+//
+// +kubebuilder:validation:Enum=forward;drop
+type RouteAction string
+
+const (
+	// RouteActionForward marks the class pass-through. The template writes
+	// the mark and forwards (the contract's default forward).
+	RouteActionForward RouteAction = "forward"
+	// RouteActionDrop marks the class kernel-dropped; the template writes
+	// TC_ACT_SHOT on a hit.
+	RouteActionDrop RouteAction = "drop"
+)
+
+// RouteMark selects one HTTP path-prefix class and the kernel-path action
+// it carries (TR-40b: the route class lands on the surface; everything
+// outside the listed prefixes routes to the slow path).
+type RouteMark struct {
+	// Prefix is the request path the class matches (byte prefix; printable
+	// ASCII; the compile re-gates the bounds the kernel template carries).
+	//
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[\x20-\x7E]+$`
+	Prefix string `json:"prefix"`
+	// Action is the kernel-path verdict for the class.
+	//
+	// +kubebuilder:validation:Enum=forward;drop
+	Action RouteAction `json:"action"`
+}
+
 // WAFPolicySpec is the desired policy state for a route class.
 type WAFPolicySpec struct {
 	// RuleSets lists the rule sets the policy compiles into its bundle.
@@ -103,11 +136,36 @@ type WAFPolicySpec struct {
 	CELBudget uint64 `json:"celBudget,omitempty"`
 	// ModeFlags select the enforcement planes (inline, shield, shadow).
 	ModeFlags PolicyModeFlags `json:"modeFlags"`
+	// Routes list the path-prefix classes the compile marks on the kernel
+	// path (TR-40b, the census class `route`). Every request path outside
+	// the listed prefixes carries the default forward, and every field
+	// outside this list routes to the slow path (the compile-split record).
+	//
+	// +optional
+	// +kubebuilder:validation:MaxItems=8
+	Routes []RouteMark `json:"routes,omitempty"`
+}
+
+// WAFPolicyStatus carries the compile-split honesty surface (the census
+// record's split section): the summary condition over the per-field split.
+// The per-field values ride the metadata annotation; conditions live here.
+type WAFPolicyStatus struct {
+	// Conditions carry the FastPathCompiled summary condition (Gateway API
+	// condition vocabulary). The condition is a summary; it never
+	// substitutes for the per-field split.
+	//
+	// +optional
+	// +listType=map
+	// +listKey=type
+	// +patchStrategy=merge
+	// +patchMergeKey=type
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type"`
 }
 
 // WAFPolicy is the v0 CRD binding rule sets, the default action and the
-// mode flags to a route class (the spec's CRD set). Route selectors and failure
-// semantics arrive with later TR-08 slices.
+// mode flags to a route class (the spec's CRD set). The route-selector
+// fields (spec.routes) land with TR-40b; further failure semantics arrive
+// with later TR-08 slices.
 //
 // +kubebuilder:object:root=true
 // +kubebuilder:resource:scope=Namespaced
@@ -119,6 +177,11 @@ type WAFPolicy struct {
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	Spec WAFPolicySpec `json:"spec"`
+	// Status is the compile-split surface; the compile-to-load round-trip
+	// stamps it (TR-40b). No CRD version bump rides this field: the status
+	// subresource predates it.
+	// +optional
+	Status WAFPolicyStatus `json:"status,omitempty"`
 }
 
 // WAFPolicyList is a list of WAFPolicy objects.
