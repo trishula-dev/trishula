@@ -30,7 +30,7 @@ import (
 	"github.com/cilium/ebpf/ringbuf"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target native ingest_flow ../../../bpf/flow_tc.c -- -I../../../bpf -I../../../bpf/include -O2 -g
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -output-suffix "" -target amd64,arm64 ingest_flow ../../../bpf/flow_tc.c -- -I../../../bpf -I../../../bpf/include -O2 -g
 
 const (
 	e2ePort uint16 = 8080
@@ -305,25 +305,9 @@ func itoa(n int) string {
 
 // --- TR-31: the behavioural DoS detector features (kernel-gated) --------
 
-// flowKey31/flowStat31 mirror bpf/flow_tc.c's struct flow_key/flow_stat
-// (the TR-31 layout): 16-byte address unions, be16 ports as stored, the
-// family byte + the C tail pad; the feature struct is the kernel's
-// first/last counted-segment timestamps + the seg/byte counters. The live
-// read below is the layout proof — the E2E fails loudly on any drift.
-type flowKey31 struct {
-	Saddr, Daddr [16]byte
-	Sport, Dport uint16
-	Family       uint8
-	_            [3]byte // the C key's tail pad (measured key=40)
-}
-
-type flowStat31 struct {
-	SynTS    uint64
-	FirstNS  uint64
-	LastNS   uint64
-	ReqBytes uint32
-	SegCount uint32
-}
+// The feature read rides the generated BTF mirrors (ingest_flowFlowKey /
+// ingest_flowFlowStat) — the wire-contract rule: kernel objects flow
+// through generated bindings, and a layout drift fails the load loudly.
 
 // doSNet constants: TR-31's gate lab (namespaced against every sibling
 // gate: tr04d, tr35b, tr35h0...).
@@ -361,12 +345,13 @@ for i in range(28):
     s.send(frame(seq)); seq+=len(b"slowloris"); time.sleep(0.09)
 print("paced-28-ok")`
 
-// forEachStat walks every flow_stats row (kernel-gated). A read failure
-// fails the test — an unreadable detector map is not a pass.
-func forEachStat(t *testing.T, m *ebpf.Map, fn func(k flowKey31, v flowStat31)) {
+// forEachStat walks every flow_stats row (kernel-gated) through the
+// generated mirrors. A read failure fails the test — an unreadable
+// detector map is not a pass.
+func forEachStat(t *testing.T, m *ebpf.Map, fn func(k ingest_flowFlowKey, v ingest_flowFlowStat)) {
 	t.Helper()
-	var k flowKey31
-	var v flowStat31
+	var k ingest_flowFlowKey
+	var v ingest_flowFlowStat
 	it := m.Iterate()
 	for it.Next(&k, &v) {
 		fn(k, v)
@@ -396,9 +381,13 @@ func TestFlowStatsDoSFeaturesE2E(t *testing.T) {
 	_ = exec.Command("ip", "link", "del", doSVethH).Run()
 
 	run4d(t, "ip", "netns", "add", doSNS)
-	defer run4d(t, "ip", "netns", "del", doSNS)
+	defer func() {
+		// Tolerant cleanup: the teardown section may already have removed
+		// them (a Skipf/Fatal in a defer would clobber the verdict).
+		_ = exec.Command("ip", "netns", "del", doSNS).Run()
+		_ = exec.Command("ip", "link", "del", doSVethH).Run()
+	}()
 	run4d(t, "ip", "link", "add", doSVethH, "type", "veth", "peer", "name", doSVethN)
-	defer run4d(t, "ip", "link", "del", doSVethH)
 	run4d(t, "ip", "link", "set", doSVethN, "netns", doSNS)
 	run4d(t, "ip", "addr", "add", doSHostv4, "dev", doSVethH)
 	run4d(t, "ip", "link", "set", doSVethH, "up")
@@ -520,24 +509,28 @@ func TestFlowStatsDoSFeaturesE2E(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 
 	// The feature reading. Rows matching the burst 5-tuple aggregate (the
-	// dual attach can carve one flow's history into sibling rows).
+	// dual attach can carve one flow's history into sibling rows). The
+	// address union stores the v4 saddr bytes in network order; the LE
+	// host reads 10.31.7.66 as 0x42071F0A.
+	const nsAddrLE = uint32(66<<24 | 7<<16 | 31<<8 | 10)
 	var segs, bytes uint32
 	var first, last uint64
 	rows := 0
 	ban := 0
-	forEachStat(t, coll.Maps["flow_stats"], func(k flowKey31, v flowStat31) {
-		if k.Saddr[0] == 10 && k.Saddr[1] == 31 && k.Saddr[2] == 7 && k.Saddr[3] == 66 &&
+	forEachStat(t, coll.Maps["flow_stats"], func(k ingest_flowFlowKey, v ingest_flowFlowStat) {
+		if k.Saddr.Addr.V4 == nsAddrLE &&
 			k.Sport == byteOrderSwap16(doSSport) && k.Dport == byteOrderSwap16(doSDport) {
 			rows++
 			segs += v.SegCount
 			bytes += v.ReqBytes
-			if first == 0 || v.FirstNS < first {
-				first = v.FirstNS
+			if first == 0 || v.FirstSegTs < first {
+				first = v.FirstSegTs
 			}
-			if v.LastNS > last {
-				last = v.LastNS
+			if v.LastSegTs > last {
+				last = v.LastSegTs
 			}
-			t.Logf("burst row: segs=%d bytes=%d first=%d last=%d syn=%d", v.SegCount, v.ReqBytes, v.FirstNS, v.LastNS, v.SynTS)
+			t.Logf("burst row: family=%d daddr=%08x segs=%d bytes=%d first=%d last=%d syn=%d",
+				k.Family, k.Daddr.Addr.V4, v.SegCount, v.ReqBytes, v.FirstSegTs, v.LastSegTs, v.SynTs)
 		}
 	})
 	if rows == 0 {
@@ -558,12 +551,12 @@ func TestFlowStatsDoSFeaturesE2E(t *testing.T) {
 
 	// The SYN-first flow: the GET's flow row keeps its syn stamp.
 	synRows := 0
-	forEachStat(t, coll.Maps["flow_stats"], func(k flowKey31, v flowStat31) {
-		if k.Saddr[0] == 10 && k.Saddr[1] == 31 && k.Saddr[2] == 7 && k.Saddr[3] == 66 &&
-			k.Dport == byteOrderSwap16(18080) && v.SynTS != 0 {
+	forEachStat(t, coll.Maps["flow_stats"], func(k ingest_flowFlowKey, v ingest_flowFlowStat) {
+		if k.Saddr.Addr.V4 == nsAddrLE &&
+			k.Dport == byteOrderSwap16(18080) && v.SynTs != 0 {
 			synRows++
 			t.Logf("syn-first row: sport=%d syn=%d segs=%d bytes=%d",
-				byteOrderSwap16(k.Sport), v.SynTS, v.SegCount, v.ReqBytes)
+				byteOrderSwap16(k.Sport), v.SynTs, v.SegCount, v.ReqBytes)
 		}
 	})
 	if synRows == 0 {
@@ -581,9 +574,15 @@ func TestFlowStatsDoSFeaturesE2E(t *testing.T) {
 
 	// The enforcement proof: the ban table reads empty after every accounting
 	// pass — features never write bans.
-	forEachStat(t, coll.Maps["ban_table"], func(_ flowKey31, _ flowStat31) {
+	banIter := coll.Maps["ban_table"].Iterate()
+	var bk ingest_flowBanKey
+	var bv ingest_flowBanVal
+	for banIter.Next(&bk, &bv) {
 		ban++
-	})
+	}
+	if err := banIter.Err(); err != nil {
+		t.Fatalf("ban_table iterate: %v", err)
+	}
 	if ban != 0 {
 		t.Errorf("row fail-open-decision: ban_table rows=%d, want 0 (the feature path never enforces)", ban)
 	}
@@ -605,25 +604,52 @@ func TestFlowStatsDoSFeaturesE2E(t *testing.T) {
 	_ = exec.Command("ip", "netns", "del", doSNS).Run()
 	_ = exec.Command("ip", "link", "del", doSVethH).Run()
 
-	// Settle poll: every snapshot map/program id must leave the kernel
-	// (freed ids linger one deferred-free window — the TR-35b lesson).
+	// Settle poll: every snapshot map/program id must leave the kernel.
+	// Freed ids linger one deferred-free window (the TR-35b lesson); with
+	// this object's 36 MiB ban LRU + the 16 MiB ring the window ran past
+	// 5 s on back-to-back same-process runs, so the poll settles over
+	// 20 s worst case. The read is (id, name)-paired (the residue-gate
+	// lesson: ids recycle — a stranger that took a freed id is not this
+	// install's residue; the kernel name is the discriminator).
 	settled := func() bool {
-		for id := range snap.maps {
-			if _, err := ebpf.NewMapFromID(id); err == nil {
+		for id, name := range snap.maps {
+			m, err := ebpf.NewMapFromID(id)
+			if err != nil {
+				if !errors.Is(err, os.ErrNotExist) {
+					return false // an unreadable id is unknown state, never a pass
+				}
+				continue // gone
+			}
+			info, ierr := m.Info()
+			_ = m.Close()
+			if ierr != nil {
 				return false
-			} else if !errors.Is(err, os.ErrNotExist) {
-				return false // an unreadable id is unknown state, never a pass
+			}
+			if info.Name == name {
+				return false // this install's map, still alive
 			}
 		}
-		for id := range snap.progs {
-			if _, err := ebpf.NewProgramFromID(id); err == nil {
+		for id, name := range snap.progs {
+			p, err := ebpf.NewProgramFromID(id)
+			if err != nil {
+				if !errors.Is(err, os.ErrNotExist) {
+					return false
+				}
+				continue
+			}
+			info, ierr := p.Info()
+			_ = p.Close()
+			if ierr != nil {
+				return false
+			}
+			if info.Name == name {
 				return false
 			}
 		}
 		for _, dir := range []string{"ingress", "egress"} {
 			o, err := exec.Command("tc", "filter", "show", "dev", doSVethH, dir).CombinedOutput()
 			if err != nil {
-				return false // the device is gone: clean
+				continue // the device is gone: nothing left to sweep on it
 			}
 			if strings.Contains(string(o), " bpf ") {
 				return false
@@ -634,14 +660,39 @@ func TestFlowStatsDoSFeaturesE2E(t *testing.T) {
 		}
 		return true
 	}
-	for i := 0; i < 50; i++ {
+	for i := 0; i < 100; i++ {
 		if settled() {
 			break
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
 	if !settled() {
-		t.Fatalf("live teardown left kernel residue: snapshot identities survived the settle poll")
+		left := "maps:["
+		for id, name := range snap.maps {
+			if m, err := ebpf.NewMapFromID(id); err == nil {
+				info, ierr := m.Info()
+				_ = m.Close()
+				if ierr == nil && info.Name == name {
+					left += fmt.Sprintf("%d(%s) ", id, name)
+				}
+			}
+		}
+		left += "] progs:["
+		for id, name := range snap.progs {
+			if p, err := ebpf.NewProgramFromID(id); err == nil {
+				info, ierr := p.Info()
+				_ = p.Close()
+				if ierr == nil && info.Name == name {
+					left += fmt.Sprintf("%d(%s) ", id, name)
+				}
+			}
+		}
+		left += "]"
+		for _, dir := range []string{"ingress", "egress"} {
+			o, _ := exec.Command("tc", "filter", "show", "dev", doSVethH, dir).CombinedOutput()
+			left += fmt.Sprintf(" tc[%s]=%q", dir, strings.TrimSpace(string(o)))
+		}
+		t.Fatalf("live teardown left kernel residue: %s", left)
 	}
 	t.Logf("residue: zero — every snapshot identity (maps/progs/filters/pins) left the kernel")
 }

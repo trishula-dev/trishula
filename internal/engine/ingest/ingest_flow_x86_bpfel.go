@@ -62,10 +62,12 @@ type ingest_flowFlowKey struct {
 }
 
 type ingest_flowFlowStat struct {
-	_        structs.HostLayout
-	SynTs    uint64
-	ReqBytes uint32
-	SegCount uint32
+	_          structs.HostLayout
+	SynTs      uint64
+	FirstSegTs uint64
+	LastSegTs  uint64
+	ReqBytes   uint32
+	SegCount   uint32
 }
 
 // Names of all BPF objects in the ELF.
@@ -76,6 +78,7 @@ const (
 	ingest_flowMapEvents        = "events"
 	ingest_flowMapFlowStats     = "flow_stats"
 	ingest_flowMapLostEvents    = "lost_events"
+	ingest_flowMapProbeStats    = "probe_stats"
 	ingest_flowProgTcIngressWaf = "tc_ingress_waf"
 )
 
@@ -132,6 +135,7 @@ type ingest_flowMapSpecs struct {
 	Events     *ebpf.MapSpec `ebpf:"events"`
 	FlowStats  *ebpf.MapSpec `ebpf:"flow_stats"`
 	LostEvents *ebpf.MapSpec `ebpf:"lost_events"`
+	ProbeStats *ebpf.MapSpec `ebpf:"probe_stats"`
 }
 
 // ingest_flowVariableSpecs contains global variables before they are loaded into the kernel.
@@ -164,6 +168,7 @@ type ingest_flowMaps struct {
 	Events     *ebpf.Map `ebpf:"events"`
 	FlowStats  *ebpf.Map `ebpf:"flow_stats"`
 	LostEvents *ebpf.Map `ebpf:"lost_events"`
+	ProbeStats *ebpf.Map `ebpf:"probe_stats"`
 }
 
 func (m *ingest_flowMaps) Close() error {
@@ -172,6 +177,7 @@ func (m *ingest_flowMaps) Close() error {
 		m.Events,
 		m.FlowStats,
 		m.LostEvents,
+		m.ProbeStats,
 	)
 }
 
