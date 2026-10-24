@@ -166,6 +166,14 @@ if ! kubectl get crd gateways.gateway.networking.k8s.io >/dev/null 2>&1; then
 else
   echo "Gateway API CRDs already present"
 fi
+# GRPCRoute sits in the same standard-channel set: NGF 1.x watches it at v1
+# and the control loop dies without the CRD (the informers never sync —
+# nginx-gateway CrashLoopBackOff; run 40082782812). Per-CRD guard: the outer
+# guard above skips everything once the four early CRDs exist.
+if ! kubectl get crd grpcroutes.gateway.networking.k8s.io >/dev/null 2>&1; then
+  kubectl apply -f \
+    "https://raw.githubusercontent.com/kubernetes-sigs/gateway-api/v1.5.1/config/crd/standard/gateway.networking.k8s.io_grpcroutes.yaml"
+fi
 
 # --- 4. NGF (NGINX Gateway Fabric) via helm ---------------------------------
 log "NGF release ${NGF_RELEASE} (helm, service.type=NodePort)"
@@ -277,7 +285,15 @@ install_ngf_1x() {
   helm install "${NGF_RELEASE}" "${chart_dir}/nginx-gateway-fabric" \
     -n "${NGF_NS}" --create-namespace --wait --timeout 6m \
     --set 'service.type=NodePort' \
-    --set 'nginxGateway.replicaCount=1'
+    --set 'nginxGateway.replicaCount=1' || {
+    echo "the NGF 1.x install did not go ready (the pod state is the evidence)" >&2
+    kubectl get pods -n "${NGF_NS}" -o wide 1>&2 || true
+    kubectl get events -n "${NGF_NS}" --sort-by=.lastTimestamp 2>/dev/null | tail -15 1>&2 || true
+    for p in $(kubectl get pods -n "${NGF_NS}" -o name 2>/dev/null); do
+      kubectl logs -n "${NGF_NS}" "${p}" --all-containers --tail=30 1>&2 || true
+    done
+    return 1
+  }
   # Pin the NodePort (the 1.x chart assigns a random one).
   kubectl -n "${NGF_NS}" patch svc "${NGF_RELEASE}-nginx-gateway-fabric" \
     --type=merge -p "{\"spec\":{\"ports\":[{\"name\":\"http\",\"port\":80,\"nodePort\":${NODE_HTTP_PORT}}]}}"
