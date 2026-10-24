@@ -70,7 +70,7 @@ engine hot-reloads, no restart) → the effect is visible on traffic through
 NGF.
 
 **What the timing means.** `t0` = the `kubectl apply` of
-`manifests/dx1-wafpolicy.yaml`; `t1` = the first POST through NGF that the
+`deployment/dx1/manifests/dx1-wafpolicy.yaml`; `t1` = the first POST through NGF that the
 enforced rule `DX-LAB-001` blocks (`403`, `X-Trishula-Decision: block`,
 `X-Trishula-Rule: DX-LAB-001`), while a benign POST still passes
 (`defaultAction: pass` — the TR-06 transparent forward preserved). The
@@ -89,9 +89,9 @@ provider):
 | failure path: broken apply → `COMPILE FAILED` logged | 1146ms |
 
 **Failure path (fail closed, also timed).** After deleting the good policy,
-the script applies `manifests/dx1-wafpolicy-broken.yaml`, whose rule set
+the script applies `deployment/dx1/manifests/dx1-wafpolicy-broken.yaml`, whose rule set
 resolves to the committed uncompilable fixture
-`manifests/dx1-broken-pack.yaml` (`size(request.body.messages) > 128` —
+`deployment/dx1/manifests/dx1-broken-pack.yaml` (`size(request.body.messages) > 128` —
 no body view in the §11.3 structured request yet, so the operator's
 compile gate rejects it: `no such key: body`). The operator logs
 `COMPILE FAILED dx1/broken-rule-gate … (no bundle published — fail closed)`,

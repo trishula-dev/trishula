@@ -146,7 +146,7 @@ classifier walks TCP only at v0
 The §11.3 view wall carries live evidence. The DX1 broken-policy
 fixture asks for a body field, and the compile gate rejects it with
 `no such key: body`
-([`dx1-broken-pack.yaml`](../../lab/dx1/manifests/dx1-broken-pack.yaml)).
+([`dx1-broken-pack.yaml`](../../deployment/dx1/manifests/dx1-broken-pack.yaml)).
 A `request.tls` scope rides the same wall: the view grows field by
 field, and each field rides its own slice.
 
@@ -168,7 +168,7 @@ bash lab/module-2/run.sh
 The termination leg needs the DX1 lab up
 ([`lab/dx1/setup.sh`](../../lab/dx1/setup.sh)). The DX1 lab ships the
 plain-HTTP listener today
-([`dx1-gateway.yaml`](../../lab/dx1/manifests/dx1-gateway.yaml)). The
+([`dx1-gateway.yaml`](../../deployment/dx1/manifests/dx1-gateway.yaml)). The
 leg reads what the lab carries and prints it. An HTTPS-listener leg is
 PENDING work on the lab. The full shape:
 [`lab/module-2/README.md`](../../lab/module-2/README.md).

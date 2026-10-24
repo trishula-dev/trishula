@@ -44,17 +44,20 @@ Other documents worth knowing:
 | Directory | Purpose |
 | --- | --- |
 | `api/v1alpha1/` | CRD types: `WAFPolicy` (controller-gen artifacts committed: `zz_generated.deepcopy.go`) |
+| `cue/` | The CUE module (TR-46): the declarative layer — `seedpack` (both seed-pack copies derive from it), `banconformance` (the fixture source), `lab/dx1` (the lab manifest source), `crd` (the validation layer over the controller-gen CRD), `k8s` (shared object schemas). Hand edits to the derived files fail the cue-gate golden diff; the record: `docs/adr/0004-cue-declarative-layer.md` |
+| `deployment/` | Generated manifest tree (TR-46): `dx1/manifests/` holds the labs' applied manifests, written by `cmd/cuegen` from `cue/lab/dx1` — never hand-edited |
 | `bpf/` | Kernel C sources: `shield_xdp.c` (XDP ACL/verdict-cache/ban table), `flow_tc.c` (TC ringbuf producer) — CO-RE, bpf2go |
-| `cmd/` | Command surfaces: `engine` (transparent proxy host + bundle consult), `operator` (CRD watch → compile → bundle), `shield` (eBPF loader), `trishula` (CEL rule engine CLI), `trishulactl`, `attackdemo` (the TR-43 live demo binary) |
+| `cmd/` | Command surfaces: `engine` (transparent proxy host + bundle consult), `operator` (CRD watch → compile → bundle), `shield` (eBPF loader), `trishula` (CEL rule engine CLI), `trishulactl`, `attackdemo` (the TR-43 live demo binary), `cuegen` (TR-46: regenerates the derived artefacts from cue/) |
 | `internal/engine/` | The detection ladder: `ingest/` (ringbuf drain → tx assembly), `ladder/` (S0–S5 verdicts + verdict vocabulary), `cel/` (the CEL rule env + request view), `http1/` (HTTP/1 parse into the §11.3 view), `botdef/` (JA4 + header fingerprints, §12), `rateban/` (the §13 rate plane: §13.2 per-route rate algorithms + ScoredWindowBan v1 + evidence sink), `otel/` (verdict trace/metric/log triad, §15) |
 | `internal/crs/` | The embedded Coraza wrapper (reference CRS evaluator, §11.2) + Seclang testdata |
 | `internal/operator/` | `compile.go` (WAFPolicy → Bundle wire format v1 + Load verify gates + in-process Eval), `reconcile.go` (CRD watch → compile → bundle publish) |
+| `internal/cuegen/` | TR-46 derivation through the CUE Go API (`Plan`/`Run` + the golden + structure tests); the record: `docs/adr/0004-cue-declarative-layer.md` |
 | `internal/fastpath/` | TR-40 compiler skeleton: the fast-path census classes + the WAFPolicy field classifier (kernel-free; the design record: `docs/design/socket-plane/4-compiler-census.md`) |
 | `internal/shield/` | Go loaders for the eBPF objects (XDP/TC attach, ban map publish/reconcile, evidence sink) |
 | `lab/` | Everything runnable in the lab: `dx1/` (NGF steering + apply→effect + verify.sh), `demo-attack.sh` (TR-43), `verify-xdp-chain.sh` (kernel env gate), `tier-gate.sh` (visibility tier gate) |
 | `test/` | Cross-cutting gates: `crs-differential/` (CI-blocking CRS parity harness), `ban-conformance/` (TR-09 oracle suite), `bench/` (TR-24 harness) |
 | `docs/` | spec, paper, academy |
-| `.github/workflows/` | CI: `go-build.yml` (build + vet+ test across the module incl. the differential), `dependency-review.yml`, `scorecards.yml` |
+| `.github/workflows/` | CI: `go-build.yml` (build + vet+ test across the module incl. the differential), `cue-gate.yml` (TR-46: `cue vet` + the golden diff over the derived artefacts), `dependency-review.yml`, `scorecards.yml` |
 
 ## Architecture: request processing pipeline
 
@@ -86,7 +89,10 @@ Rules compiled at bundle load; load ≠ eval: an uncompilable rule fails the
 LOAD, never mid-request.
 
 CEL rule wire: `rules/cel/seed.yaml` carries the seed pack (TR02-001), the
-byte-identity test `internal/operator/seedpack_test.go` guards it. New rules
+byte-identity test `internal/operator/seedpack_test.go` guards it. Both
+copies derive from `cue/seedpack` (TR-46): `cmd/cuegen` writes them and a
+hand edit fails the cue-gate golden diff — a change to the pack is a
+change in the CUE source. New rules
 extend the pack; a rule's `id` doubles as the rule-pack digest input.
 
 ## Kernel plane (bpf/, spec §9)

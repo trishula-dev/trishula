@@ -33,7 +33,7 @@ func (m srcMap) RulePack(_ context.Context, ns, name string) (cel.RulePack, bool
 	return p, ok, nil
 }
 
-// sqliPack mirrors lab/dx1/manifests/dx1-wafpolicy.yaml: one enforced rule
+// sqliPack mirrors deployment/dx1/manifests/dx1-wafpolicy.yaml: one enforced rule
 // matching SQLi probes in the query string of the spec's chat-completions
 // route (the M9 lab rule).
 func sqliPack(t *testing.T) cel.RulePack {

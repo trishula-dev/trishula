@@ -129,7 +129,7 @@ view boundary keeps every model verdict auditable like the rest.
 The body wall carries live evidence. The DX1 broken-policy fixture
 asks for `size(request.body.messages)`, and the operator compile gate
 rejects it with `no such key: body`
-([`dx1-broken-pack.yaml`](../../lab/dx1/manifests/dx1-broken-pack.yaml)).
+([`dx1-broken-pack.yaml`](../../deployment/dx1/manifests/dx1-broken-pack.yaml)).
 The lab leg replays that evidence on live traffic (lesson 7).
 
 ## Lesson 7 — the lab

@@ -42,7 +42,7 @@ on live traffic:
 - **apply-effect** — `lab/dx1/apply-effect.sh` runs end to end: the
   enforced `DX-LAB-001` policy, the M9 timed leg, then its fail-closed
   leg: delete the good policy, apply
-  [`dx1-wafpolicy-broken.yaml`](../../lab/dx1/manifests/dx1-wafpolicy-broken.yaml).
+  [`dx1-wafpolicy-broken.yaml`](../../deployment/dx1/manifests/dx1-wafpolicy-broken.yaml).
 - **operator log** — the leg greps the operator pod log for
   `COMPILE FAILED dx1/broken-rule-gate`: the uncompilable body-view
   rule publishes no bundle.
