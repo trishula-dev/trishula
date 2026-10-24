@@ -65,11 +65,13 @@ func TestCensusMatchesSpecSurface(t *testing.T) {
 	}
 }
 
-// TestClassifyV0SlowPathAllFields pins the honesty zero of the record: at the
-// tracked v0 surface, every classified field routes to the slow path and no
-// field carries the kernel verdict. The classifier test is the executable
-// form of the record's census statement.
-func TestClassifyV0SlowPathAllFields(t *testing.T) {
+// TestClassifyKernelVerdictOnlyRouteRows pins the executable census
+// statement after the TR-40b growth: the route rows are the only fields
+// that carry the kernel verdict, every other row stays slow-path, and the
+// kernel-carrying rows sit at an open gate. The v0 zero (10 slow-path
+// rows, no kernel verdict) moved with the route class; the record's
+// growth rule governs the move.
+func TestClassifyKernelVerdictOnlyRouteRows(t *testing.T) {
 	rows := CensusRows()
 	if len(rows) == 0 {
 		t.Fatal("the census carries 0 rows")
@@ -83,11 +85,13 @@ func TestClassifyV0SlowPathAllFields(t *testing.T) {
 		if class != row.Class {
 			t.Errorf("Classify(%q) = %q, the census row carries %q", row.Field, class, row.Class)
 		}
-		if class.KernelEligible() {
-			t.Errorf("v0 field %q classifies into kernel-eligible class %q — no v0 field sits in the kernel-offloadable subset", row.Field, class)
+		isRoute := strings.HasPrefix(row.Field, "spec.routes[].")
+		hasKernel := class.Verdict() == VerdictKernel
+		if hasKernel != isRoute {
+			t.Errorf("census row %q carries verdict %q; the kernel verdict belongs to the route rows only", row.Field, class.Verdict())
 		}
-		if class.Verdict() == VerdictKernel {
-			t.Errorf("v0 field %q carries the kernel verdict %q — the tracked surface compiles no field to the kernel path", row.Field, VerdictKernel)
+		if hasKernel && class.Gate() != GateOpen {
+			t.Errorf("kernel-verdict row %q carries gate %q, want an open gate", row.Field, class.Gate())
 		}
 	}
 }

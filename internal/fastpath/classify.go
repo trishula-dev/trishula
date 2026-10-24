@@ -11,18 +11,19 @@ import (
 var ErrUnknownField = errors.New("fastpath: field outside the census")
 
 // fieldCensus maps one WAFPolicy field path to its compile class. The paths
-// follow the CRD's JSON tree: the spec leaves of api/v1alpha1 (the TR-08a v0
-// surface, the record's census section
-// docs/design/socket-plane/4-compiler-census.md) plus the two metadata fields
-// the compile stamps.
+// follow the CRD's JSON tree: the spec leaves of api/v1alpha1 (the record's
+// census section, docs/design/socket-plane/4-compiler-census.md) plus the
+// two metadata fields the compile stamps.
 //
-// Every v0 row routes to ClassSlowPath: the tracked surface carries no field
-// of the kernel-offloadable subset, so the kernel path of the compiler
-// compiles no field. The coverage test walks the CRD spec tree against this
-// map and fails on a missing or stale row.
+// The v0 rows (10) route to ClassSlowPath: the tracked v0 surface carried no
+// field of the kernel-offloadable subset. TR-40b grows the surface with the
+// route-marking class: spec.routes[] lands with two rows class ClassRoute —
+// the record's growth rule: a class takes its rows when its field lands,
+// and the coverage test walks the tree against this map and fails on a
+// missing or stale row.
 //
 // The status subresource stays out of the map by design: the record's
-// compile-split section owns status, not this skeleton's classifier.
+// compile-split section owns status, not this classifier.
 var fieldCensus = map[string]Class{
 	"spec.ruleSets[].name":              ClassSlowPath,
 	"spec.ruleSets[].source.crsVersion": ClassSlowPath,
@@ -32,6 +33,8 @@ var fieldCensus = map[string]Class{
 	"spec.modeFlags.inline":             ClassSlowPath,
 	"spec.modeFlags.shield":             ClassSlowPath,
 	"spec.modeFlags.shadow":             ClassSlowPath,
+	"spec.routes[].prefix":              ClassRoute,
+	"spec.routes[].action":              ClassRoute,
 	"metadata.name":                     ClassSlowPath,
 	"metadata.namespace":                ClassSlowPath,
 }

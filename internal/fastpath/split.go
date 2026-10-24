@@ -55,8 +55,36 @@ type Split struct {
 // when it is non-empty, a string when it is non-empty, a flag when true,
 // the CEL budget when greater than 0. An absent field carries no pair —
 // the record claims nothing for a field the policy never set.
+//
+// Every pair reads through Classify, so the census map stays the single
+// home of the field classes. The route rows carry their class verdict; the
+// other present rows stay slow-path at the tracked surface.
 func PolicySplit(policy v1alpha1.WAFPolicy) Split {
-	// STUB (TR-40b RED): the empty split. The watched-RED suite pins the
-	// real per-field behavior; the GREEN commit replaces this body.
-	return Split{Fields: map[string]Verdict{}}
+	fields := map[string]Verdict{}
+	add := func(field string, present bool) {
+		if !present {
+			return
+		}
+		class, err := Classify(field)
+		if err != nil {
+			// The paths above are census rows; a drift fails the coverage
+			// suite and never reaches callers as a silent skip.
+			return
+		}
+		fields[field] = class.Verdict()
+	}
+	ruleSets := policy.Spec.RuleSets
+	add("spec.ruleSets[].name", len(ruleSets) > 0)
+	add("spec.ruleSets[].source.crsVersion", len(ruleSets) > 0)
+	add("spec.ruleSets[].source.profile", len(ruleSets) > 0)
+	add("spec.defaultAction", policy.Spec.DefaultAction != "")
+	add("spec.celBudget", policy.Spec.CELBudget > 0)
+	add("spec.modeFlags.inline", policy.Spec.ModeFlags.Inline)
+	add("spec.modeFlags.shield", policy.Spec.ModeFlags.Shield)
+	add("spec.modeFlags.shadow", policy.Spec.ModeFlags.Shadow)
+	add("spec.routes[].prefix", len(policy.Spec.Routes) > 0)
+	add("spec.routes[].action", len(policy.Spec.Routes) > 0)
+	add("metadata.name", policy.Name != "")
+	add("metadata.namespace", policy.Namespace != "")
+	return Split{Fields: fields}
 }

@@ -1,13 +1,16 @@
-// Package fastpath carries the TR-40a compiler skeleton: the supported-subset
-// census classes of the WAFPolicy surface plus the field classifier that
-// splits each field between the kernel fast path and the engine slow path.
+// Package fastpath carries the TR-40a compiler skeleton and its TR-40b
+// growth: the supported-subset census classes of the WAFPolicy surface,
+// the field classifier that splits each field between the kernel fast path
+// and the engine slow path, and the compile-split record (the per-field
+// verdict map plus the summary-reason vocabulary).
 //
 // The classes carry the [§9.9] kernel-offloadable subset: JWT HS256 authz
-// (issuer/audience claims), RBAC allowlists (source IPs, ports, paths), route
-// marking, telemetry counters, header mutation. Every other class routes to
-// the slow path (the engine / ext_proc route) with no claim of enforcement.
+// (issuer/audience claims), RBAC allowlists (source IPs, ports, paths),
+// route marking, telemetry counters, header mutation. Every other class
+// routes to the slow path (the engine / ext_proc route) with no claim of
+// enforcement.
 //
-// Two honesty rules pin the skeleton:
+// Three honesty rules pin the census half:
 //
 //   - The census is closed. Classify fails closed on a field outside the
 //     census; a new WAFPolicy surface field takes its census row first, and
@@ -16,12 +19,16 @@
 //     kernel-module record (docs/design/socket-plane/1-mechanism.md) keeps
 //     its hash/encode gate locked at the tracked evaluation, so its verdict
 //     stays gate-locked.
+//   - The split carries dispositions, never enforcement. PolicySplit
+//     records one verdict per present field; the split surface never
+//     reports "enforced" for a policy or a bundle.
 //
-// Nothing here compiles or loads a kernel program. Template instantiation,
-// the bpf2go build beside the shield build and the compile-split status
-// surface land with the later TR-40 leaves (issue #52). The [§9.9] contract
-// holds: tracked evaluation, not a v1 commitment. The design record:
-// docs/design/socket-plane/4-compiler-census.md.
+// Nothing here compiles or loads a kernel program. The route class
+// instantiation and the verifier load land with TR-40b beside this
+// package: internal/fastpath/routetemplate (the template) and
+// internal/operator (the compile leg + the split write). The [§9.9]
+// contract holds: tracked evaluation, not a v1 commitment. The design
+// record: docs/design/socket-plane/4-compiler-census.md.
 //
 // [§9.9]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-tracked-evaluation-not-a-v1-commitment
 package fastpath
