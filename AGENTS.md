@@ -49,6 +49,7 @@ Other documents worth knowing:
 | `internal/engine/` | The detection ladder: `ingest/` (ringbuf drain → tx assembly), `ladder/` (S0–S5 verdicts + verdict vocabulary), `cel/` (the CEL rule env + request view), `http1/` (HTTP/1 parse into the §11.3 view), `botdef/` (JA4 + header fingerprints, §12), `rateban/` (the §13 rate plane: §13.2 per-route rate algorithms + ScoredWindowBan v1 + evidence sink), `otel/` (verdict trace/metric/log triad, §15) |
 | `internal/crs/` | The embedded Coraza wrapper (reference CRS evaluator, §11.2) + Seclang testdata |
 | `internal/operator/` | `compile.go` (WAFPolicy → Bundle wire format v1 + Load verify gates + in-process Eval), `reconcile.go` (CRD watch → compile → bundle publish) |
+| `internal/fastpath/` | TR-40 compiler skeleton: the fast-path census classes + the WAFPolicy field classifier (kernel-free; the design record: `docs/design/socket-plane/4-compiler-census.md`) |
 | `internal/shield/` | Go loaders for the eBPF objects (XDP/TC attach, ban map publish/reconcile, evidence sink) |
 | `lab/` | Everything runnable in the lab: `dx1/` (NGF steering + apply→effect + verify.sh), `demo-attack.sh` (TR-43), `verify-xdp-chain.sh` (kernel env gate), `tier-gate.sh` (visibility tier gate) |
 | `test/` | Cross-cutting gates: `crs-differential/` (CI-blocking CRS parity harness), `ban-conformance/` (TR-09 oracle suite), `bench/` (TR-24 harness) |
