@@ -5,7 +5,7 @@ kernel shield · userspace engine · control plane
 
 [![license](https://img.shields.io/badge/license-MIT-green)](https://github.com/trishula-dev/trishula/blob/main/LICENSE) [![GitHub commit activity](https://img.shields.io/github/commit-activity/m/trishula-dev/trishula)](https://github.com/trishula-dev/trishula/graphs/commit-activity) [![Libraries.io dependency status for GitHub repo](https://img.shields.io/librariesio/github/trishula-dev/trishula)](https://libraries.io/github/trishula-dev/trishula) [![GitHub Release](https://img.shields.io/github/v/release/trishula-dev/trishula?include_prereleases)](https://github.com/trishula-dev/trishula/releases)
 
-[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/trishula-dev/trishula/main.svg)](https://results.pre-commit.ci/latest/github/trishula-dev/trishula/main) [![go-build](https://github.com/trishula-dev/trishula/actions/workflows/go-build.yml/badge.svg)](https://github.com/trishula-dev/trishula/actions/workflows/go-build.yml) [![Dependency Review](https://github.com/trishula-dev/trishula/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/trishula-dev/trishula/actions/workflows/dependency-review.yml) [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/trishula-dev/trishula?label=OpenSSF%20Scorecard&style=flat)](https://scorecard.dev/viewer/?uri=github.com/trishula-dev/trishula) [![OpenSSF Best Practices](https://img.shields.io/badge/cii%20best%20practices-in%20progress-orange)](https://www.bestpractices.dev/projects/15183)
+[![pre-commit.ci status](https://results.pre-commit.ci/badge/github/trishula-dev/trishula/main.svg)](https://results.pre-commit.ci/latest/github/trishula-dev/trishula/main) [![go-build](https://github.com/trishula-dev/trishula/actions/workflows/go-build.yml/badge.svg)](https://github.com/trishula-dev/trishula/actions/workflows/go-build.yml) [![Dependency Review](https://github.com/trishula-dev/trishula/actions/workflows/dependency-review.yml/badge.svg)](https://github.com/trishula-dev/trishula/actions/workflows/dependency-review.yml) [![cue-gate](https://github.com/trishula-dev/trishula/actions/workflows/cue-gate.yml/badge.svg)](https://github.com/trishula-dev/trishula/actions/workflows/cue-gate.yml) [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/trishula-dev/trishula?label=OpenSSF%20Scorecard&style=flat)](https://scorecard.dev/viewer/?uri=github.com/trishula-dev/trishula) [![OpenSSF Best Practices](https://img.shields.io/badge/cii%20best%20practices-in%20progress-orange)](https://www.bestpractices.dev/projects/15183)
 
 Trishula protects Kubernetes traffic in three planes. The kernel shield runs
 verifier-checked eBPF programs. The userspace engine runs the detection
@@ -113,10 +113,12 @@ The board is the [Trishula Roadmap](https://github.com/orgs/trishula-dev/project
 
 ```
 api/v1alpha1/     CRD types (WAFPolicy, BanPolicy, …)
-cmd/              engine, operator, shield, trishula, trishulactl, attackdemo
+cmd/              engine, operator, shield, trishula, trishulactl, attackdemo, cuegen
 bpf/              shield_xdp.c, flow_tc.c (CO-RE, bpf2go)
-internal/         engine (ingest, ladder, cel, http1, http2, otel, botdef, positive, rateban), operator, shield
-manifests/        install manifests (incl. CRD)
+cue/              CUE definitions — the declarative layer (TR-46), the golden-diff source
+internal/         engine (ingest, ladder, cel, http1, http2, otel, botdef, positive, rateban), operator, shield, cuegen
+manifests/        install manifests (the CRD only; controller-gen-owned)
+deployment/       derived manifests (the dx1 lab tree, written by cmd/cuegen — never hand-edited)
 lab/              demo.sh · dx1/ · demo-attack.sh · verify-xdp-chain.sh · tier-gate.sh
 test/             crs-differential · ban-conformance · banenforce · tier · bench
 docs/             spec, paper, academy
