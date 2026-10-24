@@ -1,6 +1,6 @@
-# 0006 — the flow stats value carries window features, memset-built keys
+# Flow-stat window features — the detector-map record (TR-31) the flow stats value carries window features, memset-built keys
 
-Status: accepted
+Status: design record. The record carries no capability claim.
 
 ## Context
 
