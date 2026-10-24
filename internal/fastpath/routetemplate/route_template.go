@@ -30,11 +30,6 @@ import (
 // ErrNoKernelLeg reports a bundle without the kernel-path leg.
 var ErrNoKernelLeg = errors.New("routetemplate: bundle carries no kernel-path leg (nothing to instantiate)")
 
-// routeEnvelopeInstructions is the program envelope constant (the template
-// contract: the instruction budget per program is a compile-time
-// constant). The object contract test pins the committed program under it.
-const routeEnvelopeInstructions = 512
-
 // tcActOK is the TC_ACT_OK code (the template's default forward).
 const tcActOK uint32 = 0
 
@@ -110,6 +105,13 @@ func Instantiate(bundle *operator.Bundle) (*ebpf.Collection, error) {
 	spec, err := loadRoute_mark()
 	if err != nil {
 		return nil, fmt.Errorf("routetemplate: route template object: %w", err)
+	}
+	// The contract asserts kernel-free before the load: one program, the
+	// instruction count inside the fastpath.RouteEnvelopeInstructions
+	// envelope, no tail calls. A violated contract fails here, with the
+	// offending cell named: the apply fails, never a request mid-flight.
+	if err := fastpath.AssertEnvelope(spec); err != nil {
+		return nil, fmt.Errorf("routetemplate: %w", err)
 	}
 	// The placeholders: the miss forward. v1 pins the contract's default
 	// forward; a later compile slice carries it on the bundle.

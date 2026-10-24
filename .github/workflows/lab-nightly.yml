@@ -50,6 +50,11 @@ jobs:
       - name: DX1 timed gate
         env:
           DX1_TARGET: "900"
+          # The lab's proven NGF lane (issue #198, run 40077270222): the 2.7.2
+          # OCI install misses the 5m helm deadline on the runner and the
+          # chart-package retry gave no installable chart. setup.sh routes a
+          # 1.x pin to the 1.x single-pod lane directly.
+          NGF_CHART_VERSION: "1.6.2"
         run: bash lab/dx1/dx1-gate.sh
       - name: DX1 timing summary
         if: always()
@@ -113,3 +118,40 @@ jobs:
           go-version-file: go.mod
       - name: module-1 wire lab
         run: bash lab/module-1/run.sh
+
+  module-2-tls-lab:
+    # TR-28 (issue #28, spec section 7): the module-2 lab on TLS & QUIC.
+    # Hermetic legs: the JA4 golden vectors (incl. the QUIC transport
+    # derivation), the header-plane shapes, the h2 classification. The
+    # opt-in termination leg skips with a loud line (hosted runners
+    # carry no DX1 lab).
+    name: "module-2 tls lab (JA4 vectors + h2 classification)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - name: module-2 tls lab
+        run: bash lab/module-2/run.sh
+
+  module-5-frontier-lab:
+    # TR-28 (issue #28, spec section 7): the module-5 lab on the frontier.
+    # Hermetic legs: the ladder verdict vocabulary + the operator compile
+    # gate. The DX1 fail-closed leg skips with a loud line (hosted
+    # runners carry no DX1 lab).
+    name: "module-5 frontier lab (verdict vocabulary + compile gate)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - name: module-5 frontier lab
+        run: bash lab/module-5/run.sh
