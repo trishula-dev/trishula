@@ -1,0 +1,26 @@
+name: 02-forward-row-engine-block
+surface: decisive engine verdict the fast path forwards; T2 re-entry (plane split, reported)
+skipped: false
+policy:
+  defaultAction: block
+  routes:
+  - prefix: /v1/chat
+    action: forward
+  - prefix: /v1/admin
+    action: drop
+frame:
+  ethertype: ipv4
+  tcpDoff: 5
+  line: GET /v1/chat HTTP/1.1
+  pad: 0
+view:
+  method: GET
+  path: /v1/chat
+  query: ''
+  rate5m: 0
+classes:
+- forward-row
+expect:
+  outcome: forward
+  marked: true
+  rowid: 0

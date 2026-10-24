@@ -1,0 +1,26 @@
+name: 10-nul-miss-forwards
+surface: a NUL-shortened key with no staged row forwards (fail-open)
+skipped: false
+policy:
+  defaultAction: pass
+  routes:
+  - prefix: /v1/chat
+    action: forward
+  - prefix: /v1/admin
+    action: drop
+frame:
+  ethertype: ipv4
+  tcpDoff: 5
+  line: "GET /adm\0in HTTP/1.1"
+  pad: 0
+view:
+  method: GET
+  path: /adm
+  query: ''
+  rate5m: 0
+classes:
+- nul-shape
+- miss
+expect:
+  outcome: forward
+  marked: false

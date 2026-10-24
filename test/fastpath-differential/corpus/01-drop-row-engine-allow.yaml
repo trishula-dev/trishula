@@ -1,0 +1,26 @@
+name: 01-drop-row-engine-allow
+surface: compiled drop row beside a non-decisive engine verdict (plane split, reported)
+skipped: false
+policy:
+  defaultAction: pass
+  routes:
+  - prefix: /v1/chat
+    action: forward
+  - prefix: /v1/admin
+    action: drop
+frame:
+  ethertype: ipv4
+  tcpDoff: 5
+  line: GET /v1/admin HTTP/1.1
+  pad: 0
+view:
+  method: GET
+  path: /v1/admin
+  query: ''
+  rate5m: 0
+classes:
+- drop-row
+expect:
+  outcome: drop
+  marked: true
+  rowid: 1
