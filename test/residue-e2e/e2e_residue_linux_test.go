@@ -38,6 +38,9 @@ package residuee2e
 //     check reads the delta against the snapshot and the pre-state.
 //   - Pre-existing kernel maps stay out of the verdict. The gate records
 //     them, never as install residue.
+//
+// TestResidueGateTwiceE2E runs two gate iterations in one process. The
+// second iteration asserts the first left zero residue before its install.
 
 import (
 	"errors"
@@ -712,6 +715,15 @@ func runGate(t *testing.T, prev *installSnapshot) installSnapshot {
 // uninstall, and assert zero kernel objects (gate row M7).
 func TestResidueGateE2E(t *testing.T) {
 	runGate(t, nil)
+}
+
+// TestResidueGateTwiceE2E is the issue #193 regression. Two gate iterations
+// run in one process. The second iteration begins with the first
+// iteration's zero read: every first-iteration object id must be gone. This
+// shape proves that a teardown leaves nothing a next run can read.
+func TestResidueGateTwiceE2E(t *testing.T) {
+	first := runGate(t, nil)
+	runGate(t, &first)
 }
 
 // liveUninstaller binds the TR-35a Uninstaller effects to the live kernel:
