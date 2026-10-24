@@ -76,3 +76,39 @@ jobs:
           go-version-file: go.mod
       - name: module-3 ebpf lab
         run: bash lab/module-3/run.sh
+
+  module-4-modeling-lab:
+    # TR-27c (issue #171, spec section 7): the module-4 lab on security
+    # modeling. Hermetic legs: the rate tables, the ban oracle, the bot
+    # detectors, the verdict records. The kernel leg (the L2 tier e2e)
+    # skips with a loud line — hosted runners carry no kernel-test VM;
+    # the kernel gates run in the developer VM posture.
+    name: "module-4 modeling lab (rate tables + ban oracle)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - name: module-4 modeling lab
+        run: bash lab/module-4/run.sh
+
+  module-1-wire-lab:
+    # TR-27a (issue #169, spec section 7): the module-1 lab on the wire.
+    # Hermetic legs: the 11.8 corpus replay + the parity gate. The opt-in
+    # cluster leg skips with a loud line (hosted runners carry no DX1 lab).
+    name: "module-1 wire lab (11.8 corpus replay + parity)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+      - name: module-1 wire lab
+        run: bash lab/module-1/run.sh
