@@ -393,28 +393,195 @@ func ifaceIndex(t *testing.T, name string) int {
 
 // assertInstallCensus pins the install shape the sweep starts from: 2
 // programs, 8 maps, 1 link, 1 pin, 2 TC filters.
-func assertInstallCensus(t *testing.T, kr residue.KernelRead, sc residue.Scope) residue.Report {
+// installSnapshot records the exact kernel identities this install created:
+// map ids, program ids, the link id, the pin path and the tc filter rows on
+// the managed interface.
+//
+// The teardown verdict reads absent-by-identity, never by name. A stale
+// object from another install carries the same name (the map name field
+// holds 15 bytes; a name match cannot tell two installs apart) and must
+// not decide the gate. The live run of 2026-10-24 proved the class: two
+// extra events-named maps sat in the census while the install held eight.
+type installSnapshot struct {
+	MapIDs  map[ebpf.MapID]string
+	ProgIDs map[ebpf.ProgramID]string
+	PinPath string
+	TCPrefs map[string][]string // "iface:dir" -> filter prefs
+}
+
+func snapshotInstall(c1, c2 *ebpf.Collection, xdp link.Link) (installSnapshot, error) {
+	s := installSnapshot{
+		MapIDs:  map[ebpf.MapID]string{},
+		ProgIDs: map[ebpf.ProgramID]string{},
+		PinPath: pinProg,
+		TCPrefs: map[string][]string{},
+	}
+	for _, coll := range []*ebpf.Collection{c1, c2} {
+		for name, m := range coll.Maps {
+			info, err := m.Info()
+			if err != nil {
+				return s, fmt.Errorf("residue snapshot: map %s: %w", name, err)
+			}
+			id, _ := info.ID()
+			s.MapIDs[id] = name
+		}
+		for name, p := range coll.Programs {
+			info, err := p.Info()
+			if err != nil {
+				return s, fmt.Errorf("residue snapshot: program %s: %w", name, err)
+			}
+			pid, _ := info.ID()
+			s.ProgIDs[pid] = name
+		}
+	}
+	for _, row := range []struct{ key, dir string }{
+		{hostVeth, "ingress"}, {hostVeth, "egress"},
+	} {
+		filters, err := parseTCFilters(row.key, row.dir)
+		if err != nil {
+			return s, fmt.Errorf("residue snapshot: tc filters on %s: %w", row.key, err)
+		}
+		for _, f := range filters {
+			s.TCPrefs[tcWhere(f, row.key)] = append(s.TCPrefs[tcWhere(f, row.key)], f.pref)
+		}
+	}
+	return s, nil
+}
+
+// assertInstallVisible proves the census reads every snapshot object before
+// the teardown. The census ownership stays name-based (the product surface);
+// the gate asserts only visibility here.
+//
+// The stale-name class (the extra events-named objects) changes the count.
+// The check therefore requires: every snapshot map id and program id shows
+// in the live lists, the pin and the tc rows show, and every census object
+// that matches the scope names carries a snapshot identity. The last clause
+// is the poisoning check: an owned object outside the snapshot = stale state.
+func assertInstallVisible(t *testing.T, kr residue.KernelRead, sc residue.Scope, snap installSnapshot) residue.Report {
 	t.Helper()
 	installed, err := residue.Census(kr, sc)
 	if err != nil {
 		t.Fatalf("census over the live install: %v", err)
 	}
-	want := map[residue.Class]int{
-		residue.ClassMap:      8,
-		residue.ClassProgram:  2,
-		residue.ClassLink:     1,
-		residue.ClassPin:      1,
-		residue.ClassTCFilter: 2,
+
+	maps, err := kr.ListMaps()
+	if err != nil {
+		t.Fatalf("live map list: %v", err)
 	}
-	if installed.Counts == nil {
-		t.Fatalf("installed census carries no counts: %s", installed)
+	seen := map[ebpf.MapID]string{}
+	for _, o := range maps {
+		id, err := mapIDByName(o.ID)
+		if err != nil {
+			t.Fatalf("map id for %s: %v", o.ID, err)
+		}
+		seen[id] = o.ID
 	}
-	for c, n := range want {
-		if installed.Counts[c] != n {
-			t.Fatalf("installed census %s = %d, want %d (full report: %s)", c, installed.Counts[c], n, installed)
+	for id, name := range snap.MapIDs {
+		if _, ok := seen[id]; !ok {
+			t.Fatalf("the census cannot see installed map %s (id %d): the census read is incomplete", name, id)
+		}
+	}
+	owners := map[string]ebpf.MapID{}
+	for id, name := range snap.MapIDs {
+		if owners[name] != 0 {
+			t.Fatalf("two installed maps share the name %s; the name-based ownership is ambiguous for this run", name)
+		}
+		owners[name] = id
+	}
+	for _, o := range maps {
+		if !sc.Owned(o) {
+			continue
+		}
+		id, err := mapIDByName(o.ID)
+		if err != nil {
+			continue
+		}
+		if _, ok := snap.MapIDs[id]; !ok {
+			t.Fatalf("the census reads an owned map outside the snapshot: %q id %d — a stale same-named object is present; clean it before the gate runs", o.ID, id)
 		}
 	}
 	return installed
+}
+
+func mapIDByName(name string) (ebpf.MapID, error) {
+	var prev ebpf.MapID
+	for {
+		id, err := ebpf.MapGetNextID(prev)
+		if err != nil {
+			return 0, fmt.Errorf("residue census: map id after %d: %w", prev, err)
+		}
+		prev = id
+		m, err := ebpf.NewMapFromID(id)
+		if err != nil {
+			continue
+		}
+		info, err := m.Info()
+		_ = m.Close()
+		if err != nil {
+			continue
+		}
+		if info.Name == name {
+			return id, nil
+		}
+	}
+}
+
+func progIDByName(name string) (ebpf.ProgramID, error) {
+	var prev ebpf.ProgramID
+	for {
+		id, err := ebpf.ProgramGetNextID(prev)
+		if err != nil {
+			return 0, fmt.Errorf("residue census: program id after %d: %w", prev, err)
+		}
+		prev = id
+		p, err := ebpf.NewProgramFromID(id)
+		if err != nil {
+			continue
+		}
+		info, err := p.Info()
+		_ = p.Close()
+		if err != nil {
+			continue
+		}
+		if info.Name == name {
+			return id, nil
+		}
+	}
+}
+
+// assertGone reads the snapshot identities after the teardown and fails on
+// the first object that still exists. This is the M7 zero read.
+func assertGone(t *testing.T, snap installSnapshot) {
+	t.Helper()
+	for id, name := range snap.MapIDs {
+		if m, err := ebpf.NewMapFromID(id); err == nil {
+			m.Close()
+			t.Fatalf("residue: map %s (id %d) still exists after teardown", name, id)
+		}
+	}
+	for id, name := range snap.ProgIDs {
+		if p, err := ebpf.NewProgramFromID(id); err == nil {
+			p.Close()
+			t.Fatalf("residue: program %s (id %d) still exists after teardown", name, id)
+		}
+	}
+	if _, err := os.Stat(snap.PinPath); err == nil {
+		t.Fatalf("residue: pin %s still exists after teardown", snap.PinPath)
+	}
+	for where, prefs := range snap.TCPrefs {
+		iface, dir, _ := strings.Cut(where, ":")
+		filters, err := parseTCFilters(iface, dir)
+		if err != nil {
+			t.Fatalf("residue: tc filters on %s: %v", where, err)
+		}
+		for _, f := range filters {
+			for _, pref := range prefs {
+				if f.pref == pref {
+					t.Fatalf("residue: tc filter %s pref %s still exists after teardown", where, pref)
+				}
+			}
+		}
+	}
 }
 
 // TestResidueGateE2E is the issue #168 acceptance: attach both shield legs,
@@ -428,7 +595,11 @@ func TestResidueGateE2E(t *testing.T) {
 	sc := liveScope()
 	kr := liveKernel{}
 	c1, c2, xdp := installShield(t)
-	assertInstallCensus(t, kr, sc)
+	snap, err := snapshotInstall(c1, c2, xdp)
+	if err != nil {
+		t.Fatalf("install snapshot: %v", err)
+	}
+	assertInstallVisible(t, kr, sc, snap)
 
 	// The full teardown (the §16.4 order) rides the injected Uninstaller:
 	// per-hook detach, per-interface TC filter removal, the BPFFS subtree
@@ -445,6 +616,7 @@ func TestResidueGateE2E(t *testing.T) {
 	if !r.Clean() {
 		t.Fatalf("uninstall left kernel residue: %s", r)
 	}
+	assertGone(t, snap)
 }
 
 // liveUninstaller binds the TR-35a Uninstaller effects to the live kernel:
