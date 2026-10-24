@@ -94,6 +94,19 @@ func Evaluate(in GateInput, cat Catalog) ([]Violation, error) {
 // states with margin on each side.
 const InflationBand = 1.5
 
+// VioBudgetBlowupLimit bounds every latency cell: p99 at most this
+// factor over its budget row (the explosion-alarm bound; a stable cell
+// does not collapse 4x inside one run, a host tail cannot reach it).
+// The M2 cells carry the same band: hosted CI runs test packages in
+// parallel and shared runners carry sibling load, so the strict 1.5 ms
+// M2 assert needs the dedicated sequential bench job — the live guard
+// records the strict verdict and gates the blowup band.
+// The same bound is the quiet-pair retention ceiling (TR-199): a raw
+// ceiling miss under it on a quiet factor pair is not settled code
+// evidence (the pair cannot witness the row window's load); at it, the
+// miss is.
+const VioBudgetBlowupLimit = 4.0
+
 // RowVerdict is the variance-consistent verdict class one budget-row
 // pair reads on the live path (TR-92a). The class records why the row
 // settled: a genuine budget miss, a bracket the samples could not
@@ -123,6 +136,12 @@ type RowInput struct {
 	Report     Report
 	PreFactor  float64
 	PostFactor float64
+	// Pinned names the row a pinned finding: the caller's ledger pins
+	// the recipe's budget-exceeded verdict as the open finding. A
+	// pinned row's quiet-pair miss keeps the unmet class, so the
+	// margin rule and the drift alarm judge it; only the maintainer
+	// re-pins a budget row.
+	Pinned bool
 }
 
 // RowVerdictRecord is the row's verdict class with the evidence the run
@@ -150,9 +169,15 @@ type RowVerdictRecord struct {
 //     sit inside the episode. A raw miss cannot settle as code
 //     evidence; the row reads retained-with-variance. Raw walls that
 //     hold read holds.
-//   - Neither sample carries inflation: the raw verdict stands, and
-//     the row reads unmet only when the raw budget row genuinely
-//     misses.
+//   - Neither sample carries inflation: the pair still cannot witness
+//     the row window's runner state (TR-199: the probes read instants,
+//     the row measures an interval, so a quiet pair is not
+//     quiet-window evidence). A raw budget miss reads unmet only when
+//     it settles as code evidence: a miss at or over
+//     VioBudgetBlowupLimit, a floor-row miss, or a pinned row's miss
+//     (the margin rule and the drift alarm judge it). Any other raw
+//     ceiling miss under the blowup bound reads
+//     retained-with-variance; the record line carries the reason.
 //
 // Floor-kind budgets normalize nowhere (the live recipes cannot bind
 // them; validation forbids the pairing) and compare their raw walls in
@@ -165,6 +190,7 @@ func EvaluateRow(in RowInput, cat Catalog) (RowVerdictRecord, error) {
 	if _, ok := cat.ByID[in.Report.BudgetID]; !ok {
 		return RowVerdictRecord{}, fmt.Errorf("bench: unknown budget %q", in.Report.BudgetID)
 	}
+	b := cat.ByID[in.Report.BudgetID]
 	preInf, postInf := in.PreFactor >= InflationBand, in.PostFactor >= InflationBand
 	factor := 1.0
 	if preInf && postInf {
@@ -203,10 +229,25 @@ func EvaluateRow(in RowInput, cat Catalog) (RowVerdictRecord, error) {
 			rec.Verdict = RowHolds
 		}
 	default:
-		if miss {
-			rec.Verdict = RowUnmet
-		} else {
+		switch {
+		case !miss:
 			rec.Verdict = RowHolds
+		case in.Pinned, b.Kind != CeilingP99, in.Report.P99us/b.Value >= VioBudgetBlowupLimit:
+			// The classes the pair settles: a pinned row's miss
+			// answers to the margin rule and the drift alarm, a
+			// floor-row miss carries no inflation class, and a miss
+			// at or over the blowup bound is explosion-class code
+			// evidence a host tail cannot carry.
+			rec.Verdict = RowUnmet
+		default:
+			// TR-199: the probes read instants, the row measures an
+			// interval. A quiet pair is not quiet-window evidence:
+			// the row may sit inside a contention window the pair
+			// never samples. The sub-blowup miss cannot settle as
+			// code evidence; the row retains with variance and the
+			// record line carries the reason.
+			rec.Verdict = RowRetainedWithVariance
+			rec.Detail += fmt.Sprintf("; quiet-pair raw miss at %.2fx the budget row, under the blowup bound %.0fx: the pair cannot witness the row window's load, the miss is not settled code evidence", in.Report.P99us/b.Value, VioBudgetBlowupLimit)
 		}
 	}
 	return rec, nil

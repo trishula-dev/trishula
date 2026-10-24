@@ -184,10 +184,22 @@ func TestBudgetRowVerdictClassesPairedSamples(t *testing.T) {
 			want: RowRetainedWithVariance, wantFactor: 3.0,
 		},
 		{
-			name: "both samples quiet, raw budget miss — unmet",
+			name: "both samples quiet, shallow raw miss under the blowup bound — retained-with-variance",
 			in:   RowInput{Report: Report{RecipeID: "steady-json-8k", BudgetID: "e2e-inline-hop-8k", P99us: 1700}, PreFactor: 1.0, PostFactor: 1.0},
-			want: RowUnmet, wantFactor: 1.0,
+			want: RowRetainedWithVariance, wantFactor: 1.0,
 			wantSub: "1700.0 us above the budget",
+		},
+		{
+			name: "both samples quiet, raw miss under the blowup bound on a pinned row — unmet, the margin rule judges it",
+			in:   RowInput{Report: Report{RecipeID: "steady-json-8k", BudgetID: "e2e-inline-hop-8k", P99us: 3000}, PreFactor: 1.0, PostFactor: 1.0, Pinned: true},
+			want: RowUnmet, wantFactor: 1.0,
+			wantSub: "3000.0 us above the budget",
+		},
+		{
+			name: "both samples quiet, raw miss over the blowup bound — unmet, the miss settles as code evidence",
+			in:   RowInput{Report: Report{RecipeID: "steady-json-8k", BudgetID: "e2e-inline-hop-8k", P99us: 6400}, PreFactor: 1.0, PostFactor: 1.0},
+			want: RowUnmet, wantFactor: 1.0,
+			wantSub: "6400.0 us above the budget",
 		},
 		{
 			name: "both samples quiet, budget holds — holds",
