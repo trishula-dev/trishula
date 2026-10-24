@@ -65,28 +65,28 @@ func TestRapidResetRows(t *testing.T) {
 		want    bool
 	}{
 		{
-			name:    "clean connection: no resets",
-			resets:  0, streams: 40,
+			name:   "clean connection: no resets",
+			resets: 0, streams: 40,
 			want: false,
 		},
 		{
-			name:    "under the ratio stays clean",
-			resets:  7, streams: 40,
+			name:   "under the ratio stays clean",
+			resets: 7, streams: 40,
 			want: false,
 		},
 		{
-			name:    "storm ratio over the stream floor is suspect",
-			resets:  24, streams: 40,
+			name:   "storm ratio over the stream floor is suspect",
+			resets: 24, streams: 40,
 			want: true,
 		},
 		{
-			name:    "storm ratio under the stream floor is clean",
-			resets:  10, streams: 12,
+			name:   "storm ratio under the stream floor is clean",
+			resets: 10, streams: 12,
 			want: false,
 		},
 		{
-			name:    "a single stream never carries the shape",
-			resets:  4, streams: 4,
+			name:   "a single stream never carries the shape",
+			resets: 4, streams: 4,
 			want: false,
 		},
 	} {
