@@ -77,6 +77,7 @@ import (
 
 	"github.com/trishula-dev/trishula/api/v1alpha1"
 	"github.com/trishula-dev/trishula/internal/engine/cel"
+	"github.com/trishula-dev/trishula/internal/fastpath"
 )
 
 // BundleFormatVersion is the current bundle wire-format version (the spec's architecture section):
@@ -188,6 +189,9 @@ func Compile(policy v1alpha1.WAFPolicy) (Bundle, error) {
 	default:
 		return Bundle{}, fmt.Errorf("compile: unknown defaultAction %q", policy.Spec.DefaultAction)
 	}
+	if err := validRoutes(policy.Spec.Routes); err != nil {
+		return Bundle{}, fmt.Errorf("compile: %w", err)
+	}
 	b := Bundle{
 		FormatVersion: BundleFormatVersion,
 		Tenant:        policy.Namespace,
@@ -202,6 +206,18 @@ func Compile(policy v1alpha1.WAFPolicy) (Bundle, error) {
 			Verdicts: map[string]string{},
 		},
 	}
+	if len(policy.Spec.Routes) > 0 {
+		routes := make([]FastPathRoute, len(policy.Spec.Routes))
+		for i, r := range policy.Spec.Routes {
+			code := fastpath.RouteTemplateActionForward
+			if r.Action == v1alpha1.RouteActionDrop {
+				code = fastpath.RouteTemplateActionDrop
+			}
+			routes[i] = FastPathRoute{Prefix: r.Prefix, Action: code}
+		}
+		b.FastPath = &FastPathValues{Routes: routes}
+	}
+	b.Split = policySplitStrings(policy)
 	for i, ref := range policy.Spec.RuleSets {
 		if err := validRuleSetSource(ref.Source); err != nil {
 			return Bundle{}, fmt.Errorf("compile: rule set %d (%s): %w", i, ref.Name, err)
@@ -229,6 +245,87 @@ func Compile(policy v1alpha1.WAFPolicy) (Bundle, error) {
 	}
 	b.RulePackDigests = digests
 	return b, nil
+}
+
+// policySplitStrings renders the split record for the wire: one census
+// field path per present field, each to its verdict string. The wire keeps
+// the string form so the annotation renders verbatim.
+func policySplitStrings(policy v1alpha1.WAFPolicy) map[string]string {
+	split := fastpath.PolicySplit(policy)
+	out := make(map[string]string, len(split.Fields))
+	for field, verdict := range split.Fields {
+		out[field] = verdict.String()
+	}
+	return out
+}
+
+// validRoutes gates the route class against the template contract (fail
+// closed, the offending cell named): row bound, prefix bounds with
+// printable bytes, duplicate rows, and the action vocabulary. The CRD
+// schema carries the same enum and bounds; the compile re-gates in-process
+// objects the way validRuleSetSource re-gates rule-set sources.
+func validRoutes(routes []v1alpha1.RouteMark) error {
+	if len(routes) > fastpath.RouteTemplateMaxEntries {
+		return fmt.Errorf("spec.routes carries %d rows; the template bound is %d rows", len(routes), fastpath.RouteTemplateMaxEntries)
+	}
+	seen := make(map[string]bool, len(routes))
+	for i, r := range routes {
+		if r.Prefix == "" {
+			return fmt.Errorf("spec.routes[%d].prefix is required", i)
+		}
+		if len(r.Prefix) > fastpath.RouteTemplatePrefixMaxBytes {
+			return fmt.Errorf("spec.routes[%d].prefix carries %d bytes; the template bound is %d bytes", i, len(r.Prefix), fastpath.RouteTemplatePrefixMaxBytes)
+		}
+		for _, c := range []byte(r.Prefix) {
+			if c < 0x20 || c > 0x7E {
+				return fmt.Errorf("spec.routes[%d].prefix carries byte 0x%02x; printable ASCII only", i, c)
+			}
+		}
+		if seen[r.Prefix] {
+			return fmt.Errorf("spec.routes[%d].prefix %q repeats an earlier row", i, r.Prefix)
+		}
+		seen[r.Prefix] = true
+		switch r.Action {
+		case v1alpha1.RouteActionForward, v1alpha1.RouteActionDrop:
+		case "":
+			return fmt.Errorf("spec.routes[%d].action is required", i)
+		default:
+			return fmt.Errorf("spec.routes[%d].action %q is unknown", i, r.Action)
+		}
+	}
+	return nil
+}
+
+// validFastPathLeg gates a loaded bundle's kernel leg the same way (tamper
+// and corruption fail the load, never reach the loader). The cell names
+// follow the census field paths with the row index, so a failure names the
+// offending cell either way.
+func validFastPathLeg(leg *FastPathValues) error {
+	if leg == nil {
+		return nil
+	}
+	if len(leg.Routes) > fastpath.RouteTemplateMaxEntries {
+		return fmt.Errorf("spec.routes carries %d rows; the template bound is %d rows", len(leg.Routes), fastpath.RouteTemplateMaxEntries)
+	}
+	seen := make(map[string]bool, len(leg.Routes))
+	for i, r := range leg.Routes {
+		if r.Prefix == "" {
+			return fmt.Errorf("spec.routes[%d].prefix is required", i)
+		}
+		if len(r.Prefix) > fastpath.RouteTemplatePrefixMaxBytes {
+			return fmt.Errorf("spec.routes[%d].prefix carries %d bytes; the template bound is %d bytes", i, len(r.Prefix), fastpath.RouteTemplatePrefixMaxBytes)
+		}
+		if seen[r.Prefix] {
+			return fmt.Errorf("spec.routes[%d].prefix %q repeats an earlier row", i, r.Prefix)
+		}
+		seen[r.Prefix] = true
+		switch r.Action {
+		case fastpath.RouteTemplateActionForward, fastpath.RouteTemplateActionDrop:
+		default:
+			return fmt.Errorf("spec.routes[%d].action code %d is outside the template vocabulary", i, r.Action)
+		}
+	}
+	return nil
 }
 
 // validRuleSetSource validates a rule-set ref's source in-process: the CRD
@@ -326,6 +423,9 @@ func Load(bundle Bundle) (*Eval, error) {
 	}
 	if len(bundle.RulePacks) != len(bundle.RulePackDigests) {
 		return nil, fmt.Errorf("load: %d rule packs but %d digests", len(bundle.RulePacks), len(bundle.RulePackDigests))
+	}
+	if err := validFastPathLeg(bundle.FastPath); err != nil {
+		return nil, fmt.Errorf("load: %w", err)
 	}
 	digests, err := packDigests(bundle.RulePacks)
 	if err != nil {
