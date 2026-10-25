@@ -44,10 +44,29 @@ on merged code: `TC_ACT_SHOT`.
 
 ```sh
 # Linux (VM or box): kernel ≥5.15 with BTF, root, Go 1.23+
-go build -o /tmp/attackdemo ./cmd/attackdemo      # cross: GOOS=linux
-go build -o /tmp/flow_tc.o ./internal/engine/ingest # merged TR-04d object
-sudo env DEMO_BIN=/tmp/attackdemo ./lab/demo-attack.sh
+sudo ./lab/demo-attack.sh
 ```
+
+## Build path
+
+`lab/demo-attack.sh` carries every artifact prep. The sources: the three
+artifacts the run loads.
+
+- `/tmp/flow_tc.o` — the merged TC producer object. The script copies the
+  committed bpf2go output for the arch:
+  `internal/engine/ingest/ingest_flow_arm64_bpfel.o` (arm64) or
+  `ingest_flow_x86_bpfel.o` (amd64). The source file is `bpf/flow_tc.c`; a
+  C change goes through the package's `go:generate` first. A `.o` path
+  never carries a `go build` artifact.
+- `/tmp/attackdemo` — the demo binary. `go build -o /tmp/attackdemo
+  ./cmd/attackdemo`; the script runs the build when the file is absent.
+  Set `DEMO_BIN` to use a pre-built binary. Cross build:
+  `GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o /tmp/attackdemo
+  ./cmd/attackdemo`.
+- `/tmp/tfo` — the target listener. It ships in no build. The script
+  writes a fallback when `/tmp/tfo` is absent: a small HTTP server on
+  the target address. The server answers the wire legs. A real
+  order-store listener binary replaces it.
 
 The script prints, per attack: the wire exchange, the evaluator verdicts,
 the kernel's own view of the flow and the enforcement evidence. The
