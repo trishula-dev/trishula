@@ -32,6 +32,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -90,6 +91,83 @@ func tlsTestClient() *http.Client {
 	return &http.Client{Transport: &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 	}}
+}
+
+// tlsCurveClient builds a client pinned to one key-exchange offer (the
+// hybrid row and the classical row of the profile test read one curve
+// each).
+func tlsCurveClient(curves ...tls.CurveID) *http.Client {
+	return &http.Client{Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+			CurvePreferences:   curves,
+		},
+	}}
+}
+
+// TR-203 L4 (issue #264, decision 4) — the PQC termination profile. The
+// engine's termination surface speaks the hybrid X25519 + ML-KEM key
+// exchange (X25519MLKEM768, group 0x11EC) on every terminated leg. The set
+// is a repo decision; the toolchain default never answers for it. This is
+// a new function, not a row: no existing row pins a key-exchange surface.
+func TestTLSTerminationProfileSpeaksTheHybrid(t *testing.T) {
+	certPath, keyPath := writeTLSPair(t)
+
+	t.Run("the-profile-pins-the-hybrid-offer-set", func(t *testing.T) {
+		cfg, err := tlsTerminationSpec("tls.crt", "tls.key")
+		if err != nil {
+			t.Fatalf("spec err = %v, want nil", err)
+		}
+		want := []tls.CurveID{tls.X25519MLKEM768, tls.X25519}
+		if !slices.Equal(cfg.CurvePreferences, want) {
+			t.Fatalf("CurvePreferences = %v, want exactly %v (hybrid first, classical fallback)",
+				cfg.CurvePreferences, want)
+		}
+	})
+
+	t.Run("the-terminated-leg-negotiates-the-hybrid", func(t *testing.T) {
+		up := hostUpstream(t)
+		ln, err := engineListener("127.0.0.1:0", certPath, keyPath)
+		if err != nil {
+			t.Fatalf("engineListener: %v", err)
+		}
+		defer ln.Close()
+		serveEngineListener(t, ln, newEngineHandler(up.URL, "engine"))
+
+		client := tlsCurveClient()
+		resp, err := client.Get("https://" + ln.Addr().String() + "/healthz")
+		if err != nil {
+			t.Fatalf("hybrid-capable handshake: %v", err)
+		}
+		resp.Body.Close()
+		state := resp.TLS
+		t.Logf("negotiated key exchange: %s", state.CurveID)
+		if state.CurveID != tls.X25519MLKEM768 {
+			t.Fatalf("negotiated key exchange = %v, want the X25519MLKEM768 hybrid", state.CurveID)
+		}
+	})
+
+	t.Run("a-classical-client-falls-back-to-x25519", func(t *testing.T) {
+		up := hostUpstream(t)
+		ln, err := engineListener("127.0.0.1:0", certPath, keyPath)
+		if err != nil {
+			t.Fatalf("engineListener: %v", err)
+		}
+		defer ln.Close()
+		serveEngineListener(t, ln, newEngineHandler(up.URL, "engine"))
+
+		client := tlsCurveClient(tls.X25519)
+		resp, err := client.Get("https://" + ln.Addr().String() + "/healthz")
+		if err != nil {
+			t.Fatalf("classical-only handshake: %v", err)
+		}
+		resp.Body.Close()
+		state := resp.TLS
+		t.Logf("negotiated key exchange: %s", state.CurveID)
+		if state.CurveID != tls.X25519 {
+			t.Fatalf("negotiated key exchange = %v, want the classical X25519 fallback", state.CurveID)
+		}
+	})
 }
 
 // hostUpstream answers the plain-HTTP pool shape the engine forwards to
