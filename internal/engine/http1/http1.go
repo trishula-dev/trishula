@@ -79,6 +79,7 @@ func Parse(wire []byte) (*Request, error) {
 
 	// --- header lines ---------------------------------------------------
 	headerLines := 0
+	clSeen, teSeen := false, false // the framing-ambiguity counters (TR-199)
 	for {
 		line, rest, err = nextLine(rest, total)
 		if err != nil {
@@ -98,6 +99,24 @@ func Parse(wire []byte) (*Request, error) {
 		name, value, err := parseHeaderField(line.text)
 		if err != nil {
 			return nil, err
+		}
+		// --- framing conformance checks (TR-199; framing.go) ------------
+		// Field names match case-insensitively (RFC 9110 section 5.1).
+		// The map store cannot carry the check — duplicate names
+		// collapse — so the counters live in the walk and the reject
+		// fires at the earliest ambiguous line (deterministic order:
+		// the head's own line order).
+		switch strings.ToLower(name) {
+		case "content-length":
+			if clSeen {
+				return nil, fmt.Errorf("%w: %q arrives after %q", ErrFramingDupCL, name, "Content-Length")
+			}
+			clSeen = true
+		case "transfer-encoding":
+			teSeen = true
+		}
+		if clSeen && teSeen {
+			return nil, fmt.Errorf("%w: %q and %q on one head", ErrFramingCLTE, "Content-Length", "Transfer-Encoding")
 		}
 		r.Headers[name] = value
 		if total > MaxHeaderBytes {

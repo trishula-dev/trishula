@@ -1,8 +1,10 @@
 package ladder
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/trishula-dev/trishula/internal/engine/http1"
 	"github.com/trishula-dev/trishula/internal/engine/ingest"
 )
 
@@ -277,5 +279,50 @@ func TestUseValidatesWiring(t *testing.T) {
 	}
 	if err := e.Use(StageCEL, &stubStage{st: StageKernel}); err == nil {
 		t.Error("stage/evaluator mismatch accepted")
+	}
+}
+
+// TestParseGateVerdict rows the TR-199 parse-gate mapping: the
+// conformance record's section 4 reject table over the parse errors. New
+// test home — the parse gate maps PARSE ERRORS, not request views, so no
+// existing ladder table owns it (the TestEvaluateTx* tables walk
+// evaluator fragments; an error classification is not one).
+func TestParseGateVerdict(t *testing.T) {
+	cases := []struct {
+		name     string
+		parseErr error
+		want     *Verdict
+	}{
+		{"nil-parse", nil, nil},
+		// A h1 grammar class is NOT a framing cell: the TR-05b taxonomy
+		// stays the caller's surface (the mapping invents no cells).
+		{"h1-grammar-remaining-class", fmt.Errorf("walk: %w: bad name", http1.ErrBadHeader), nil},
+		{"h1-grammar-empty-input", http1.ErrEmpty, nil},
+		{"framing-cl-te", fmt.Errorf("walk: %w: field pair", http1.ErrFramingCLTE),
+			&Verdict{Action: ActionBlock, Rules: []RuleID{RuleIDFramingCLTE}, Phase: PhaseRequestHeaders}},
+		{"framing-dup-cl", fmt.Errorf("walk: %w: second line", http1.ErrFramingDupCL),
+			&Verdict{Action: ActionBlock, Rules: []RuleID{RuleIDFramingDupCL}, Phase: PhaseRequestHeaders}},
+	}
+	for _, tc := range cases {
+		got := ParseGateVerdict(tc.parseErr)
+		if (got == nil) != (tc.want == nil) {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+			continue
+		}
+		if got == nil {
+			continue
+		}
+		if got.Action != tc.want.Action {
+			t.Errorf("%s: action got %q, want %q", tc.name, got.Action, tc.want.Action)
+		}
+		if got.Phase != tc.want.Phase {
+			t.Errorf("%s: phase got %q, want %q", tc.name, got.Phase, tc.want.Phase)
+		}
+		if len(got.Rules) != len(tc.want.Rules) || len(got.Rules) == 0 || got.Rules[0] != tc.want.Rules[0] {
+			t.Errorf("%s: rules got %v, want %v", tc.name, got.Rules, tc.want.Rules)
+		}
+		if !got.Action.Decisive() {
+			t.Errorf("%s: the reject cell must stay decisive (the walk short-circuits pre-CRS)", tc.name)
+		}
 	}
 }

@@ -8,6 +8,7 @@
 package crsdifferential
 
 import (
+	"errors"
 	"fmt"
 	"net/netip"
 	"os"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/trishula-dev/trishula/internal/crs"
 	"github.com/trishula-dev/trishula/internal/engine/http1"
+	"github.com/trishula-dev/trishula/internal/engine/ladder"
 )
 
 // fixedClient is the synthesized corpus peer (RFC 5737 documentation
@@ -98,15 +100,24 @@ func TestCorpusParity(t *testing.T) {
 // the corpus's framing-ambiguity rows reject at the engine parse path
 // BEFORE any CRS evaluation (the conformance verdict record's reject
 // table: verdict row 2, the block verdict at the parse path), and every
-// CRS-parity row parses clean — the grammar-legal class passes to CRS
-// untouched. The corpus is the home of the conformance rows (the AGENTS.md
-// layer map pins test/crs-differential/corpus for them). This gate is a
-// new gate CLASS, not a row of TestCorpusParity: the CRS-parity
-// denominator never scores the reject cells.
+// CRS-parity row either parses clean (the grammar-legal class passes to
+// CRS untouched) or pins its own grammar-anomaly cell (the record's row 1;
+// the CRS corpus carries clean framing by construction). The corpus is
+// the home of the conformance rows (the AGENTS.md layer map pins
+// test/crs-differential/corpus for them). This gate is a new gate CLASS,
+// not a row of TestCorpusParity: the CRS-parity denominator never scores
+// the reject cells.
 func TestCorpusConformanceRejects(t *testing.T) {
 	corpus, err := LoadCorpus()
 	if err != nil {
 		t.Fatalf("LoadCorpus: %v", err)
+	}
+	// The reject table: the parse-layer rule id → the class error (the
+	// conformance verdict record's reject-table classes). A corpus row
+	// naming an unmapped rule id fails the load here, never later.
+	classes := map[string]error{
+		string(ladder.RuleIDFramingCLTE):  http1.ErrFramingCLTE,
+		string(ladder.RuleIDFramingDupCL): http1.ErrFramingDupCL,
 	}
 	rows := 0
 	for _, c := range corpus.Cases {
@@ -117,8 +128,30 @@ func TestCorpusConformanceRejects(t *testing.T) {
 		if c.Expect.RejectRule != "" {
 			rows++
 			t.Run(c.Name, func(t *testing.T) {
-				if _, perr := http1.Parse([]byte(headOf(c))); perr == nil {
-					t.Errorf("case %s: parse accepted the framing-ambiguous head, want the reject at the parse path (the conformance verdict record, row 2)", c.Name)
+				class, ok := classes[c.Expect.RejectRule]
+				if !ok {
+					t.Fatalf("row names an unmapped reject rule id %q (the record's reject table)", c.Expect.RejectRule)
+				}
+				_, perr := http1.Parse([]byte(headOf(c)))
+				if !errors.Is(perr, class) {
+					if perr == nil {
+						t.Errorf("case %s: parse accepted the framing-ambiguous head, want the reject at the parse path (the conformance verdict record, row 2)", c.Name)
+						return
+					}
+					t.Errorf("case %s: got %v, want the class %v (rule id %q)", c.Name, perr, class, c.Expect.RejectRule)
+				}
+				// The reject table's verdict cell: the block verdict with
+				// the row's rule id, resolved pre-CRS at the request
+				// headers phase (decisive: no ladder stage runs after).
+				v := ladder.ParseGateVerdict(perr)
+				if v == nil || v.Action != ladder.ActionBlock || v.Phase != ladder.PhaseRequestHeaders {
+					t.Errorf("case %s: verdict cell got %v, want block at the request-headers phase (the record's reject table)", c.Name, v)
+				}
+				if v != nil && (len(v.Rules) != 1 || v.Rules[0] != ladder.RuleID(c.Expect.RejectRule)) {
+					t.Errorf("case %s: rule id got %v, want [%s] (the record's reject table)", c.Name, v.Rules, c.Expect.RejectRule)
+				}
+				if v != nil && !v.Action.Decisive() {
+					t.Errorf("case %s: the block cell must stay decisive (the walk short-circuits pre-CRS)", c.Name)
 				}
 			})
 			continue
