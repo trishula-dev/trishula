@@ -13,6 +13,7 @@ decided, why, and what it supersedes.
 | [0003](0003-release-naming.md) | Name releases on the calendar rc ladder | accepted |
 | [0004](0004-record-topology.md) | Record topology: decisions, topic records, and spec pointers | accepted |
 | [0005](0005-cue-declarative-layer.md) | Own the structured artefacts in CUE | accepted |
+| [0006](0006-inline-h3-listener.md) | Serve the inline H3 listener on the repo-pinned x/net QUIC transport | accepted |
 
 ## When an ADR is required
 

@@ -20,12 +20,15 @@ package main
 // tlsPQCKeyExchange. Upstream re-encryption rides the
 // --upstream URL scheme through the unchanged proxy transport — the engine
 // opens no second port and grows no new surface. Transport constraints
-// (docs/design/socket-plane-fast-path.md sections 3.1 and 3.2): the listener
-// is TCP/TLS only — no HTTP/3 surface at this altitude (QUIC terminates in
-// userspace and carries no kernel reassembly surface); the engine's HPACK
-// behavior and the fast-path legs are untouched (the kernel plane never
-// depends on a termination path — §9.1, the shield's tls_seen hint records
-// client-side TLS on the wire).
+// (docs/design/socket-plane-fast-path.md sections 3.1 and 3.2): this
+// listener stays TCP/TLS; the kernel plane never depends on a termination
+// path (§9.1 — the shield's tls_seen hint records client-side TLS on the
+// wire). The opt-in QUIC/HTTP-3 listener (TR-203 L3, the --h3-listen flag)
+// is the separate UDP leg in h3.go: the same cert pair, the same L4
+// key-exchange profile, the h3 ALPN, the Alt-Svc advertisement on this
+// listener's responses (the 0-RTT posture = reject; see the record). With
+// the flag off, no UDP surface exists and the default stays the
+// gateway-terminated path (the spec's §6.3 non-goal carve-out).
 
 import (
 	"crypto/tls"

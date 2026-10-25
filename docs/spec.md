@@ -332,7 +332,7 @@ flowchart LR
 
 ### 6.3 Non-goals (the standing boundary)
 
-- **Not a TLS-terminating edge LB** for the whole estate. The gateway owns termination in the reference deployment. Trishula inspects post-termination plaintext. Re-encrypting engine termination is a secondary, feature-gated mode.
+- **Not a TLS-terminating edge LB** for the whole estate. The gateway owns termination in the reference deployment. Trishula inspects post-termination plaintext. Re-encrypting engine termination is a secondary, feature-gated mode. TR-203 L3 carries the mode one opt-in leg: the `--h3-listen` flag opens the inline QUIC/HTTP-3 listener (`cmd/engine/h3.go`; [ADR-0006](adr/0006-inline-h3-listener.md)). The TLS listener's responses advertise the h3 alternative (Alt-Svc). The engine's own ladder serves the h3 requests. The flag off binds no UDP socket; the gateway-terminated path stays the default.
 - **Not a Service Mesh:** east-west policy stays with Cilium/network policy. Trishula is the north-south + steering-path control.
 - **Not a secrets/token vault:** Trishula references JWT claims. It stores nothing and tokenizes nothing.
 - **Not an endpoint-picker:** model-pool selection stays with EPP/the gateway. Trishula proxies transparently and preserves the downstream selection.
@@ -581,6 +581,7 @@ It cannot: walk all headers, parse bodies or evaluate regex. Every fast-path cla
 | Traffic shape | Shield sees | Engine sees |
 |---------------|-------------|-------------|
 | Gateway-terminated (reference) | ciphertext + flow metadata | full plaintext |
+| Engine-terminated client QUIC (the opt-in h3 listener, TR-203 L3) | UDP ciphertext + flow metadata | full plaintext (the engine's own h3 view; the ladder serves the request) |
 | Plaintext north-south HTTP | full plaintext (fast path §9.6) | full plaintext |
 | Re-encrypted engine→pool (secondary mode) | ciphertext | full plaintext (engine terminates the steering hop) |
 | kTLS/app-internal TLS (no proxy hop) | ciphertext + metadata | nothing — documented gap; optional uprobes restore visibility per workload |
@@ -1672,7 +1673,7 @@ spec:
 1. **Coraza-embedded vs from-scratch evaluator** — the recommendation stands: embed Coraza as the reference evaluator (CRS fidelity + WASM extension). Build the compiled fast path + CEL natively. Composition, not fork.
 2. **Vectorscan as the matcher** (Intel Hyperscan closed-source since 5.5[173][189]; Vectorscan OSS, Suricata-backed[172]) — the direction is confirmed. The rc1 cut validated the ARM64 + Go bindings.
 3. **Kernel verdict/ban authority** — userspace decides; the kernel enforces. The recommendation keeps the kernel decision-free permanently. In-kernel rule evaluation fails the auditability test (§13.3) even where the verifier would permit it.
-4. **Re-encryption toward pools** — the default keeps east-west plaintext in-cluster (mesh mTLS is a non-goal). The gateway handles the north edge. The secondary engine-TLS mode stays feature-gated for passthrough estates.
+4. **Re-encryption toward pools** — the default keeps east-west plaintext in-cluster (mesh mTLS is a non-goal). The gateway handles the north edge. The secondary engine-TLS mode stays feature-gated for passthrough estates. The mode's inline HTTP/3 listener (TR-203 L3) runs under the same opt-in gate. It adds no upstream re-encryption.
 5. **Tokenization boundaries** — Trishula sees post-tokenized payloads where an AI gateway sits in path; no token-vault responsibility. Where no AI gateway exists, Trishula's redaction pipeline (§15.4) is the payload-hygiene layer.
 6. **Ban policy defaults per vertical** — the §13.3 constants are sane general defaults. Per-vertical presets (API-first SaaS vs auth-heavy B2C) ship as documented `BanPolicy` recipes in Phase 1+. The presets feed real tuning data back into the defaults.
 7. **Composition re-evaluation (Appendix E watch-list):** the eBPF-native cousins (Synapse, Moat, MicroWAF — E.2) evolve quickly. When a cousin reaches that shape before the post-GA trains, re-run the borrow-vs-build analysis for that layer. No overlapping code ships meanwhile. The differential suite and the CRD compiler are the pieces worth keeping regardless.
@@ -1702,7 +1703,8 @@ A developer-first spec measures **adoption**, not just detection:
 
 ## Appendix A: Roadmap Notes
 
-- **HTTP/3:** the QUIC ingress posture is a tracked evaluation, not a runtime claim. QUIC's UDP transport moves the kernel-side story (XDP sees UDP floods the same way; QUIC packet framing needs userspace analysis). The academy module teaches the why before the product carries the claim.
+- **HTTP/3:** the QUIC ingress posture is a tracked evaluation, not a runtime claim. QUIC's UDP transport moves the kernel-side story (XDP sees UDP floods the same way; QUIC packet framing needs userspace analysis). The academy module teaches the why before the product carries the claim. TR-203 L3 files the evaluation's first live leg at the engine (the dated entry below); this bullet's kernel-side posture stays.
+- **TR-203 L3 — the engine inline H3 listener (opt-in):** the TR-34 TLS mode's responses advertise the h3 alternative and the mode answers h3 requests through its own ladder ([TR-203 #264](https://github.com/trishula-dev/trishula/issues/264), leaf 3). The `--h3-listen` flag opens the QUIC leg (`cmd/engine/h3.go`; [ADR-0006](adr/0006-inline-h3-listener.md)). The leg carries the same TLS cert pair. The QUIC handshake carries the unchanged L4 key-exchange profile. The h1/h2 responses carry the alt-svc advertisement. The flag off = no UDP surface; the default stays gateway-terminated. The 0-RTT posture reads reject: the transport accepts no early data. The listener pins no session-resumption material ([the posture record's dated read](design/h3-ingress-posture.md)).
 - **Post-quantum:** termination at the gateway keeps Trishula cipher-agnostic. The PQ handshake (when negotiated) is the gateway's, on the client↔gateway leg; nothing in the shield or engine changes shape. The curriculum documents hybrid X25519+ML-KEM reality and its fingerprinting effects (client PQ preferences are themselves signal). The product carries no PQ data-plane claims.
 
   **Post-quantum readiness notes (TR-30).** PQ posture is a documentation concern with four concrete, product-side statements:
