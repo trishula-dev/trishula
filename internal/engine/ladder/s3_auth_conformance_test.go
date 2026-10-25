@@ -64,11 +64,11 @@ func TestS3AuthPolicyConformance(t *testing.T) {
 	}
 
 	scopedClaims := map[string]any{
-		"sub":   "u1",
-		"iss":   "https://issuer.example",
-		"aud":   "api",
-		"scope": "read:orders read:chat",
-		"exp":   int64(1900000000),
+		"sub":    "u1",
+		"iss":    "https://issuer.example",
+		"aud":    "api",
+		"scope":  "read:orders read:chat",
+		"exp":    int64(1900000000),
 		"tenant": "acme",
 	}
 	cases := []struct {

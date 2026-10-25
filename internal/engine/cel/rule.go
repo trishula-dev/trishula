@@ -24,6 +24,12 @@ type Request struct {
 	Path        string                `yaml:"path" json:"path"`
 	Query       string                `yaml:"query" json:"query"`
 	RateWindows map[string]RateWindow `yaml:"rate_windows" json:"rate_windows"`
+	// Auth is the request.auth vocabulary (TR-198, issue #240): the
+	// claims-policy view the S3 stage resolves from the precondition
+	// channel (the gateway's verified identity metadata) or the optional
+	// in-engine verifier bundle. The zero value reads verified=false —
+	// the record's gate holds on every wiring miss.
+	Auth Auth `yaml:"auth" json:"auth"`
 }
 
 // RateWindow is one precomputed rate-accounting window value
@@ -49,6 +55,17 @@ type Verdict struct {
 // evalBudget is the default per-evaluation cost budget (the spec's CEL DSL: cost-budgeted
 // from day one). The seed rule's expression is well inside it.
 const evalBudget uint64 = 100_000
+
+// Clock supplies the engine's epoch (seconds) the CEL binding "now" carries.
+// The default = the wall clock; the wiring may pin it (tests, replay).
+// NIL = the binding stays unset and a rule reading `now` eval-errors —
+// the record's rule: CEL never reads a clock, the engine supplies the
+// epoch; a stage without the supply serves no time comparison (the
+// fail-safe, not a silent 0).
+type Clock func() int64
+
+// DefaultClock is the wall-epoch clock the auth-stage wiring installs.
+func DefaultClock() Clock { return nowEpoch }
 
 // Rule is one declarative CEL entry: pack metadata plus a compile-once,
 // eval-many program under a per-evaluation cost budget (the spec's CEL requirements, H-1).
@@ -77,6 +94,19 @@ type Rule struct {
 	env *cel.Env
 	ast *cel.Ast
 	prg cel.Program
+
+	// clock is the engine-supplied epoch the "now" binding reads (the
+	// expiry comparison's engine half; nil = no "now" binding).
+	clock Clock
+}
+
+// SetClock pins the engine-supplied epoch the rule's eval binds to "now"
+// (the record's expiry rule: rules compare request.auth.expiry_epoch
+// against the engine-supplied epoch; CEL never reads a clock). The bind
+// resets the planned program; the next Eval re-plans.
+func (r *Rule) SetClock(c Clock) {
+	r.clock = c
+	r.prg = nil
 }
 
 // SetCostBudget sets the per-evaluation cost budget. H-1: the budget is
@@ -123,16 +153,28 @@ func (r *Rule) Eval(req Request) (Verdict, error) {
 
 // activation builds the eval-time bindings. Top-level `path` is the spec's
 // shorthand for request.path (the spec's own example uses it verbatim).
+// request.auth is the claims vocabulary (TR-198): the engine-sanitised view
+// (empty containers, never nil) so every read over the miss stays clean.
+// The engine-supplied epoch rides `now` only when a clock is pinned (the
+// record's expiry rule); without the pin a time rule stops at an eval
+// error — the fail-safe, never a fabricated 0.  request.auth is kept
+// sanitised so the reads never dereference nil containers.
 func (r *Rule) activation(req Request) map[string]any {
-	return map[string]any{
-		"request": map[string]any{
-			"method":       req.Method,
-			"path":         req.Path,
-			"query":        req.Query,
-			"rate_windows": req.RateWindows,
-		},
-		"path": req.Path,
+	reqView := map[string]any{
+		"method":       req.Method,
+		"path":         req.Path,
+		"query":        req.Query,
+		"rate_windows": req.RateWindows,
+		"auth":         req.Auth.Sanitised(),
 	}
+	activation := map[string]any{
+		"request": reqView,
+		"path":    req.Path,
+	}
+	if r.clock != nil {
+		activation["now"] = r.clock()
+	}
+	return activation
 }
 
 // programForEval compiles once and plans once per budget: the budget is a
@@ -171,6 +213,9 @@ func (r *Rule) compile() error {
 		cel.Variable("request", cel.MapType(cel.StringType, cel.DynType)),
 		// The spec's shorthand: path == request.path.
 		cel.Variable("path", cel.StringType),
+		// The engine-supplied epoch (TR-198's expiry rule): the binding the
+		// wiring pins; a stage without the pin serves no time rule.
+		cel.Variable("now", cel.IntType),
 		// Drop the stdlib RE2 `matches` family entirely (global + member
 		// overloads): the seed's glob semantics must not collide with it,
 		// and the spec's kernel rate-accounting section later gates any RE2 surface behind an input-length
@@ -187,6 +232,10 @@ func (r *Rule) compile() error {
 		// request.rate_windows[..].requests via reflection on the Go
 		// struct rather than proto descriptors.
 		ext.NativeTypes(ext.ParseStructTag("cel"), reflect.TypeOf(RateWindow{})),
+		// TR-198: the request.auth vocabulary rides the same native-type
+		// registration: verified/subject/issuer/audiences/scopes/
+		// expiry_epoch/claims resolve via the struct's cel tags.
+		ext.NativeTypes(ext.ParseStructTag("cel"), reflect.TypeOf(Auth{})),
 	)
 	if err != nil {
 		return fmt.Errorf("cel env: %w", err)
