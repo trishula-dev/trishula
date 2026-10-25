@@ -1,0 +1,28 @@
+name: 20-cel-method-mismatch-forward
+surface: the compiled method compare rejects a frame whose method bytes disagree; the miss forwards with no mark
+skipped: false
+policy:
+  defaultAction: pass
+  rules:
+  - id: DX-LAB-001
+    action: enforce
+    expression: |
+      request.method == "POST" &&
+      path.matches("/v1/chat/*") &&
+      request.query.contains("UNION")
+frame:
+  ethertype: ipv4
+  tcpDoff: 5
+  line: GET /v1/chat/items?q=UNION HTTP/1.1
+  pad: 0
+view:
+  method: GET
+  path: /v1/chat/items
+  query: q=UNION
+  rate5m: 0
+classes:
+- miss
+- cel-compare-row
+expect:
+  outcome: forward
+  marked: false

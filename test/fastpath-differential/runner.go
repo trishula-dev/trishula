@@ -91,6 +91,19 @@ func LoadCorpus() (Corpus, error) {
 		if c.Skipped && c.Skip == "" {
 			return Corpus{}, fmt.Errorf("corpus case %s: a skip must carry its reason", c.Name)
 		}
+		if len(c.Policy.Routes) > 0 && len(c.Policy.Rules) > 0 {
+			return Corpus{}, fmt.Errorf("corpus case %s: routes and rules ride one case (one fast-path class per case)", c.Name)
+		}
+		for _, r := range c.Policy.Rules {
+			if r.ID == "" || strings.TrimSpace(r.Expression) == "" {
+				return Corpus{}, fmt.Errorf("corpus case %s: rule needs id and expression", c.Name)
+			}
+			switch cel.Action(r.Action) {
+			case cel.ActionLog, cel.ActionEnforce, cel.ActionNone, cel.ActionBan:
+			default:
+				return Corpus{}, fmt.Errorf("corpus case %s: rule %q action %q outside the pack vocabulary", c.Name, r.ID, r.Action)
+			}
+		}
 		cases = append(cases, c)
 	}
 	return Corpus{Cases: cases}, nil
@@ -108,9 +121,13 @@ const (
 )
 
 // The route-decision shape classes the corpus inventory covers. The
-// coverage gate counts the materialized cases per class.
+// coverage gate counts the materialized cases per class. The cel-* rows
+// carry the TR-196 CEL-class shapes: the compare leg, the glob legs, the
+// query substring leg, the T2 route (an out-of-class rule carries no
+// kernel row) and the extraction-cap fail-open quirk.
 var ShapeClasses = []string{
 	"drop-row", "forward-row", "miss", "malformed-frame", "size-quirk", "nul-shape",
+	"cel-compare-row", "cel-glob-row", "cel-query-row", "cel-t2-route", "cel-cap-quirk",
 }
 
 // Case is one corpus entry: the policy fixture, the synthetic frame, the
@@ -128,10 +145,25 @@ type Case struct {
 }
 
 // Policy is the corpus policy fixture: the route rows plus the default
-// action (the engine's no-match disposition).
+// action (the engine's no-match disposition). The TR-196 cases (the CEL
+// fast-path class) carry Rules instead of Routes: the two classes never
+// ride one case (one fast-path class per case; the loader rejects the
+// mixed shape, the corpus schema enforces it).
 type Policy struct {
 	DefaultAction string     `json:"defaultAction"`
 	Routes        []RouteRow `json:"routes"`
+	// Rules are the case's own CEL rule pack (the CEL fast-path class,
+	// TR-196 issue #238): the compile resolves them into the bundle
+	// beside the seed pack. Empty = no case pack.
+	Rules []RuleRow `json:"rules,omitempty"`
+}
+
+// RuleRow is one spec CEL rule of the case pack (id, action, expression
+// verbatim; the parse gate validates the envelope).
+type RuleRow struct {
+	ID         string `json:"id"`
+	Action     string `json:"action"`
+	Expression string `json:"expression"`
 }
 
 // RouteRow is one spec.routes[] row (the census `route` class).
@@ -182,7 +214,11 @@ type EngineStream struct {
 // CompileCase builds the engine stream for one case: the corpus policy →
 // internal/operator Compile → Load → routetemplate.Stage. The seed rule
 // pack is a corpus invariant (the v0 surface carries exactly one log rule)
-// and the loader fails closed without it.
+// and the loader fails closed without it. A TR-196 case (the CEL class)
+// carries its own rule pack: the splice rides the seed (the TR-08b
+// contract keeps the seed pack first) and the digests recompute. The CEL
+// fast-path rows land with the compile leg; at this state the staged CEL
+// truth is nil and the class cases carry pinned deltas (RED on record).
 func CompileCase(c Case) (EngineStream, error) {
 	spec := v1alpha1.WAFPolicySpec{
 		DefaultAction: v1alpha1.DefaultAction(c.Policy.DefaultAction),
@@ -205,13 +241,35 @@ func CompileCase(c Case) (EngineStream, error) {
 	if r := b.RulePacks[0].Rules[0]; r.ID != "TR02-001" || r.Action != cel.ActionLog {
 		return EngineStream{}, fmt.Errorf("fastpathdifferential: seed rule %q action %q, want TR02-001/log", r.ID, r.Action)
 	}
+	if len(c.Policy.Rules) > 0 {
+		casePack := cel.RulePack{}
+		for _, r := range c.Policy.Rules {
+			casePack.Rules = append(casePack.Rules, cel.Rule{
+				ID:         r.ID,
+				Action:     cel.Action(r.Action),
+				Expression: r.Expression,
+			})
+		}
+		b.RulePacks = []cel.RulePack{b.RulePacks[0], casePack}
+		digests, err := operator.PackDigests(b.RulePacks)
+		if err != nil {
+			return EngineStream{}, fmt.Errorf("digest case %s: %w", c.Name, err)
+		}
+		b.RulePackDigests = digests
+	}
 	e, err := operator.Load(b)
 	if err != nil {
 		return EngineStream{}, fmt.Errorf("load case %s: %w", c.Name, err)
 	}
 	rows, err := routetemplate.Stage(&b)
 	if err != nil {
-		return EngineStream{}, fmt.Errorf("stage case %s: %w", c.Name, err)
+		if b.FastPath == nil && err == routetemplate.ErrNoKernelLeg {
+			// A rules-only case (the CEL class) carries no route leg;
+			// the route rows read empty and the CEL rows carry the leg.
+			rows = nil
+		} else {
+			return EngineStream{}, fmt.Errorf("stage case %s: %w", c.Name, err)
+		}
 	}
 	return EngineStream{Eval: e, Bundle: &b, Rows: rows, DefaultAction: c.Policy.DefaultAction}, nil
 }
@@ -228,12 +286,15 @@ type EngineDecision struct {
 	Matched bool
 }
 
-// Evaluate resolves the engine stream for one view. The seed rule is
-// CompileCase's corpus invariant, so a match never carries an error at
-// v0; an eval error resolves as the error verdict (fail safe, never a
-// match) and the projection reports the case unresolved.
+// Evaluate resolves the engine stream for one view through Decide (the
+// engine's decisive-outcome resolver): the matched rule's own action sets
+// the disposition (enforce/ban stop the walk; log/none record it), else
+// the policy default applies. The seed rule is CompileCase's corpus
+// invariant, so a seed match never carries an error at v0; an eval error
+// (the fail-closed FailedRule row) resolves as the error verdict (fail
+// safe, never a match) and the projection reports the case unresolved.
 func (s EngineStream) Evaluate(v View) (EngineDecision, error) {
-	verdict, err := s.Eval.Eval(cel.Request{
+	d, err := s.Eval.Decide(cel.Request{
 		Method: v.Method,
 		Path:   v.Path,
 		Query:  v.Query,
@@ -244,8 +305,18 @@ func (s EngineStream) Evaluate(v View) (EngineDecision, error) {
 	if err != nil {
 		return EngineDecision{Action: "error"}, err
 	}
-	if verdict.Match {
-		return EngineDecision{Action: "log", Decisive: false, Matched: true}, nil
+	if d.FailedRule != "" {
+		// The fail-closed row: a rule error never decides a match (the
+		// spec's CEL DSL); the projection reports the case unresolved.
+		return EngineDecision{Action: "error"}, nil
+	}
+	if d.Match {
+		decisive := d.RuleAction == string(cel.ActionEnforce) || d.RuleAction == string(cel.ActionBan)
+		action := "log"
+		if decisive {
+			action = "block"
+		}
+		return EngineDecision{Action: action, Decisive: decisive, Matched: true}, nil
 	}
 	switch v1alpha1.DefaultAction(s.DefaultAction) {
 	case v1alpha1.DefaultActionBlock, v1alpha1.DefaultActionChallenge:

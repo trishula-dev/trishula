@@ -1,0 +1,28 @@
+name: 25-cel-path-cap-suffix-forward
+surface: the target path overruns the 64-byte extract cap; the suffix leg cannot see the true tail and skips (fail-open) while the engine matches
+skipped: false
+policy:
+  defaultAction: pass
+  rules:
+  - id: DX-LAB-005
+    action: enforce
+    expression: |
+      request.method == "POST" &&
+      path.matches("/*zeta")
+frame:
+  ethertype: ipv4
+  tcpDoff: 5
+  line: POST /v1/deep/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazeta HTTP/1.1
+  pad: 0
+view:
+  method: POST
+  path: /v1/deep/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazeta
+  query: ''
+  rate5m: 0
+classes:
+- miss
+- cel-glob-row
+- cel-cap-quirk
+expect:
+  outcome: forward
+  marked: false

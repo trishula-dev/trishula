@@ -1,0 +1,28 @@
+name: 23-cel-query-miss-forward
+surface: the query substring leg misses on a clean query; the fail-open forward carries no mark
+skipped: false
+policy:
+  defaultAction: pass
+  rules:
+  - id: DX-LAB-001
+    action: enforce
+    expression: |
+      request.method == "POST" &&
+      path.matches("/v1/chat/*") &&
+      request.query.contains("UNION")
+frame:
+  ethertype: ipv4
+  tcpDoff: 5
+  line: POST /v1/chat/items?q=NOOP HTTP/1.1
+  pad: 0
+view:
+  method: POST
+  path: /v1/chat/items
+  query: q=NOOP
+  rate5m: 0
+classes:
+- miss
+- cel-query-row
+expect:
+  outcome: forward
+  marked: false

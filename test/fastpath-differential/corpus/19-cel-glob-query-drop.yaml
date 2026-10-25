@@ -1,0 +1,31 @@
+name: 19-cel-glob-query-drop
+surface: the CEL class rule (method compare + path glob + query substring) compiles to one drop row; the frame carries all three legs
+skipped: false
+policy:
+  defaultAction: pass
+  rules:
+  - id: DX-LAB-001
+    action: enforce
+    expression: |
+      request.method == "POST" &&
+      path.matches("/v1/chat/*") &&
+      request.query.contains("UNION")
+frame:
+  ethertype: ipv4
+  tcpDoff: 5
+  line: POST /v1/chat/items?q=UNION HTTP/1.1
+  pad: 0
+view:
+  method: POST
+  path: /v1/chat/items
+  query: q=UNION
+  rate5m: 0
+classes:
+- drop-row
+- cel-compare-row
+- cel-glob-row
+- cel-query-row
+expect:
+  outcome: drop
+  marked: true
+  rowid: 0

@@ -1,0 +1,33 @@
+name: 28-cel-two-rows-second-matches
+surface: two compiled rule rows stage in order; the frame matches the second row (rowid 1)
+skipped: false
+policy:
+  defaultAction: pass
+  rules:
+  - id: DX-LAB-020
+    action: enforce
+    expression: |
+      request.method == "POST" &&
+      path.matches("/v1/chat/*")
+  - id: DX-LAB-021
+    action: enforce
+    expression: |
+      request.method == "POST" &&
+      path.matches("/v2/admin/*")
+frame:
+  ethertype: ipv4
+  tcpDoff: 5
+  line: POST /v2/admin/users?q=1 HTTP/1.1
+  pad: 0
+view:
+  method: POST
+  path: /v2/admin/users
+  query: q=1
+  rate5m: 0
+classes:
+- drop-row
+- cel-glob-row
+expect:
+  outcome: drop
+  marked: true
+  rowid: 1

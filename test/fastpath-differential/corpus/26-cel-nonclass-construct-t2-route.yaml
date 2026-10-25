@@ -1,0 +1,24 @@
+name: 26-cel-nonclass-construct-t2-route
+surface: a rule whose construct (a stdlib string predicate) sits outside the CEL class set carries no kernel row; the engine decides (T2 route, the reported plane split)
+skipped: false
+policy:
+  defaultAction: pass
+  rules:
+  - id: DX-LAB-101
+    action: enforce
+    expression: request.query.startsWith("x=1")
+frame:
+  ethertype: ipv4
+  tcpDoff: 5
+  line: GET /other?x=1&x=2&x=3 HTTP/1.1
+  pad: 0
+view:
+  method: GET
+  path: /other
+  query: x=1&x=2&x=3
+  rate5m: 0
+classes:
+- cel-t2-route
+expect:
+  outcome: forward
+  marked: false
