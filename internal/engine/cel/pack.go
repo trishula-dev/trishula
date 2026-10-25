@@ -25,12 +25,18 @@ const (
 	ActionLog     Action = "log"
 	ActionEnforce Action = "enforce"
 	ActionNone    Action = "none"
+	// ActionBan (TR-195/TR-197, the operator's decision): the operator's manual
+	// ban surface. A matching ban-rule emits a DIRECT would-ban (reason = the
+	// rule id) for the enforcer's kernel write, and the request answers 403
+	// with decision `ban`. Every other path keeps ScoredWindowBan's scored
+	// crossing; a rule never re-implements the algorithm.
+	ActionBan Action = "ban"
 )
 
 // Valid reports whether a is one of the accepted action values.
 func (a Action) Valid() bool {
 	switch a {
-	case ActionLog, ActionEnforce, ActionNone:
+	case ActionLog, ActionEnforce, ActionNone, ActionBan:
 		return true
 	}
 	return false

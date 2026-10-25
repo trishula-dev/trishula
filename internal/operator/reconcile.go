@@ -167,8 +167,12 @@ func (e *Eval) Decide(req cel.Request) (Decision, error) {
 				d.RuleID = rules[j].ID
 				d.RuleName = rules[j].Name
 				d.RuleAction = string(rules[j].Action)
-				if rules[j].Action == cel.ActionEnforce {
+				switch rules[j].Action {
+				case cel.ActionEnforce:
 					d.Action = v1alpha1.DefaultActionBlock // an enforced match stops the request
+				case cel.ActionBan:
+					d.Action = v1alpha1.DefaultActionBlock // a manual ban stops the request
+					d.BanDirect = true                      // the consult emits the direct would-ban
 				}
 				return d, nil
 			}
@@ -188,7 +192,7 @@ type Decision struct {
 	// RuleID/RuleName identify the matched rule (empty on no-match).
 	RuleID   string
 	RuleName string
-	// RuleAction is the matched rule's own action log/enforce/none.
+	// RuleAction is the matched rule's own action log/enforce/none/ban.
 	RuleAction string
 	// Action is the decisive action for the request: the rule's (enforce →
 	// block today), or the policy's defaultAction on no-match.
@@ -196,6 +200,11 @@ type Decision struct {
 	// DefaultAction is the policy's defaultAction (echoed for the log line
 	// when no rule matched).
 	DefaultAction v1alpha1.DefaultAction
+	// BanDirect (TR-195 the operator's decision): the matched rule carried
+	// `action: ban` — the request stops (the block class) AND the engine
+	// emits the direct would-ban record (the enforcer's kernel write).
+	// The response reads the decision as `ban`.
+	BanDirect bool
 	// FailedRule names the first rule whose evaluation errored (fail-safe
 	// bookkeeping, never a match). Eval errors with an enforced rule's
 	// provenance never surface — fail closed at the decision: with any

@@ -16,7 +16,7 @@ package seedpack
 	id:          string
 	name:        string
 	description: string
-	action:      "block" | "challenge" | "log" | "pass"
+	action:      "block" | "challenge" | "log" | "pass" | "ban"
 	expression:  string
 }
 
