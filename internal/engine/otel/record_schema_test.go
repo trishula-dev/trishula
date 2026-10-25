@@ -16,8 +16,8 @@ import (
 // record carries the record's §7 extension: ladder.rows (the walk rows,
 // the §3.4 tokens, the v1 row shape {stage, matched, us}) and
 // shield.stages (the OR over the correlated bitmaps). Absence carries no
-// claim: no correlated event reads NO shield key; a zero bitmap reads an
-// honest 0. M10 keeps trishula.verdict.v1 schema-valid: the record
+// claim: no correlated event reads NO shield key; a zero bitmap reads a
+// value 0. M10 keeps trishula.verdict.v1 schema-valid: the record
 // evolves additively, never by a silent break.
 
 // stampFlowEvent builds a correlated FlowEvent for the pipeline tests
@@ -175,7 +175,7 @@ func TestVerdictRecordCarriesStageStamps(t *testing.T) {
 		}
 	})
 
-	t.Run("a zero bitmap on a present event reads an honest 0", func(t *testing.T) {
+	t.Run("a zero bitmap on a present event reads the value 0", func(t *testing.T) {
 		p := newTestPipeline(t)
 		rid := "req-stamps-3"
 		ctx := ContextWithRequestID(context.Background(), rid)

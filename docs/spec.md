@@ -1138,12 +1138,14 @@ eBPF contributes cheap counters (§9.5); the parser contributes payload features
   "schema": "trishula.verdict.v1",
   "trace_id": "…", "span_id": "…",
   "route": {"host": "api.example.com", "path": "/v1/chat", "policy": "chat-completions"},
+  "shield": {"stages": 127},
   "client": {"ip": "…", "ja4": "…", "asn": 0, "reputation": 0.42, "rate_windows": {"5m": 41}},
   "ladder": [
+    {"stage": "kernel", "matched": [], "us": 1},
     {"stage": "matcher", "matched": ["920480"], "us": 12},
     {"stage": "crs", "matched": ["942100"], "score_delta": 5, "us": 210},
-    {"stage": "bot", "detectors": {"header_order": 0.8}, "consensus": false},
-    {"stage": "rate", "windows": {"5m": {"requests": 41, "limit": 30}}, "breach": true}
+    {"stage": "bots", "detectors": {"header_order": 0.8}, "consensus": false},
+    {"stage": "rate_ban", "windows": {"5m": {"requests": 41, "limit": 30}}, "breach": true}
   ],
   "verdict": {"action": "ban", "tier": "scored-window",
               "reason": "rate breach + CRS critical within findtime",
@@ -1156,6 +1158,25 @@ eBPF contributes cheap counters (§9.5); the parser contributes payload features
 `doc_ref` is the teach-the-web hook (§7.2): every machine verdict points at the human explanation of the mechanism that fired it.
 
 The stage-stamp vocabulary follows the verdict record at [docs/design/stage-stamps-verdict.md](design/stage-stamps-verdict.md).
+
+**The stage-stamp record surface (TR-194, 2026-10-25).** The record evolves
+additively; the schema stays `trishula.verdict.v1`:
+
+- `ladder` rows run in walk order, one row per run stage. The row shape
+  stays `{stage, matched, us}`. The `stage` tokens use the canonical
+  name set: `kernel`, `matcher`, `crs`, `cel`, `schema`, `bots`,
+  `rate_ban`, `ml`. The design record holds the taxonomy (the link
+  above). A skipped stage carries no row. A row never claims a skipped
+  stage.
+- The optional root object `shield` carries the kernel-plane consult
+  bitmap as one integer: `"shield": {"stages": 127}`. Bits 0–6 name the
+  kernel-plane consults (the record's XDP and TC bit tables). A request
+  with no correlated shield event carries no `shield` field. A zero
+  bitmap reads 0 on a present event.
+- The verdict span carries one link per correlated shield event. The
+  link attributes carry the event fields (timestamps, family, ports,
+  TCP flags, payload length, path hint, the stages integer). A link
+  carries a context + attributes, never a span.
 
 ### 15.3 Kernel-plane counters (shield)
 

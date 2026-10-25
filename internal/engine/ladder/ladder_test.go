@@ -330,7 +330,7 @@ func TestParseGateVerdict(t *testing.T) {
 // TR-194 (issue #236): the walk records one row per run stage (the
 // stage-stamps record §4, tier T1): walk order, canonical tokens, the
 // matched rules, and the stage's µs wall. Unwired slots read no row — a
-// skipped stage stays absent (the honesty rule: absent, never passed).
+// skipped stage stays absent (the record's §6 rule: absent, never passed).
 func TestEvaluateTxRecordsStageRows(t *testing.T) {
 	t.Run("rows in walk order with tokens + matched", func(t *testing.T) {
 		s0 := &stubStage{st: StageKernel}

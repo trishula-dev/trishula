@@ -69,7 +69,7 @@ func TestSizeGateExtendedRecords(t *testing.T) {
 	e := NewEngine()
 	rd := newLossyRing(
 		// (a) the landed 200-byte class: decodes; the bitmap reads
-		// all-absent (an honest zero, never an invented read).
+		// all-absent (a zero value, never an invented read).
 		syntheticEvent(synEvent{TS: 1, DstPort: 443, Family: 4, SrcIP4: [4]byte{10, 9, 9, 1}, DstIP4: [4]byte{10, 9, 9, 2}}),
 		// (b) the extended 208-byte class: decodes; the bits ride.
 		stagedEvent(syntheticEvent(synEvent{TS: 2, DstPort: 443, Family: 4,
@@ -92,7 +92,7 @@ func TestSizeGateExtendedRecords(t *testing.T) {
 		t.Fatal("drain: no tx for the shared flow key")
 	}
 	// The tx carries BOTH records: the landed record reads 0; the
-	// extended record reads the bits. Zero stays a VALUE (honest); only
+	// extended record reads the bits. Zero stays a VALUE (the wire's own read); only
 	// record absence reads absent.
 	if len(tx.ShieldEvents) != 2 {
 		t.Fatalf("tx shield events = %d, want 2 (the records ride the correlation carrier)", len(tx.ShieldEvents))
