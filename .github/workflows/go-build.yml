@@ -31,3 +31,8 @@ jobs:
       # (multiline off by default; upstream flips this default in v4).
       - name: Test
         run: go test -tags coraza.rule.no_regex_multiline -p 1 ./...
+      # -v prints the per-row MEASURED/M2 CELL wall lines the README ledger
+      # cites. Without -v the bench runs green but records no walls; the
+      # ledger re-read at each release reads THIS step's rows.
+      - name: Bench walls (verbose)
+        run: go test -tags coraza.rule.no_regex_multiline -p 1 -run TestBudgetVerdictsOnLivePath -v ./test/bench/
