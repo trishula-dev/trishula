@@ -76,14 +76,17 @@ func (r pinnedFeatureReader) Read() ([]rateban.FlowFeatures, []string, error) {
 }
 
 // keyString renders the flow key's source address (the offender key the
-// evidence reads): the network-order v4 bytes in dotted form.
+// evidence reads). The little-endian host read of the network-order
+// address bytes lands high-order-first in the u32; the dotted form takes
+// the bytes low-order first (the TR-31 e2e's 10.31.7.66 = 0x42071F0A
+// readback pins the direction).
 func keyString(k pinnedFlowKey) string {
 	var b [4]byte
 	b[0] = byte(k.Saddr.V4)
 	b[1] = byte(k.Saddr.V4 >> 8)
 	b[2] = byte(k.Saddr.V4 >> 16)
 	b[3] = byte(k.Saddr.V4 >> 24)
-	return fmt.Sprintf("%d.%d.%d.%d", b[3], b[2], b[1], b[0])
+	return fmt.Sprintf("%d.%d.%d.%d", b[0], b[1], b[2], b[3])
 }
 
 // pinnedBansV4 writes the bans_v4 map through the enforcer's interface
@@ -124,6 +127,7 @@ func NewDosRunnerFromPins(flowStatsPin, bansV4Pin string, opts ...RunnerOption) 
 	}
 	rb := rateban.New(monotonicSec(l), sink)
 	enf := NewBanEnforcer(pinnedBansV4{m: bv}, NewJSONLEvidenceSink())
+	enf.SetClock(func() (uint64, error) { return l.NowNS() })
 	return &DosRunner{
 		Feats: pinnedFeatureReader{m: fs},
 		Rb:    rb,
