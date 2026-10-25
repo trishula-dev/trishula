@@ -15,6 +15,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -31,6 +32,7 @@ import (
 	"time"
 
 	"github.com/trishula-dev/trishula/internal/engine/cel"
+	"github.com/trishula-dev/trishula/internal/engine/challenge"
 	"github.com/trishula-dev/trishula/internal/engine/ingest"
 	"github.com/trishula-dev/trishula/internal/engine/ladder"
 	otel "github.com/trishula-dev/trishula/internal/engine/otel"
@@ -54,7 +56,22 @@ type bundleBox struct {
 	// Non-nil = every consult decision emits the correlated verdict triad,
 	// and a ban decision emits the trishula.ban record with the signature.
 	pipe *otel.Pipeline
+	// challenge (TR-197 leaf 2, issue #239): the token surface. Nil = a
+	// challenge verdict refuses deterministically (403, no redirect).
+	challenge *challenge.TokenVerifier
 }
+
+// newChallengeTokenVerifier wraps the package's constructor with a nil
+// passthrough (an empty key = the mechanism off).
+func newChallengeTokenVerifier(key []byte) *challenge.TokenVerifier {
+	if len(key) < 16 {
+		return nil
+	}
+	return challenge.NewVerifier(key)
+}
+
+// challengeHopPath is the redirect hop the token opens.
+const challengeHopPath = "/__trishula/challenge"
 
 func (b *bundleBox) get() *operator.Eval {
 	b.mu.RLock()
@@ -278,6 +295,25 @@ func newEngineHandlerWithBox(upstream, hop string, box *bundleBox) http.Handler 
 			_, _ = w.Write([]byte("ok"))
 			return
 		}
+		if r.URL.Path == challengeHopPath && box.challenge != nil {
+			// TR-197: the redirect hop. A valid one-shot token = 200; a
+			// replayed, expired, tampered or missing token = 403. The
+			// evidence-of-work probe lands with the next leaf (#239).
+			tok := r.URL.Query().Get("token")
+			state, err := box.challenge.Verify(tok, time.Now())
+			if err != nil {
+				log.Printf("engine: challenge hop refused (%v) for %s", err, r.RemoteAddr)
+				w.Header().Set(hopHeader, "engine")
+				http.Error(w, "challenge refused: "+err.Error(), http.StatusForbidden)
+				return
+			}
+			log.Printf("engine: challenge hop verified state=%q from %s", state, r.RemoteAddr)
+			w.Header().Set(hopHeader, "engine")
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("challenge verified; retry the original request"))
+			return
+		}
 		if consult := box.get(); consult != nil {
 			decision, err := consult.Decide(celRequestView(r))
 			if err != nil {
@@ -307,6 +343,31 @@ func newEngineHandlerWithBox(upstream, hop string, box *bundleBox) http.Handler 
 				w.Header().Set("X-Trishula-Rule", decision.RuleID)
 			}
 			log.Printf("engine: decision %s (rule=%s) for %s %s", decisionWord, decision.RuleID, r.Method, r.URL.Path)
+			if decision.Action == "challenge" {
+				// TR-197 (issue #239): the challenge verdict answers 429 +
+				// the signed redirect token when a key is configured; the
+				// mechanism off = the deterministic 403 (no redirect, no
+				// mint — the gate never pretends to challenge).
+				if box.challenge == nil {
+					http.Error(w, "challenge mechanism not configured", http.StatusForbidden)
+					return
+				}
+				if r.URL.Path == challengeHopPath {
+					// the token itself on the hop path: refuse (a minted
+					// hop URL opens the verify handler below; a raw hop
+					// request without a token = the 403).
+					http.Error(w, "challenge token required", http.StatusForbidden)
+					return
+				}
+				tok, merr := box.challenge.Mint(r.RemoteAddr+" "+r.URL.Path, 10*time.Minute, time.Now())
+				if merr != nil {
+					log.Printf("engine: challenge mint error (the request passes unchallenged): %v", merr)
+				} else {
+					w.Header().Set("Location", challengeHopPath+"?token="+tok)
+					http.Error(w, "challenge issued", http.StatusTooManyRequests)
+					return
+				}
+			}
 			if decision.Action == "block" {
 				verb := "blocked"
 				if decision.BanDirect {
@@ -389,6 +450,7 @@ func main() {
 	banEvidence := flag.String("ban-evidence", "", "JSONL path the manual ban-rule would-bans append to (TR-195 leaf 1; empty = the evidence stays in the engine log)")
 	tlsKey := flag.String("tls-key", "", "key PEM for -tls-cert (TR-34 secondary mode)")
 	noOtel := flag.Bool("no-otel", false, "disable the verdict pipeline (the consult signals; TR-195 leaf 4)")
+	challengeKey := flag.String("challenge-key", "", "hex key the challenge tokens sign (TR-197; 32+ hex chars; empty = the challenge verdicts refuse)")
 	flag.Parse()
 	banEvidencePath = *banEvidence
 
@@ -401,6 +463,15 @@ func main() {
 		pipe = p
 	}
 
+	var chanVerifier *challenge.TokenVerifier
+	if *challengeKey != "" {
+		raw, kerr := hex.DecodeString(*challengeKey)
+		if kerr != nil || len(raw) < 16 {
+			log.Fatal("engine: -challenge-key must decode to at least 16 bytes of hex")
+		}
+		chanVerifier = newChallengeTokenVerifier(raw)
+	}
+
 	if *upstream == "" {
 		fmt.Fprintln(os.Stderr, "engine: --upstream is required")
 		flag.Usage()
@@ -408,7 +479,9 @@ func main() {
 	}
 	var handler http.Handler
 	if *bundlePath != "" {
-		handler, _ = newEngineHandlerWithBundlePath(context.Background(), *upstream, *hop, *bundlePath, 200*time.Millisecond, pipe)
+		var bundleBoxOut *bundleBox
+		handler, bundleBoxOut = newEngineHandlerWithBundlePath(context.Background(), *upstream, *hop, *bundlePath, 200*time.Millisecond, pipe)
+		bundleBoxOut.challenge = chanVerifier
 	} else {
 		handler = newEngineHandler(*upstream, *hop)
 	}
