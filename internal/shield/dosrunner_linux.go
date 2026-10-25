@@ -100,7 +100,7 @@ func (p pinnedBansV4) DeleteBansV4(k BansV4Key) error {
 
 // NewDosRunnerFromPins opens the pinned maps and wires the runner core
 // (the features → the cues → the assess → the enforce-records; the
-// evidence rides the same JSONL the enforcer writes).
+// evidence is the same JSONL the enforcer writes).
 func NewDosRunnerFromPins(flowStatsPin, bansV4Pin string, opts ...RunnerOption) (*DosRunner, error) {
 	fs, err := ebpf.LoadPinnedMap(flowStatsPin, nil)
 	if err != nil {

@@ -86,10 +86,9 @@ type Verdict struct {
 	Rules  []RuleID // every contributing rule/stage, walk order
 	Score  int64    // anomaly accumulator input (TR-09 consumes)
 	Phase  Phase    // phase the current action was resolved in
-	// DosSig (TR-195, issue #237): the dynamic signature of a DoS verdict,
-	// verbatim from the cue that crossed (the watertight chain: the map
-	// read, the evidence row and the verdict record cite the same measured
-	// facts). Nil = the verdict carries no signature (the absence carries
-	// no claim).
+	// DosSig (TR-195, issue #237): the dynamic signature of the DoS
+	// verdict that crossed. The values match the cue's measured values:
+	// the map read, the evidence row and the verdict record state the
+	// same facts. Nil = no signature.
 	DosSig *rateban.DoSSig
 }

@@ -59,7 +59,7 @@
 //	  attrs          = the same set as the span (request.id, verdict.*)
 //
 //	DoS signature extension (TR-195, issue #237): when the Verdict carries
-//	a DosSig, verdict.dos.sig rides the span and the log record (the
+//	a DosSig, the span and the log record carry verdict.dos.sig (the
 //	DoSSig JSON: class, segs, bytesPerSeg, spanSec, paths). Flow-keyed
 //	would-bans emit their own record: event `trishula.ban`, WARN, attrs
 //	ban.key / ban.tier / ban.score / ban.reason (+ verdict.dos.sig when
@@ -226,7 +226,7 @@ func (p *Pipeline) Emit(ctx context.Context, tx *ingest.TxContext, v *ladder.Ver
 		return Correlation{}, ErrNoRequestID
 	}
 
-	// request.id rides on every signal (the schema's correlation key — the
+	// request.id is present on every signal (the schema's correlation key — the
 	// test asserts its presence on span, metric datapoint and log record);
 	// the metric slice additionally carries it because verdicts_total's
 	// datapoint set is keyed by request in v0 (see package comment).
@@ -237,7 +237,7 @@ func (p *Pipeline) Emit(ctx context.Context, tx *ingest.TxContext, v *ladder.Ver
 	defer span.End()
 
 	// (b) the metric — one increment with the verdict attributes + the
-	// stitch key (trace.id rides as an attr so the shutdown-time collect
+	// stitch key (trace.id is an attr so the shutdown-time collect
 	// can pin the datapoint's TraceID; the exporter strips it from the
 	// exported KV set and moves it onto the field).
 	metricKVs := metricAttrs(attrs)
@@ -346,8 +346,8 @@ func VerdictAttrs(tx *ingest.TxContext, v *ladder.Verdict) []attribute.KeyValue 
 		attribute.Int64(AttrVerdictScore, score),
 	}
 	if v != nil && v.DosSig != nil {
-		// TR-195: the dynamic signature rides the verdict record verbatim
-		// (the watertight chain; the JSON = the DoSSig schema).
+		// TR-195: the verdict record states the dynamic signature (the
+		// DoSSig JSON).
 		attrs = append(attrs, attribute.String(AttrDosSig, dosSigJSON(*v.DosSig)))
 	}
 	return attrs
@@ -410,7 +410,7 @@ var attrKeyTraceID = attribute.Key(MetricKeyTraceID)
 const SpanBan = "trishula.ban"
 
 // EmitBan publishes one flow-keyed would-ban/ban as a log record (TR-195,
-// issue #237; the operator's watertight-observability decision). The
+// issue #237). The
 // record carries ban.key / ban.tier / ban.score / ban.reason and — when the
 // record holds a signature — verdict.dos.sig, the DoSSig JSON. The verdict
 // record's own surface (Emit) carries the same sig on the request that
