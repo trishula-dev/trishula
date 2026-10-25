@@ -28,6 +28,11 @@ LAB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${LAB_DIR}/.." && pwd)"
 cd "$REPO_DIR"
 
+# the target gate (issue #261): docker OR a reachable kubernetes; then
+# the stages work from there (a local kind/OrbStack, or a cloud context).
+# shellcheck source=lab/prereq.sh
+source "${LAB_DIR}/prereq.sh"
+
 LOCALARCH="$(go env GOARCH 2>/dev/null || echo arm64)"
 # Linux binaries for the lab images: one engine build feeds both setup.sh
 # ( BIN) and apply-effect.sh (ENGINE_BIN); the operator build feeds
