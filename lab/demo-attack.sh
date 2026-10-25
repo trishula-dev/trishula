@@ -25,6 +25,7 @@ NS="tr04d"
 PIN_DIR="/sys/fs/bpf/tr43demo"
 BPFTOOL="${BPFTOOL:-$(command -v bpftool || find /usr/lib/linux-tools -maxdepth 3 -name bpftool 2>/dev/null | head -1)}"
 DEMO_BIN="${DEMO_BIN:-/tmp/attackdemo}"
+ROOT="${TRISHULA_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 TARGET_IP="10.99.0.1"     # listener (host side of the pair)
 ATTACKER_IP="10.99.0.66"  # "attacker" (ns side of the pair)
 PORT="18099"
@@ -42,13 +43,69 @@ trap cleanup EXIT
 
 [ -n "$BPFTOOL" ] || { echo "FAIL: bpftool not found" >&2; exit 1; }
 [ -f /sys/kernel/btf/vmlinux ] || { echo "FAIL: BTF missing" >&2; exit 1; }
-[ -x "$DEMO_BIN" ] || { echo "FAIL: build cmd/attackdemo (linux) + set DEMO_BIN" >&2; exit 1; }
 
 banner "environment (issue #83 evidence protocol)"
 echo "kernel:    $(uname -r)"
 echo "commit:    $(sha)"
 echo "bpftool:   $($BPFTOOL version | head -1)"
 echo "attacker:  $ATTACKER_IP → target: $TARGET_IP:$PORT"
+
+# artifact prep (issue #229): the build path lives in this script — a
+# fresh clone needs no hand-prepped artifacts.
+banner "artifact prep (object copy + demo build + target fallback)"
+
+# the merged TC producer object: the COMMITTED bpf2go output for THIS
+# arch, generated from bpf/flow_tc.c (TR-04d merge, regenerated with every
+# C change). A .o path never carries a go build artifact — copy the
+# committed object.
+case "$(uname -m)" in
+  aarch64) FLOW_OBJ="ingest_flow_arm64_bpfel.o" ;;
+  x86_64)  FLOW_OBJ="ingest_flow_x86_bpfel.o" ;;
+  *) echo "FAIL: no committed bpf2go object for arch $(uname -m)" >&2; exit 1 ;;
+esac
+[ -f "$ROOT/internal/engine/ingest/$FLOW_OBJ" ] || { echo "FAIL: $ROOT/internal/engine/ingest/$FLOW_OBJ missing" >&2; exit 1; }
+cp "$ROOT/internal/engine/ingest/$FLOW_OBJ" /tmp/flow_tc.o
+echo "obj:       /tmp/flow_tc.o ← internal/engine/ingest/$FLOW_OBJ (committed bpf2go output)"
+
+# the demo binary: build in-script when absent (DEMO_BIN keeps the override)
+GO_BIN="${GO:-$(command -v go || true)}"
+[ -n "$GO_BIN" ] || GO_BIN="/usr/local/go/bin/go"
+if [ ! -x "$DEMO_BIN" ]; then
+  [ -x "$GO_BIN" ] || { echo "FAIL: no go toolchain for the cmd/attackdemo build (docs/demo.md has the path)" >&2; exit 1; }
+  (cd "$ROOT" && "$GO_BIN" build -o "$DEMO_BIN" ./cmd/attackdemo) || { echo "FAIL: cmd/attackdemo build" >&2; exit 1; }
+fi
+[ -x "$DEMO_BIN" ] || { echo "FAIL: DEMO_BIN=$DEMO_BIN is not executable" >&2; exit 1; }
+echo "demo bin:  $DEMO_BIN (cmd/attackdemo)"
+
+# the target listener: /tmp/tfo ships in no build. Write the fallback
+# wrapper when the file is absent; it answers the wire legs on the target
+# address. The order-store semantics live demo-side (attackdemo bola). A
+# real /tmp/tfo binary replaces the wrapper and the script uses it as-is.
+if [ ! -x /tmp/tfo ]; then
+  cat > /tmp/tfo <<'TFO'
+#!/usr/bin/env bash
+# demo target fallback (issue #229): /tmp/tfo ships in no build. The
+# wrapper answers every GET with a 200 JSON line — enough for the wire
+# legs (packets on the TC hook, one status answer per request).
+addr="${1:-127.0.0.1:8080}"
+bind="${addr%:*}" port="${addr##*:}"
+exec python3 -u -c '
+import http.server, json, sys
+bind, port = sys.argv[1], int(sys.argv[2])
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({"order": self.path}).encode())
+http.server.HTTPServer((bind, port), H).serve_forever()
+' "$bind" "$port"
+TFO
+  chmod +x /tmp/tfo
+  echo "target:    /tmp/tfo ← in-script fallback (plain HTTP)"
+else
+  echo "target:    /tmp/tfo (pre-existing listener binary)"
+fi
 
 # harness: veth pair + netns + TC filter with the merged flow_tc producer
 banner "harness (under the hood; the app-dev framing of the attack is the curl below)"
@@ -90,12 +147,12 @@ print("maps pinned:", sorted({m["name"] for m in fresh} & {"ban_table", "events"
 PY
 echo "kernel:    flow_tc attached (TC ingress on $IFACE), program + maps pinned"
 
-# the target: TFO-enabled listener serving order objects with an
-# ownership map (tenant-a: 1001,1002 · tenant-b: 2001,2002)
+# the target listener: /tmp/tfo is in place (prep above; a fallback
+# wrapper or a real order-store binary passed by the operator)
 /tmp/tfo "$TARGET_IP:$PORT" > /tmp/demo-srv.log 2>&1 &
 SRV=$!
 sleep 0.8
-echo "target:    /tmp/tfo listening (order store: tenant-a→1001,1002 · tenant-b→2001,2002)"
+echo "target:    /tmp/tfo listening on $TARGET_IP:$PORT (wire-leg server; order semantics demo-side)"
 
 banner "ATTACK A — CRS layer (negative security)"
 printf 'GET /download?file=../../../etc/passwd HTTP/1.1\r\nHost: demo.internal\r\nUser-Agent: attack-demo/1.0\r\n\r\n' > /tmp/traversal.http
