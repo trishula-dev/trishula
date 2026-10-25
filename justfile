@@ -37,6 +37,9 @@ verify:             # the hop-by-hop verification (NGF → engine → echo)
 apply-effect:       # the M9 timed apply→effect scenario only
     bash lab/dx1/apply-effect.sh
 
+auth:               # the S3 vocabulary example (the claims gate; TR-198)
+    bash lab/dx1/dx1-auth.sh
+
 bench:              # the bench rig (run inside a Linux VM; the A/B surface)
     bash lab/bench-vm.sh
 

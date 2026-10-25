@@ -362,7 +362,7 @@ func newEngineHandlerWithBox(upstream, hop string, box *bundleBox) http.Handler 
 			return
 		}
 		if consult := box.get(); consult != nil {
-			decision, err := consult.Decide(celRequestView(r))
+			decision, err := consult.Decide(consultView(consult, r))
 			if err != nil {
 				// Fail safe (the spec's CEL rules): a deciding bundle erroring is state
 				// corruption; the fail-closed answer is deny.
@@ -492,6 +492,30 @@ func celRequestView(r *http.Request) (req cel.Request) {
 	req.Method = r.Method
 	req.Path = r.URL.Path
 	req.Query = r.URL.RawQuery
+	return req
+}
+
+// consultView builds the consult view with the request.auth vocabulary
+// filled (TR-198): the bundle's verifier verifies the authorization
+// header's bearer token at the consult epoch; no bundle, or no verifier
+// bundle, reads verified=false — the record's gate holds on the absence
+// (the header carries the token bytes TO the verifier; it never reads as
+// a claim source).
+func consultView(consult *operator.Eval, r *http.Request) cel.Request {
+	req := celRequestView(r)
+	if consult == nil {
+		return req
+	}
+	if verifier := consult.Verifier(); verifier != nil {
+		token := ""
+		if auth := r.Header.Get("Authorization"); auth != "" {
+			scheme, tok, _ := strings.Cut(auth, " ")
+			if strings.EqualFold(scheme, "Bearer") {
+				token = tok
+			}
+		}
+		req.Auth = cel.ResolveIdentity(nil, verifier, token, time.Now().Unix())
+	}
 	return req
 }
 

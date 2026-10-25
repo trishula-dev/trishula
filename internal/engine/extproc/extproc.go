@@ -9,10 +9,13 @@
 // Stage contract at this slice (the reference-implementation sketch over the v0 consult surface,
 // cmd/engine TR-08c posture):
 //   - request headers: the stage evaluates. The wire header map folds the
-//     the spec's view seed scope (method, path, raw query); the header list and
-//     the gateway-set dynamic metadata are never view material (the spec's request view
-//     grows field-by-field, no speculative fields — the metadata context
-//     is read only for policy lookup and never trusted as a payload fact).
+//     the spec's view seed scope (method, path, raw query); the header list
+//     is never view material (the spec's request view grows field-by-field,
+//     no speculative fields). The gateway-set dynamic metadata context is
+//     read only at ONE place: the claims channel (TR-198) — the gateway's
+//     verified identity metadata the view's request.auth vocabulary
+//     references; every other field stays unread and is never trusted as a
+//     payload fact.
 //     The decisive vocabulary maps to ProcessingResponse: block = local
 //     403 immediate response; ban = local 429 with Retry-After (the
 //     window injects via Options.BanRetryAfter — the ban slice supplies
@@ -42,6 +45,7 @@
 package extproc
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -79,7 +83,19 @@ type Options struct {
 	// response. The value injects; the ban slice (TR-20) supplies the
 	// real window when wired. 0 omits the header.
 	BanRetryAfter time.Duration
+	// AuthClaimsNamespace is the gateway filter-metadata namespace the
+	// claims channel lives under (TR-198): the ONE metadata context field
+	// the view may read. The gateway's verifier (jwt_authn-family or the
+	// operator's own hop) writes the verified identity metadata there with
+	// the identity_json string field — the same channel unit
+	// (cel.VerifiedIdentity) the ladder plumbing carries. Empty selects
+	// the default. Every other namespace, and every other field, stays
+	// unread (metadata is never a payload fact — the read-side rule).
+	AuthClaimsNamespace string
 }
+
+// DefaultAuthClaimsNamespace is the claims channel's default namespace.
+const DefaultAuthClaimsNamespace = "trishula.auth"
 
 // Server implements the ext_proc ExternalProcessor service (the spec's ext_proc variant
 // B). One server serves many streams; one stream carries one HTTP
@@ -88,6 +104,8 @@ type Server struct {
 	extprocv3.UnimplementedExternalProcessorServer
 	eval  Evaluator
 	retry time.Duration
+	// claimsNS is the gateway claims channel's namespace (the wire read).
+	claimsNS string
 }
 
 // New builds the service over eval. opts may be nil (defaults apply).
@@ -95,7 +113,11 @@ func New(eval Evaluator, opts *Options) *Server {
 	if opts == nil {
 		opts = &Options{}
 	}
-	return &Server{eval: eval, retry: opts.BanRetryAfter}
+	ns := opts.AuthClaimsNamespace
+	if ns == "" {
+		ns = DefaultAuthClaimsNamespace
+	}
+	return &Server{eval: eval, retry: opts.BanRetryAfter, claimsNS: ns}
 }
 
 // Process serves one bidirectional stream: ProcessingRequest stages in,
@@ -129,7 +151,7 @@ func (s *Server) Process(stream grpc.BidiStreamingServer[extprocv3.ProcessingReq
 func (s *Server) respond(req *extprocv3.ProcessingRequest) (*extprocv3.ProcessingResponse, error) {
 	switch r := req.Request.(type) {
 	case *extprocv3.ProcessingRequest_RequestHeaders:
-		return s.headersResponse(r.RequestHeaders)
+		return s.headersResponse(r.RequestHeaders, req.GetMetadataContext())
 	default:
 		return stageContinue(req), nil
 	}
@@ -139,8 +161,8 @@ func (s *Server) respond(req *extprocv3.ProcessingRequest) (*extprocv3.Processin
 // and maps the ladder vocabulary to the wire (the reference-implementation sketch): block = local 403,
 // ban = local 429 with the injected Retry-After window, everything else
 // continues with the verdict record in the namespace metadata.
-func (s *Server) headersResponse(h *extprocv3.HttpHeaders) (*extprocv3.ProcessingResponse, error) {
-	v, err := s.eval.Evaluate(viewOf(h))
+func (s *Server) headersResponse(h *extprocv3.HttpHeaders, mc *corev3.Metadata) (*extprocv3.ProcessingResponse, error) {
+	v, err := s.eval.Evaluate(s.viewOf(h, mc))
 	if err != nil {
 		return nil, fmt.Errorf("evaluator: %w", err)
 	}
@@ -265,10 +287,18 @@ func continueCommon() *extprocv3.CommonResponse {
 // method from the method pseudo header, path and query from the path
 // pseudo header, split at the first question mark. Raw-value encoding
 // reads over the string form (the data plane encodes wire values in
-// raw_value). The regular header fields and the gateway-set metadata
-// context stay out at this slice (the spec's view grows field-by-field, no
-// speculative fields; the metadata context is never a payload fact).
-func viewOf(h *extprocv3.HttpHeaders) (view cel.Request) {
+// raw_value). The regular header fields stay out at this slice (the spec's
+// view grows field-by-field, no speculative fields).
+//
+// The ONE metadata context read is the claims channel (TR-198): the
+// claims namespace's identity_json string field carries the gateway's
+// verified identity metadata (the same JSON unit the ladder plumbing
+// attaches) and stands in the view's request.auth vocabulary. Verified
+// identity metadata is not a payload fact: the gateway's verifier produced
+// it; the engine references it and stores nothing. Every other namespace
+// and every other field stays unread; an unusable channel reads the miss
+// (verified=false), never a fabricated identity.
+func (s *Server) viewOf(h *extprocv3.HttpHeaders, mc *corev3.Metadata) (view cel.Request) {
 	for _, hv := range h.GetHeaders().GetHeaders() {
 		name, value := hv.GetKey(), hv.GetValue()
 		if raw := hv.GetRawValue(); len(raw) > 0 {
@@ -281,7 +311,31 @@ func viewOf(h *extprocv3.HttpHeaders) (view cel.Request) {
 			view.Path, view.Query, _ = strings.Cut(value, "?")
 		}
 	}
+	if vi := s.claimsChannel(mc); vi != nil {
+		view.Auth = vi.AuthView().Sanitised()
+	} else {
+		view.Auth = cel.Auth{}.Sanitised()
+	}
 	return view
+}
+
+// claimsChannel reads the gateway's verified identity metadata out of the
+// headers stage's metadata context (nil = the miss: no claims namespace,
+// no identity field, unusable bytes). The read touches ONLY the claims
+// namespace's identity_json field and only decodes the channel unit —
+// the identity header list and every other metadata field never join the
+// view (the payload-fact rule).
+func (s *Server) claimsChannel(mc *corev3.Metadata) *cel.VerifiedIdentity {
+	structs := mc.GetFilterMetadata()
+	filter, ok := structs[s.claimsNS]
+	if !ok || filter.GetFields()["identity_json"] == nil {
+		return nil
+	}
+	var vi cel.VerifiedIdentity
+	if err := json.Unmarshal([]byte(filter.GetFields()["identity_json"].GetStringValue()), &vi); err != nil {
+		return nil
+	}
+	return &vi
 }
 
 // metadataOf builds one response's dynamic metadata write: the verdict,
