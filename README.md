@@ -43,10 +43,10 @@ Each slice landed as a watched-RED then GREEN leaf PR per [AGENTS.md](AGENTS.md)
 ## Measured performance
 
 Budgets read off [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage).
-Wall numbers read from the last recorded per-row CI run:
+Wall numbers read from the last recorded per-row CI run. The run:
 [40147859961](https://github.com/trishula-dev/trishula/actions/runs/40147859961/job/121029622516),
-head `05affd9`, the 2026.01-rc3 content with the verbose bench step (#230). The
-numbers re-read at each release.
+head `05affd9`, the rc3 content with the verbose bench step (#230).
+The numbers re-read at each release.
 
 | Cell | Budget p99 | Last build p99 | Verdict |
 |---|---|---|---|
