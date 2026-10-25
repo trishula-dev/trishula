@@ -3,15 +3,20 @@
 A hermetic differential harness that pins the **crs-reference** surface (the
 committed SecLang engine slice evaluated by `internal/crs`, the
 embedded-Coraza wrapper) against a **go-ftw-SHAPE corpus**: 20 synthesized
-requests, each with an expected per-phase rule-id set. A single gate asserts
-corpus-vs-reference equality per case and reports parity X/N.
+requests, each with an expected per-phase rule-id set. The corpus also
+carries the 3 TR-199 conformance rows (the illegal-request class). Two gate
+classes assert two surfaces: the CRS-parity gate asserts the
+corpus-vs-reference equality per case and reports parity X/N; the pre-CRS
+conformance gate asserts the parse-path reject cells.
 
 - Branch: `feat/tr07b-crs-differential` (child of TR-07 / TR-07a's
   `internal/crs` wrapper)
 - Gate: `go test ./test/crs-differential/ -run TestCorpusParity -count=1`
-- Pinned result at the committed sha: **parity 19/19 ran (1 skipped) = 100%**
-  (target ≥ 90%); RED evidence (16/19, 3 deltas) is preserved in the RED
-  commit body.
+- Pinned result at the committed sha: **parity 19/19 ran (3 conformance
+  rows; 1 skipped) = 100%** (target ≥ 90%); RED evidence (16/19, 3
+  deltas) is preserved in the RED commit body. The conformance gate:
+  `go test ./test/crs-differential/ -run TestCorpusConformanceRejects
+  -count=1`.
 - Hermetic: the corpus (`corpus/*.yaml`) and the entire engine slice
   (`testdata/seclang/**`) are `go:embed`ed — no network, no cluster, no
   external rulepack at test time. All CRS content is verbatim from the CRS
@@ -29,7 +34,8 @@ test/crs-differential/
   runner.go              corpus loader (strict schema) + reference loader
                          (stages embeds to disk so Include paths resolve)
   mirror.go              engine-mirror projection + per-case diff
-  runner_test.go         the parity gate + surface-coverage pin
+  runner_test.go         the gates: the CRS parity gate, the surface pin,
+                         the TR-199 pre-CRS conformance cells
 ```
 
 ## What the two stages evaluate
@@ -67,6 +73,8 @@ expect:                                # all optional (clean-request shape)
   p1_941010: true                          # 941010 demotion-evidence flag
   phase2_seed: [942180, ...]               # seeded attack ids
   phase2_offseed: [942130, 942432]         # observed off-seed ids (this table)
+  reject_rule: "http1:framing-cl-te"       # the TR-199 pre-CRS cell (conformance
+                                           # rows only; CRS never evaluates them)
 ```
 
 Schema notes:
@@ -74,6 +82,19 @@ Schema notes:
 - **Match-id SETS, order-free.** Phase sets are compared set-wise
   (`uniqueSorted`, dedup); the reference and mirror match-list ORDER must
   never be relied on (see the binary-vs-inprocess delta below for why).
+- **`raw_head` (optional; TR-199 conformance rows):** the exact h1 request
+  head the engine parse path reads. Duplicate field-NAMED CL lines cannot
+  live in the headers map (duplicates collapse), so the framing rows pin
+  raw wire bytes. Absent on the CRS rows: `headOf()` synthesizes the head
+  (request line + sorted fields + blank line) for the parse-path checks.
+- **`expect.reject_rule` (optional; TR-199):** the pre-CRS conformance cell.
+  The pre-CRS gate maps the rule id to the framing-class error, asserts the
+  reject, and asserts the verdict cell (the `block` verdict + the rule id,
+  decisive). The CRS-ref walk never runs on a reject row.
+- **`expect.parse_reject` (optional):** the row's CRS shape carries an h1
+  grammar anomaly on the wire (case 17: the raw-space request target). The
+  pre-CRS gate pins the grammar-class reject for that row too; the CRS
+  parity cell above stays the rule-semantics pin.
 - **Gate equality per runnable case** (`DiffMirror`):
   1. `expect.phase1_pinned` == the reference phase-1 noise subset
      ({900000, 900110, 900990} ∩ observed);
@@ -85,7 +106,7 @@ Schema notes:
   separately in the report.
 - An empty `expect:` is the clean-request shape (echo ids still pinned).
 
-### Inventory (20 cases)
+### Inventory (23 rows: 20 CRS-parity + 3 conformance)
 
 | surface | cases |
 |---|---|
@@ -98,8 +119,59 @@ Schema notes:
 | scanner UA | 14 |
 | host-ip request | 15 |
 | JSON-body SQLi | 16 (SKIPPED: the ARGS-JSON gap, below) |
-| mixed heavy attack (all surfaces) | 17 |
+| mixed heavy attack (all surfaces) | 17 (parse-reject pin: the raw-space target) |
 | param-name pollution probe | 18 |
+| framing ambiguity: CL+TE together (TR-199; raw_head) | 30 |
+| framing ambiguity: duplicate CL values (TR-199; raw_head) | 31, 32 |
+
+## TR-199 — the h1 conformance rows (the framing classes)
+
+The pre-CRS conformance gate (`TestCorpusConformanceRejects`) pins the
+framing classes. The engine reject = the parse path's `block` verdict with
+the class rule id. The reject resolves before any CRS evaluation. The
+conformance
+[record](https://github.com/trishula-dev/trishula/blob/main/docs/design/protocol-conformance-verdict.md)
+files the classes: verdict table row 2; the mapping table row (framing
+ambiguity).
+
+The conformance rows enter CRS never. The probe shape below reads the
+collapsed headers map. A CRS-only deployment evaluates that map.
+
+| row | engine surface | CRS-only surface (the delta) |
+|---|---|---|
+| 30-framing-cl-te | `block` at parse, rule `http1:framing-cl-te` | no 921-class match; noise echoes (900000/900110/900990) + the 990002 marker only; `interrupted=false` |
+| 31-framing-dup-cl | `block` at parse, rule `http1:framing-dup-cl` (6 then 11) | the map shape carries no CL lines at all; plain-`/` noise + 941010 only |
+| 32-framing-dup-cl-equal | `block` at parse, rule `http1:framing-dup-cl` (equal values; the strict posture over the RFC MAY freedom) | same collapse as 31 |
+
+The two deltas carry one fact each. A CRS-only deployment forwards the
+CL+TE head: no vendored rule speaks the smuggling class. A map-shaped
+surface never sees a duplicate field line: the collapse drops the class
+upstream of every rule. The parse-layer counters are the only altitude the
+class exists on. The record states the same boundary: grammar checks are
+parse-layer material, never rule material.
+
+The CRS-only probe output, verbatim:
+
+```text
+probe 30-framing-cl-te: interrupted=false phase-ids=[p1:990002 p1:900000 p1:900110 p1:900990]
+probe 31-framing-dup-cl: interrupted=false phase-ids=[p1:900000 p1:900110 p1:900990 p1:941010]
+probe 32-framing-dup-cl-equal: interrupted=false phase-ids=[p1:900000 p1:900110 p1:900990 p1:941010]
+```
+
+The probe ran in-process; deterministic; 2 runs stable. The scratch probe
+deleted after the run. The pinned gate reads the reject cells, not this
+probe.
+
+Gate run:
+
+```
+go test ./test/crs-differential/ -run TestCorpusConformanceRejects -count=1
+# the framing cells green at the GREEN sha (23 rows: 3 rejects + the parse cells)
+```
+
+Close discipline stays at the gateway. The engine owns the reject verdict.
+The connection close on a rejected read never claims an engine surface.
+The parse path reads heads only (the F2 fact).
 
 ## Delta table (engine-mirror noise + demotions + observed off-seed ids)
 
@@ -183,7 +255,10 @@ for the S2 slot slice.
 
 ```
 go test ./test/crs-differential/ -run TestCorpusParity -count=1
-# parity 19/19 ran (1 skipped; target >= 90%) — zero unexplained deltas = gate
+# parity 19/19 ran (3 conformance rows; 1 skipped; target >= 90%) — zero unexplained deltas = gate
+
+go test ./test/crs-differential/ -run TestCorpusConformanceRejects -count=1
+# the TR-199 framing cells: 3 reject rows green; the CRS rows' parse cells green
 
 go test ./test/crs-differential/ -run TestCorpusCoversSurfaces -count=1
 # pins the surface inventory: qs>=10, ua>=3, referer>=1, cookie>=1, form>=4, jsonSkip==1

@@ -96,6 +96,17 @@ func TestMalformedShapes(t *testing.T) {
 		{"header-name-empty", "GET /x HTTP/1.1\r\n: v\r\n\r\n", ErrBadHeader},
 		{"too-many-headers", "GET /x HTTP/1.1\r\n" + manyHeaders(101) + "\r\n", ErrTooManyHeaders},
 		{"header-block-too-big", "GET /x HTTP/1.1\r\n" + manyBigHeaders(18*1024) + "\r\n", ErrHeaderTooBig},
+		// --- the framing-ambiguity classes (TR-199; framing.go) ---------
+		{"framing-cl-te", "POST /x HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n", ErrFramingCLTE},
+		{"framing-te-then-cl", "POST /x HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\nContent-Length: 5\r\n\r\n", ErrFramingCLTE},
+		{"framing-cl-te-mixed-case-names", "POST /x HTTP/1.1\r\nHost: h\r\ncontent-Length: 5\r\nTRANSFER-Encoding: chunked\r\n\r\n", ErrFramingCLTE},
+		{"framing-dup-cl-differing-values", "GET /x HTTP/1.1\r\nHost: h\r\nContent-Length: 6\r\nContent-Length: 11\r\n\r\n", ErrFramingDupCL},
+		{"framing-dup-cl-equal-values", "GET /x HTTP/1.1\r\nHost: h\r\nContent-Length: 6\r\nContent-Length: 6\r\n\r\n", ErrFramingDupCL},
+		{"framing-dup-cl-mixed-case-names", "GET /x HTTP/1.1\r\nHost: h\r\ncontent-length: 6\r\nContent-Length: 11\r\n\r\n", ErrFramingDupCL},
+		{"framing-dup-cl-then-te-still-dup-class", "GET /x HTTP/1.1\r\nHost: h\r\nContent-Length: 6\r\nContent-Length: 6\r\nTransfer-Encoding: chunked\r\n\r\n", ErrFramingDupCL},
+		{"legal-te-only-chunked", "POST /x HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n", nil},
+		{"legal-cl-only", "POST /x HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\n\r\n", nil},
+		{"legal-te-cl-others-no-conflict", "GET /x HTTP/1.1\r\nHost: h\r\nContent-Type: text/plain\r\n\r\n", nil},
 	}
 	for _, tc := range cases {
 		r, err := Parse([]byte(tc.wire))

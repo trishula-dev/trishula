@@ -15,3 +15,8 @@ expect:
   phase2_seed: [942190, 942360, 942361, 942362, 942480, 941100, 941110, 941160, 941320]
   # observed off-seed attack ids (live probe evidence, README table).
   phase2_offseed: [941390, 942131, 942200, 942260, 942270, 942431, 942432]
+  # parse-path cell (TR-199 gate): the CRS-parity shape carries an h1
+  # grammar anomaly on the wire — the raw-space request target (the
+  # record's row-1 grammar class; the engine parse path rejects before
+  # the CRS walk). The CRS parity cell above stays the rule-semantics pin.
+  parse_reject: true
