@@ -95,7 +95,10 @@ func Drain(m *TxManager, rd RecordSource, opts ...DrainOption) DrainResult {
 			}
 			continue
 		}
-		_ = m.NoteFlow(ev.Key())
+		// TR-194: the decoded record joins the tx (the correlation
+		// carrier; bounded by ShieldEventsCap).
+		tx := m.NoteFlow(ev.Key())
+		tx.pushShieldEvent(ev)
 		res.Decoded++
 		if st != nil {
 			atomic.AddUint64(&st.DecodedTotal, 1)
