@@ -1,3 +1,5 @@
+//go:build linux
+
 // cmd/shield — TR-195 leaf 2 (issue #237): the DoS runner host. The
 // shield-side process that reads the flow-features projection and drives
 // the automatic ban path: the pinned flow_stats map → the cues (the
@@ -20,6 +22,8 @@ import (
 	"log"
 	"time"
 
+	otel "github.com/trishula-dev/trishula/internal/engine/otel"
+	rateban "github.com/trishula-dev/trishula/internal/engine/rateban"
 	"github.com/trishula-dev/trishula/internal/shield"
 )
 
@@ -27,21 +31,37 @@ func main() {
 	flowStats := flag.String("flow-stats", "", "pinned flow_stats map (required)")
 	bansV4 := flag.String("bans-v4", "", "pinned bans_v4 map (required)")
 	interval := flag.Duration("interval", 5*time.Second, "sweep interval")
-	flag.Parse()
 
 	if *flowStats == "" || *bansV4 == "" {
 		log.Fatal("shield: --flow-stats and --bans-v4 are required (the pinned map paths)")
+	}
+
+	// The verdict pipeline: the would-bans ride the trishula.ban log
+	// record (the operator's watertight-observability receipt). The
+	// in-process exporter = the v0 surface; the collector cutover rides
+	// TR-08c/TR-23 and reuses the schema verbatim. -no-otel turns the
+	// pipeline off (the runner keeps the host-log receipts).
+	pipes := flag.Bool("no-otel", false, "disable the verdict pipeline (the ban log records)")
+	flag.Parse()
+
+	sinks := []rateban.EvidenceSink{}
+	if !*pipes {
+		p, err := otel.New(otel.Config{ServiceName: "trishula-shield"})
+		if err != nil {
+			log.Fatalf("shield: verdict pipeline: %v", err)
+		}
+		sinks = append(sinks, otel.NewBanLogSink(p))
 	}
 
 	// The adapters open the pinned maps in the linux surface
 	// (internal/shield/dosrunner_linux.go); the core loop is kernel-free
 	// (the Sweep cycle: the features → the cues → the assess → the
 	// enforce-records; one sweep = one cycle; the errors log and continue).
-	runner, err := shield.NewDosRunnerFromPins(*flowStats, *bansV4)
+	runner, err := shield.NewDosRunnerFromPins(*flowStats, *bansV4, shield.WithBanSink(rateban.NewFanoutSink(sinks...)))
 	if err != nil {
 		log.Fatalf("shield: %v", err)
 	}
-	log.Printf("shield: the DoS runner up (flow_stats=%s bans_v4=%s interval=%s)", *flowStats, *bansV4, *interval)
+	log.Printf("shield: the DoS runner up (flow_stats=%s bans_v4=%s interval=%s otel=%v)", *flowStats, *bansV4, *interval, !*pipes)
 	for {
 		recs, err := runner.Sweep()
 		if err != nil {
