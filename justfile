@@ -40,6 +40,9 @@ apply-effect:       # the M9 timed apply→effect scenario only
 auth:               # the S3 vocabulary example (the claims gate; TR-198)
     bash lab/dx1/dx1-auth.sh
 
+h3-ingress:         # the QUIC-ingress topology read (TR-203 L2: P4 advisory + the P8 h3 hop)
+    bash lab/dx1/h3-ingress-read.sh
+
 bench:              # the bench rig (run inside a Linux VM; the A/B surface)
     bash lab/bench-vm.sh
 
