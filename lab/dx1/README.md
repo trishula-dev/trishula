@@ -170,6 +170,32 @@ the lab carries no `flow_stats` reader. No DX1 transcript is claimed for
 the detector path; the kernel-gated gate above is the recorded evidence
 (the AGENTS.md gate table carries the row).
 
+## TR-203 L4 — the lab terminator's PQC termination leg
+
+```bash
+bash lab/dx1/pqc-termination-read.sh
+```
+
+The `https` listener row sits in the committed `dx1-gateway.yaml`
+(`tls.mode: Terminate`) and names the `dx1-lab-tls` Secret. setup.sh
+creates that Secret. The row = the lab terminator's TLS surface. The read
+prints the gateway conditions, the Service's https NodePort row and the
+handshake transcript:
+
+- **the transcript row** — `Negotiated TLS1.3 group: X25519MLKEM768`.
+  The NGINX dataplane negotiates the hybrid with the stack default. The
+  2.7.2 image = OpenSSL 3.5.8.
+- **the fallback finding** — the 1.x single-pod dataplane image (1.6.2,
+  the OrbStack lane) runs OpenSSL 3.3.2. The read then negotiates
+  `X25519` and files the classical finding. The read never reports a
+  classical group as a pass.
+- **the engine listener's own transcript** — the profile test
+  (`docs/deploy/tls-termination-pqc.md`, section 5).
+
+Record: [docs/deploy/tls-termination-pqc.md](../../docs/deploy/tls-termination-pqc.md)
+(the TR-203 L4 posture: the surfaces, the chart census, the cloud-LB posture
+row).
+
 ## Notes
 
 - The NGF chart ships from the NGINX OCI registry

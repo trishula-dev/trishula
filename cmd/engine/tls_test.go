@@ -168,6 +168,32 @@ func TestTLSTerminationProfileSpeaksTheHybrid(t *testing.T) {
 			t.Fatalf("negotiated key exchange = %v, want the classical X25519 fallback", state.CurveID)
 		}
 	})
+
+	// Env boundary row (the recorded GODEBUG=tlsmlkem=0 execution pastes
+	// in the lane's PR): the pinned client+listener pair still asserts the
+	// hybrid, and the env run fails the row — the operator env strips the
+	// hybrid even under an explicit pin. The env-free run passes.
+	t.Run("a-pinned-client-negotiates-the-hybrid", func(t *testing.T) {
+		up := hostUpstream(t)
+		ln, err := engineListener("127.0.0.1:0", certPath, keyPath)
+		if err != nil {
+			t.Fatalf("engineListener: %v", err)
+		}
+		defer ln.Close()
+		serveEngineListener(t, ln, newEngineHandler(up.URL, "engine"))
+
+		client := tlsCurveClient(tls.X25519MLKEM768, tls.X25519)
+		resp, err := client.Get("https://" + ln.Addr().String() + "/healthz")
+		if err != nil {
+			t.Fatalf("pinned handshake: %v", err)
+		}
+		resp.Body.Close()
+		state := resp.TLS
+		t.Logf("negotiated key exchange: %s", state.CurveID)
+		if state.CurveID != tls.X25519MLKEM768 {
+			t.Fatalf("negotiated key exchange = %v, want the pinned hybrid", state.CurveID)
+		}
+	})
 }
 
 // hostUpstream answers the plain-HTTP pool shape the engine forwards to

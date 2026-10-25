@@ -13,7 +13,11 @@ package main
 // listener terminates TLS and the unchanged host (the TR-06 proxy, the
 // TR-08c consult, the same decision surfaces) serves behind it.
 //
-// Posture: the listener floor pins TLS 1.2. Upstream re-encryption rides the
+// Posture: the listener floor pins TLS 1.2. The key-exchange list = the
+// TR-203 L4 profile (issue #264, decision 4): the listener accepts the
+// hybrid X25519 + ML-KEM key exchange (X25519MLKEM768, group 0x11EC) and
+// keeps X25519 as the fallback row. The set is a repo decision; see
+// tlsPQCKeyExchange. Upstream re-encryption rides the
 // --upstream URL scheme through the unchanged proxy transport — the engine
 // opens no second port and grows no new surface. Transport constraints
 // (docs/design/socket-plane-fast-path.md sections 3.1 and 3.2): the listener
@@ -34,6 +38,18 @@ import (
 // without cert never opens a listener.
 var errTLSPair = errors.New("engine: TLS termination needs both --tls-cert and --tls-key")
 
+// tlsPQCKeyExchange carries the TR-203 L4 termination profile for the
+// listener: the hybrid X25519 + ML-KEM key exchange (X25519MLKEM768, group
+// 0x11EC) plus X25519 as the classical fallback row. The list is a repo
+// decision, not the toolchain default: crypto/tls carries the hybrid from
+// Go 1.24 (the go.mod toolchain is 1.26.0), and the pin keeps the offer set
+// stable across Go releases. Boundary (measured, go1.26.0): the operator
+// GODEBUG=tlsmlkem=0 process env strips the hybrid handshake even under an
+// explicit CurvePreferences pin — the profile never defeats that env. The
+// repo ships no ML-KEM of its own. The PQ signatures (the CA and the cert
+// chain) stay on the 2026.02/03 calendar lanes.
+var tlsPQCKeyExchange = []tls.CurveID{tls.X25519MLKEM768, tls.X25519}
+
 // tlsTerminationSpec resolves the gate from the flag pair. Both empty = nil
 // (the default: gateway-owned termination, the plaintext listener). Both set
 // = the secondary mode's listener spec with the TLS 1.2 floor. Exactly one =
@@ -45,7 +61,7 @@ func tlsTerminationSpec(certFile, keyFile string) (*tls.Config, error) {
 	case certFile == "" || keyFile == "":
 		return nil, errTLSPair
 	}
-	return &tls.Config{MinVersion: tls.VersionTLS12}, nil
+	return &tls.Config{MinVersion: tls.VersionTLS12, CurvePreferences: tlsPQCKeyExchange}, nil
 }
 
 // engineListener builds the engine's listening socket per the gate spec.
