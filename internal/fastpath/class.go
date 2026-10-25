@@ -30,7 +30,7 @@
 // contract holds: tracked evaluation, not a v1 commitment. The design
 // record: docs/design/socket-plane/4-compiler-census.md.
 //
-// [§9.9]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-tracked-evaluation-not-a-v1-commitment
+// [§9.9]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-a-tracked-evaluation-no-runtime-commitment
 package fastpath
 
 // Class is one compile class a WAFPolicy field lands in.
