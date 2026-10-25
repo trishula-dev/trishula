@@ -31,7 +31,7 @@ func TestEngineBundlePathHotReload(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	handlerEngine, box := newEngineHandlerWithBundlePath(context.Background(), upstream.URL, "engine", path, 20*time.Millisecond)
+	handlerEngine, box := newEngineHandlerWithBundlePath(context.Background(), upstream.URL, "engine", path, 20*time.Millisecond, nil)
 	host := httptest.NewServer(handlerEngine)
 	defer host.Close()
 

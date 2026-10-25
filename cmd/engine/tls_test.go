@@ -251,7 +251,7 @@ func TestTLSTerminationKeepsTheConsultPath(t *testing.T) {
 	certPath, keyPath := writeTLSPair(t)
 	up := hostUpstream(t)
 	bundle := compileLabBundle(t)
-	handler, err := newEngineHandlerWithBundle(up.URL, "engine", bundle)
+	handler, err := newEngineHandlerWithBundle(up.URL, "engine", bundle, nil)
 	if err != nil {
 		t.Fatalf("build engine handler: %v", err)
 	}

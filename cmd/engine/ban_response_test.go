@@ -70,7 +70,7 @@ func TestEngineBanRuleRespondsBandWritesEvidence(t *testing.T) {
 	banEvidencePath = evidencePath
 	defer func() { banEvidencePath = "" }()
 
-	eng, err := newEngineHandlerWithBundle(upstream.URL, "engine", compileBanBundle(t))
+	eng, err := newEngineHandlerWithBundle(upstream.URL, "engine", compileBanBundle(t), nil)
 	if err != nil {
 		t.Fatalf("engine handler: %v", err)
 	}
