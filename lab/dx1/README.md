@@ -222,6 +222,69 @@ Record: [docs/deploy/tls-termination-pqc.md](../../docs/deploy/tls-termination-p
 (the TR-203 L4 posture: the surfaces, the chart census, the cloud-LB posture
 row).
 
+## TR-203 L2 — the QUIC-ingress leg (the h3 listener + the probes)
+
+```bash
+bash lab/dx1/h3-ingress-read.sh          # P4 (the advisory h3spec pass) + the h3 hop of P8
+go test ./test/dosrunner/ -run TestUDPBanIdentityRows -v   # P7, in-VM (root)
+```
+
+The topology extends the DX1 lab with the h3 client leg. The record:
+[../../docs/design/h3-ingress-posture.md](../../docs/design/h3-ingress-posture.md)
+is the design record; its plan, step 2, is this leg.
+
+```
+h3 client (QUIC) ──UDP:443──> dx1-terminator (the h3 terminator leg)   the leg 1 hop
+        ──h1 upstream──> dx1-engine Service (cmd/engine)               the leg 2 hop
+        ──h1──> dx1-echo Service (the demo pool)                       the leg 3 hop
+```
+
+The rows the setup applies:
+
+| Leg | Surface | The nodePort rows |
+| --- | --- | --- |
+| the QUIC client hop | `dx1-terminator` pod (the 2.7.2 dataplane image's nginx; the build carries `--with-http_v3_module`) | UDP 443 → `31440` |
+| the same listener's TCP side | the same pod (`listen 443 ssl`) | TCP 443 → `31441` |
+| the upstream hop | `dx1-engine` (the h1 proxy hop, unchanged) | — |
+
+The read's stages:
+
+1. **the topology leg** — the Service's `quic` UDP row + the fixture
+   Secret + the terminator pod's Running row.
+2. **probe P4, the advisory h3spec pass** — the pinned `h3spec`
+   release binary (v0.1.14; the sha pins the mac arm64 asset). It dials
+   the QUIC listener. It prints the error-case set. The tool's output
+   joins no verdict (the record's N5). The transcript = the advisory
+   signal. The finding: the terminator's QUIC stack answers the strict
+   TLS-layer cases. It drops most transport and h3 error-code datagrams
+   silently.
+3. **the h3 hop of P8** — the script builds the pinned `quic-go` probe
+   client (v0.64.1). The client = a temp module; the repo's `go.mod`
+   stays untouched. It sends one real GET. The response carries
+   `HTTP/3.0`, the engine's `X-Trishula-Hop` marker and the echo body.
+   The view parity holds behind the h3 terminator (the record's P8).
+
+Boundary rows:
+
+- NGF carries no h3 listener row (the compatibility page and the
+  changelog read none). The terminator leg = the operator's own nginx
+  build, the same image the lab's 2.7.2 dataplane runs. The terminator
+  image pins the 2.7.2 ref. The h3 leg stays up on both lanes. The
+  1.6.2 fallback lane's dataplane serves only the NGF-side TLS leg.
+- The fixture Secret (`dx1-lab-tls`) now carries the `127.0.0.1` IP SAN
+  next to the DNS rows. The host-side dials dial by address. The
+  fixture stays the 30-day lab pair; never a product cert.
+- Probe P7 (the ban identity) reads the kernel leg, not this script:
+  the L1 UDP leg's own gate. The run: in-VM, root, the command above.
+  The row SHOTs its keyed source's QUIC-class flow and never covers the
+  re-addressed stream (the record's N7 gap, measured).
+- No h3spec run enters CI; the probes stay advisory lab material.
+- The setup's `kind-config.yaml` now maps the two new rows
+  (`31441/tcp`, `31440/udp`). An existing kind cluster needs a
+  re-create to carry the UDP mapping. The OrbStack k8s lane forwards
+  the NodePorts to `127.0.0.1` already (measured: the probe dials read
+  `127.0.0.1:31440`).
+
 ## Notes
 
 - The NGF chart ships from the NGINX OCI registry
