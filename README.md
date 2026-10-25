@@ -46,19 +46,19 @@ Budgets read off [§17.1](https://github.com/trishula-dev/trishula/blob/main/doc
 Wall numbers read from the last recorded per-row CI run. The run:
 [40147859961](https://github.com/trishula-dev/trishula/actions/runs/40147859961/job/121029622516),
 head `05affd9`, the rc3 content with the verbose bench step (#230).
-The numbers re-read at each release.
+The numbers re-read at each release. Each row's wall carries the [receipt comment](https://github.com/trishula-dev/trishula/issues/147#issuecomment-6391719348) this read posted.
 
 | Cell | Budget p99 | Last build p99 | Verdict |
 |---|---|---|---|
-| idle-get | 600 µs | 865.0 µs | unmet (1.44x) on this read — runner noise; the quiet rig reads 0.30x |
-| attack-sqli-small | 1500 µs | 1029.0 µs | holds (0.69x) |
-| attack-xss-small | 1500 µs | 1078.9 µs | holds (0.72x) — variance class, [#147](https://github.com/trishula-dev/trishula/issues/147) |
-| ladder-json-1k | 600 µs | 825.7 µs | unmet (1.38x) on this read — runner noise; the quiet rig reads 0.64x |
-| ladder-json-8k | 600 µs | 862.1 µs | unmet (1.44x) — variance class, [#147](https://github.com/trishula-dev/trishula/issues/147) |
-| ladder-json-64k | 1200 µs | 1096.6 µs | holds (0.91x) |
-| ladder-form-dense-1k | 600 µs | 15395.2 µs | pinned open — the [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage) |
-| ladder-form-dense-8k | 600 µs | 135633.1 µs | pinned open — the [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage) |
-| steady-json-8k (the [M2](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage) e2e cell) | 1500 µs | 433.7 µs | holds (0.29x) |
+| idle-get | 600 µs | [865.0 µs](https://github.com/trishula-dev/trishula/issues/147#issuecomment-6391719348) | unmet (1.44x) on this read — runner noise; the quiet rig reads [0.30x](https://github.com/trishula-dev/trishula/issues/147#issuecomment-6391719348) |
+| attack-sqli-small | 1500 µs | [1029.0 µs](https://github.com/trishula-dev/trishula/issues/147#issuecomment-6391719348) | holds (0.69x) |
+| attack-xss-small | 1500 µs | [1078.9 µs](https://github.com/trishula-dev/trishula/issues/147#issuecomment-6391719348) | holds (0.72x) — variance class, [#147](https://github.com/trishula-dev/trishula/issues/147) |
+| ladder-json-1k | 600 µs | [825.7 µs](https://github.com/trishula-dev/trishula/issues/147#issuecomment-6391719348) | unmet (1.38x) on this read — runner noise; the quiet rig reads [0.64x](https://github.com/trishula-dev/trishula/issues/147#issuecomment-6391719348) |
+| ladder-json-8k | 600 µs | [862.1 µs](https://github.com/trishula-dev/trishula/issues/147#issuecomment-6391719348) | unmet (1.44x) — variance class, [#147](https://github.com/trishula-dev/trishula/issues/147) |
+| ladder-json-64k | 1200 µs | [1096.6 µs](https://github.com/trishula-dev/trishula/issues/147#issuecomment-6391719348) | holds (0.91x) |
+| ladder-form-dense-1k | 600 µs | [15395.2 µs](https://github.com/trishula-dev/trishula/issues/147#issuecomment-6391719348) | pinned open — the [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage) |
+| ladder-form-dense-8k | 600 µs | [135633.1 µs](https://github.com/trishula-dev/trishula/issues/147#issuecomment-6391719348) | pinned open — the [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage) |
+| steady-json-8k (the [M2](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage) e2e cell) | 1500 µs | [433.7 µs](https://github.com/trishula-dev/trishula/issues/147#issuecomment-6391719348) | holds (0.29x) |
 ## Upcoming features
 
 The list pairs each not-shipped feature with its tracker.
