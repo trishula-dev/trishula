@@ -49,7 +49,11 @@ func h3TestConnect(t *testing.T, addr string) *quic.Conn {
 	}
 	t.Cleanup(func() { _ = ep.Close(context.Background()) })
 	conn, err := ep.Dial(context.Background(), "udp", addr, &quic.Config{
-		TLSConfig: &tls.Config{NextProtos: []string{"h3"}, InsecureSkipVerify: true},
+		TLSConfig: &tls.Config{
+			NextProtos:         []string{"h3"},
+			MinVersion:         tls.VersionTLS13,
+			InsecureSkipVerify: true,
+		},
 	})
 	if err != nil {
 		t.Fatalf("h3 dial %s: %v", addr, err)
@@ -400,8 +404,11 @@ func TestInlineH3ServesTheEngineView(t *testing.T) {
 		conn := h3TestConnect(t, h3s.Addr())
 		defer func() { _ = conn.Close() }()
 		payload := `{"prompt":"hello"}`
+		// the extra heads wire lowercase: h3 field names are lowercase on
+		// the wire (RFC 9114, section 4.2), and the test's write path
+		// emits exactly what the map carries.
 		status, hdrs, body := h3TestRequest(t, conn, http.MethodPost, "/v1/chat/completions",
-			http.Header{"Content-Type": []string{"application/json"}}, payload)
+			http.Header{"content-type": []string{"application/json"}}, payload)
 		if status != http.StatusOK || string(body) != payload {
 			t.Errorf("h3 POST = %d %q, want 200 with the body forwarded", status, string(body))
 		}
@@ -498,9 +505,11 @@ func TestQPACKCodecMatchesTheRFCGolden(t *testing.T) {
 		},
 		{
 			// Literal field line with literal name; N=0, no Huffman:
-			// 0b001_0_0_1010, "user-agent", then the 8-bit-prefixed value.
+			// 0b001_0_0_111 = 0x27 with a continuation byte (the name
+			// "user-agent" is 10 chars: 7 in the prefix + 3 continued),
+			// then the 8-bit-prefixed value.
 			name: "literal-with-literal-name-and-value",
-			wire: append(append([]byte{0x00, 0x00, 0x2A}, []byte("user-agent")...), 0x03, 'a', 'b', 'c'),
+			wire: append(append([]byte{0x00, 0x00, 0x27, 0x03}, []byte("user-agent")...), 0x03, 'a', 'b', 'c'),
 			want: []hpack.HeaderField{{Name: "user-agent", Value: "abc"}},
 		},
 		{
