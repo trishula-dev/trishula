@@ -45,7 +45,7 @@ Each slice landed as a watched-RED then GREEN leaf PR per [AGENTS.md](AGENTS.md)
 Budgets read off [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage).
 Wall numbers read from the last recorded per-row CI run:
 [39920698798](https://github.com/trishula-dev/trishula/actions/runs/39920698798/job/120312408390),
-head `24d5be7`, before the #150 perf levers. The numbers re-read at each release.
+head `24d5be7`, before the #150 perf levers. The numbers re-read at each release. The rc3 re-read waits on the per-row CI rows: the verbose bench step lands on [trishula#230](https://github.com/trishula-dev/trishula/pull/230) and prints the rows on every run after it.
 
 | Cell | Budget p99 | Last build p99 | Verdict |
 |---|---|---|---|
@@ -100,13 +100,13 @@ The list pairs each not-shipped feature with its tracker.
 
 - [ ] Inline `< 10 ms` walls on the lab plane — the CI harness measures engine-only cells today.
 - [ ] Verdicts on live ringbuf traffic inside cluster pods — a later engine slice.
-- [ ] HTTP/3 request-path parse — posture evaluation on [#29](https://github.com/trishula-dev/trishula/issues/29).
-- [ ] Socket-plane fast path, fast-path compiler, kTLS posture — [#51](https://github.com/trishula-dev/trishula/issues/51) · [#52](https://github.com/trishula-dev/trishula/issues/52) · [#53](https://github.com/trishula-dev/trishula/issues/53).
+- [ ] HTTP/3 request-path parse — the posture evaluation record publishes (TR-29); the parse is a later engine slice.
+- [ ] Socket-plane: more policy classes after route marking, and the kTLS posture — the first class lands as a tracked evaluation ([#52](https://github.com/trishula-dev/trishula/issues/52)).
 - [ ] trishulactl full CLI surface — the skeleton exists; the surface is a later phase.
-- [ ] OpenAPI learn mode + promotion gates — [#18](https://github.com/trishula-dev/trishula/issues/18).
-- [ ] ML scorer tier — [#21](https://github.com/trishula-dev/trishula/issues/21).
+- [ ] OpenAPI promotion gates — learn mode and drift telemetry ship (TR-18); the full gate ladder rides later slices ([#18](https://github.com/trishula-dev/trishula/issues/18)).
+- [ ] ML scoring beyond v0 — the ONNX in-band scorer ships (TR-21); the adaptive tier rides later slices ([#21](https://github.com/trishula-dev/trishula/issues/21)).
 - [ ] Wire-out OTLP export — the triad verifies in-memory today.
-- [ ] OpenShift + multi-arch + DPU port — [#33](https://github.com/trishula-dev/trishula/issues/33) · [#32](https://github.com/trishula-dev/trishula/issues/32).
+- [ ] The DPU-class port — the evaluation record publishes (TR-32); the port itself rides a later phase ([#32](https://github.com/trishula-dev/trishula/issues/32)). Multi-arch and OpenShift notes ship (TR-33); the rows leave this list.
 
 The board is the [Trishula Roadmap](https://github.com/orgs/trishula-dev/projects/1).
 
