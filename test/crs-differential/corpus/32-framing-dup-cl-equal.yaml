@@ -1,0 +1,23 @@
+# TR-199 corpus case (conformance row): h1 framing ambiguity — duplicate
+# Content-Length field values with EQUAL values (RFC 9112 §6.3 grants the
+# recipient a MAY freedom on equal-value duplicates; the engine resolves
+# the freedom strictly at the WAF altitude — reject-on-ambiguity, the
+# §18.2 treatment — because a value the pool may read differently is the
+# attack signal itself. Go net/http trims and deduplicates the same
+# shape; the engine's own parse layer owns a stricter cell per the
+# record's reject table.) raw_head carries the exact request head: the
+# headers-map shape collapses duplicate field names, so the framing
+# classes pin raw wire bytes.
+name: 32-framing-dup-cl-equal
+surface: "h1 framing ambiguity: duplicate Content-Length values, equal (RFC 9112 section 6.3)"
+request:
+  method: "GET"
+  uri: "/"
+  version: "1.1"
+  headers:
+    Host: "trishula.local"
+  raw_head: "GET / HTTP/1.1\r\nHost: trishula.local\r\nContent-Length: 6\r\nContent-Length: 6\r\n\r\n"
+expect:
+  # The record's reject table: the block verdict resolves at the parse
+  # path, pre-CRS, with this parse-layer rule id.
+  reject_rule: "http1:framing-dup-cl"
