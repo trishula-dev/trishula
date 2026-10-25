@@ -805,7 +805,7 @@ The hot subset of CRS + CEL patterns compiles to a Vectorscan DB (open-source Hy
 - `APISpec` CRs wrap OpenAPI 3.1 docs per (host, route-prefix): paths, methods, params, content types, field types, lengths, required and patterns → compiled validators.
 - **Enforce mode:** unmatched path/method → block. Param type/length/pattern violations → block, with per-field telemetry. This is the tier-1 commercial feature the OSS field rarely ships (§4).
 - **Learn mode:** discovery builds the spec from live traffic (endpoint extraction, JSON-schema inference with cardinality tracking) and emits CR diffs. Drift telemetry reads the live-vs-reviewed divergence.
-- Response-side schema (exfiltration guard): Phase 2 of the roadmap (§20.2).
+- Response-side schema (exfiltration guard): a later slice (§20.2).
 
 ### 11.6 Bot detection & anti-automation (detail in §12)
 
@@ -1639,7 +1639,7 @@ spec:
 
 **The GA track (the bare `2026.01` cut, then the calendar trains).** ML enforcement ships with a promotion workflow. The async semantic judge ships with a verdict cache. Behavioral DoS detectors cover slowloris and rapid-reset shapes. Prefix escalation goes GA (opt-in); the full `trishulactl` surface ships; academy Modules 2 & 5 land. The socket-plane L7 fast path gets its design note + `WAFPolicy`→eBPF template spike behind the §9.9 evaluation gate. The DPU (BlueField-class) shield port and the OpenShift/multi-arch builds enter evaluation and build lanes.
 
-**Phase 2 — Beyond.** The lane carries ext_proc no-hop activation on Envoy-family estates. It carries the HTTP/3 ingress posture evaluation (§7.1 Module 5) and the response-side schema/exfil guard. EPP-deep integrations follow where GIE composes further.
+**The post-GA trains.** The lane carries ext_proc no-hop activation on Envoy-family estates. It carries the HTTP/3 ingress posture evaluation (§7.1 Module 5) and the response-side schema/exfil guard. EPP-deep integrations follow where GIE composes further.
 
 ### 20.3 Open questions
 
@@ -1649,7 +1649,7 @@ spec:
 4. **Re-encryption toward pools** — the default keeps east-west plaintext in-cluster (mesh mTLS is a non-goal). The gateway handles the north edge. The secondary engine-TLS mode stays feature-gated for passthrough estates.
 5. **Tokenization boundaries** — Trishula sees post-tokenized payloads where an AI gateway sits in path; no token-vault responsibility. Where no AI gateway exists, Trishula's redaction pipeline (§15.4) is the payload-hygiene layer.
 6. **Ban policy defaults per vertical** — the §13.3 constants are sane general defaults. Per-vertical presets (API-first SaaS vs auth-heavy B2C) ship as documented `BanPolicy` recipes in Phase 1+. The presets feed real tuning data back into the defaults.
-7. **Composition re-evaluation (Appendix E watch-list):** the eBPF-native cousins (Synapse, Moat, MicroWAF — E.2) evolve quickly. When a cousin reaches that shape before Phase 2, re-run the borrow-vs-build analysis for that layer. No overlapping code ships meanwhile. The differential suite and the CRD compiler are the pieces worth keeping regardless.
+7. **Composition re-evaluation (Appendix E watch-list):** the eBPF-native cousins (Synapse, Moat, MicroWAF — E.2) evolve quickly. When a cousin reaches that shape before the post-GA trains, re-run the borrow-vs-build analysis for that layer. No overlapping code ships meanwhile. The differential suite and the CRD compiler are the pieces worth keeping regardless.
 
 <div class="pagebreak"></div>
 
