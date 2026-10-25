@@ -57,6 +57,12 @@ type BanEvidence struct {
 	BantimeSec int64 `json:"bantimeSec"`
 	// Note is an optional operator-facing annotation (v0: empty).
 	Note string `json:"note,omitempty"`
+	// OSig (TR-195, issue #237): the dynamic signature the cue carried
+	// verbatim, when the crossing's newest event came from the DoS cue
+	// path. Nil = the record carries no signature (the absence carries no
+	// claim). The watertight chain: the evidence row, the kernel row and
+	// the OTel verdict record read the same sig.
+	OSig *DoSSig `json:"osig,omitempty"`
 }
 
 // EvidenceEvent is one contributing event in a BanEvidence record.
@@ -221,6 +227,18 @@ func (e *Engine) Observe(key string) WouldBan {
 // bump the exported BanRateAboveBudget counter — with NO enforcement side
 // effect (Verdict stays "would-ban"; TR-10 writes kernels).
 func (e *Engine) Assess(key string, atSec int64) []BanEvidence {
+	return e.assess(key, atSec, nil)
+}
+
+// AssessWithSig is Assess with the dynamic signature attached to every
+// record it emits — the evidence sink's copy carries the sig verbatim (the
+// watertight chain: the map, the evidence and the kernel row read the same
+// sig). The scored path's callers keep Assess(key, atSec).
+func (e *Engine) AssessWithSig(key string, atSec int64, osig *DoSSig) []BanEvidence {
+	return e.assess(key, atSec, osig)
+}
+
+func (e *Engine) assess(key string, atSec int64, osig *DoSSig) []BanEvidence {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	s := e.state[key]
@@ -242,6 +260,7 @@ func (e *Engine) Assess(key string, atSec int64) []BanEvidence {
 		Mode:       "shadow",
 		Verdict:    "would-ban",
 		Tier:       "scored-window",
+		OSig:       osig,
 		Score:      score,
 		Threshold:  Threshold,
 		AtSec:      atSec,
