@@ -9,7 +9,7 @@ package main
 // off = no UDP socket and no advertisement, and the default deployment stays
 // the gateway-terminated path.
 //
-// The transport decision (the ADR statement rides the lane's PR body): the
+// The transport decision (the ADR statement lands in the lane's PR body): the
 // QUIC transport = golang.org/x/net/quic — the Go team's QUIC package inside
 // the repo's already-pinned x/net v0.61.0. The import carries
 // golang.org/x/crypto v0.58.0 in as one new indirect module row (BSD-3, the
@@ -545,7 +545,7 @@ var h3HopHeaders = []string{"Connection", "Keep-Alive", "Proxy-Connection", "Tra
 func (w *h3ResponseWriter) Header() http.Header { return w.hdr }
 
 // WriteHeader encodes the response's field section once. The :status
-// pseudo-header rides first; the hop-by-hop fields drop.
+// field list opens with the :status pseudo-header; the hop-by-hop
 func (w *h3ResponseWriter) WriteHeader(code int) {
 	if w.wrote {
 		return
@@ -553,6 +553,8 @@ func (w *h3ResponseWriter) WriteHeader(code int) {
 	w.wrote = true
 	w.code = code
 	fields := make([]hpack.HeaderField, 0, len(w.hdr)+1)
+	// the field list opens with the :status pseudo-header; the hop-by-hop
+	// fields drop below
 	fields = append(fields, hpack.HeaderField{Name: ":status", Value: strconv.Itoa(code)})
 	names := make([]string, 0, len(w.hdr))
 	for name := range w.hdr {

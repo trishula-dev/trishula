@@ -273,7 +273,7 @@ func qpackDecodeHeaderBlock(block []byte) ([]hpack.HeaderField, error) {
 			})
 		case b&0xC0 == 0x40:
 			// literal field line with name reference: 0 1 | N | T | name
-			// index (4+); the value rides as a fresh 8-bit-prefix string.
+			// index (4+); the value follows as a fresh 8-bit-prefix string.
 			if b&0x10 == 0 {
 				return nil, errQpackDecompressionFailed // dynamic name ref
 			}
@@ -345,8 +345,8 @@ func qpackAppendPrefixedInt(dst []byte, prefixBits int, value uint64) []byte {
 // qpackAppendLiteralStr appends one literal field line (RFC 9204, section
 // 4.5.6): the instruction byte 0b001 with N=0, then the name as the
 // 4-bit-prefix string (its H flag and length prefix join the instruction
-// byte), then the value as a fresh 8-bit-prefix string (the H flag rides
-// that byte's top bit). No Huffman on the encode side: both H bits stay 0.
+// byte), then the value as a fresh 8-bit-prefix string (the H flag sits
+// on that byte's top bit). No Huffman on the encode side: both H bits stay 0.
 func qpackAppendLiteralStr(dst []byte, name, value string) []byte {
 	dst = append(dst, 0x20)
 	dst = appendQpackStrMid(dst, 4, name)

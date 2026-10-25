@@ -12,10 +12,10 @@ package main
 // The QUIC transport is the Go team's golang.org/x/net/quic — already a
 // direct module dependency of this repo; the RFC 9114 request layer and the
 // QPACK static-table subset are this file's repo-owned surface (the ADR
-// statement rides the lane's PR body).
+// statement lands in the lane's PR body).
 //
 // Scope (docs/design/h3-ingress-posture.md, the TR-29 record):
-// - the alt-svc advertisement rides the h1/h2 TLS responses of the opt-in mode
+// - the h1/h2 TLS responses of the opt-in mode carry the alt-svc advertisement
 // - the h3 request view = the engine's own ladder path: the same handler
 //   (the consult, the verdict, the proxy) answers h3 requests
 // - probe P5 (the 0-RTT posture): the mode rejects 0-RTT — the transport

@@ -581,7 +581,7 @@ func main() {
 		if startErr != nil {
 			log.Fatal(startErr)
 		}
-		// the advertisement rides the TCP TLS responses; the h3 leg
+		// the TCP TLS responses carry the advertisement; the h3 leg
 		// itself serves the raw handler (the listener = its own origin
 		// alternative, no self-reference).
 		handler = altSvcHandler(handler, http3srv.AltSvc())
