@@ -129,6 +129,9 @@ func TestProcessStageMapping(t *testing.T) {
 					t.Errorf("continue status: got %v, want CONTINUE", common.GetStatus())
 				}
 				want := cel.Request{Method: "POST", Path: "/v1/chat", Query: "trace=on"}
+				// TR-198: the view's auth vocabulary carries the sanitised
+				// zero on no channel (verified=false, empty reads).
+				want.Auth = want.Auth.Sanitised()
 				if !reflect.DeepEqual(ev.saw, want) {
 					t.Errorf("seed view: got %+v, want %+v", ev.saw, want)
 				}
@@ -413,6 +416,8 @@ func TestMetadataContextNeverPayloadFact(t *testing.T) {
 		t.Fatalf("recv response: %v", err)
 	}
 	want := cel.Request{Method: "POST", Path: "/v1/chat"}
+	// TR-198: the sanitised zero is the view's auth vocabulary on the miss.
+	want.Auth = want.Auth.Sanitised()
 	if !reflect.DeepEqual(ev.saw, want) {
 		t.Errorf("view with a shaped metadata context: got %+v, want %+v (metadata is never a payload fact)", ev.saw, want)
 	}

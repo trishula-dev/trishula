@@ -404,6 +404,7 @@ type Eval struct {
 	policy       Policy
 	rulePacks    []cel.RulePack
 	kernelValues *KernelValues
+	verifier     *cel.Verifier
 }
 
 // Load loads a bundle for evaluation (the spec's architecture, step 2). No bundle field is
@@ -440,20 +441,68 @@ func Load(bundle Bundle) (*Eval, error) {
 	// request view compiles lazily and rejects an uncompilable or non-bool
 	// rule expression with an error before any traffic sees the bundle.
 	// The probe's verdict itself is discarded — Load only vouches that the
-	// rule compiles.
+	// rule compiles. The consult binds the engine-supplied epoch (TR-198:
+	// the expiry rule's engine half — CEL never reads a clock).
 	for i := range bundle.RulePacks {
 		rules := bundle.RulePacks[i].Rules
 		for j := range rules {
+			rules[j].SetClock(cel.DefaultClock())
 			if _, err := rules[j].Eval(cel.Request{}); err != nil {
 				return nil, fmt.Errorf("load: rule pack %d rule %d (%s): %w", i, j, rules[j].ID, err)
 			}
 		}
 	}
+	// TR-198 (issue #240): the packs carry the optional verifier bundle the
+	// operator supplied; Load re-parses it (the JSON transport strips the
+	// parsed form) and merges it — one bundle, one bundle verifier. An
+	// unparsable key fails HERE (fail closed at load, the parse's own
+	// posture), never mid-request.
+	verifier, err := mergePackVerifiers(bundle.RulePacks)
+	if err != nil {
+		return nil, fmt.Errorf("load: %w", err)
+	}
 	return &Eval{
 		policy:       bundle.Policy,
 		rulePacks:    bundle.RulePacks,
 		kernelValues: bundle.KernelValues,
+		verifier:     verifier,
 	}, nil
+}
+
+// Verifier returns the loaded bundle's verifier bundle (nil = none: the
+// views the consult builds read request.auth.verified=false — the record's
+// gate holds on the absence).
+func (e *Eval) Verifier() *cel.Verifier {
+	if e == nil {
+		return nil
+	}
+	return e.verifier
+}
+
+// mergePackVerifiers parses every pack's verifier config and merges the
+// key sets (any matching key verifies; the issuer/audience pins and the
+// leeway take the FIRST declaring pack's values — one policy, one bundle,
+// one effective verifier).
+func mergePackVerifiers(packs []cel.RulePack) (*cel.Verifier, error) {
+	var merged cel.VerifierConfig
+	seen := false
+	for i := range packs {
+		cfg := packs[i].AuthVerifier
+		if cfg == nil {
+			continue
+		}
+		if !seen {
+			merged = *cfg
+			seen = true
+			continue
+		}
+		merged.HS256SecretsHex = append(merged.HS256SecretsHex, cfg.HS256SecretsHex...)
+		merged.RS256PublicPEM = append(merged.RS256PublicPEM, cfg.RS256PublicPEM...)
+	}
+	if !seen {
+		return nil, nil
+	}
+	return cel.NewVerifier(merged)
 }
 
 // Eval evaluates one fixture request view through the loaded bundle's

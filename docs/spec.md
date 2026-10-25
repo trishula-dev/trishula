@@ -777,6 +777,7 @@ CEL is the choice over new DSLs, Rego and proxy-wasm. The reasons: a small and w
 request.method, request.path, request.headers (map),
 request.body.{text, json, form, bytes}, request.uri_queries,
 request.client.{ip, asn, geo, reputation, ban_state},
+request.auth.{verified | subject | issuer | audiences | scopes | expiry_epoch | claims},
 request.ja4, request.rate_windows,
 response.{status, headers, body-chunks},
 tx.{score, matched_rules, flags: {smuggling_suspect, oversized_body, ...}}
@@ -797,6 +798,25 @@ request.client.reputation < 0.3
 ```
 
 Ladder position: after the CRS short-circuit, before schema gating, for observability parity. Per-rule `action/phase/tags/severity` carries the SecLang semantics for imported-rule parity.
+
+**The claims vocabulary (TR-198).** The view carries the `request.auth` names of the [auth/JWT verdict record](https://github.com/trishula-dev/trishula/blob/main/docs/design/auth-jwt-verdict.md). `request.auth.verified` reads bool. `request.auth.issuer` and `request.auth.subject` read string. `request.auth.audiences` and `request.auth.scopes` read list(string). `request.auth.expiry_epoch` reads int (epoch seconds). `request.auth.claims` reads map(string, dyn).
+
+The gateway's verified identity metadata fills the names. The optional in-engine HS256/RS256 verifier bundle is the second source. The operator supplies the bundle. The engine verifies the token bytes the authorization header carries. The header never reads as a claim source. A self-asserted identity header never fills a name.
+
+A missed or failed verification sets `request.auth.verified = false`. The missed reads resolve the empty list or map value. CEL reads the miss. No rule panics.
+
+The gate: every allow-shaped rule carries `request.auth.verified` in its condition. So `verified = false` holds every allow path. The claims gate runs at S3, after the CRS short-circuit, before schema gating. Its deny verdict is policy-selected block (403 class). The scope comparison uses the language operators first: `"read:orders" in request.auth.scopes`. The comprehension form is `request.auth.scopes.exists(s, s in ["read:orders"])`. Rules compare `request.auth.expiry_epoch` against the engine-supplied epoch (`now`). CEL never reads a clock. Every comparison costs against the per-rule budget. An over-budget rule aborts as an error verdict. An error never reads as a clean no-match.
+
+Example claims-gate rule:
+
+```
+// the S3 claims gate: /orders/* admits a verified
+// identity carrying read:orders (the verified gate
+// in the deny condition; the record's taxonomy id)
+// auth:scope_insufficient (action: enforce)
+path.matches("/orders/*") &&
+(!request.auth.verified || !("read:orders" in request.auth.scopes))
+```
 
 ### 11.4 The compiled fast path: Vectorscan matcher
 
@@ -1690,6 +1710,8 @@ A developer-first spec measures **adoption**, not just detection:
   3. **Signal effects are real and belong to the academy modules — not to product claims.** Hybrid key shares inflate the ClientHello (~1,200 bytes; multi-packet ClientHellos and middlebox compatibility effects are measured in the field [327]). Client PQ preference is JA3/JA4-visible signal [328], and a spoofable one [329] (see also [330]'s authentication-side asymmetry discussion). The curriculum teaches the delta as signal-with-caveats, never as an anti-spoofing control.
   4. **v1 carries no PQ data-plane claims** (§6.3 non-goal; the sibling discipline is the HTTP/3 entry above). PQ affects key agreement and signatures on hop 1 of the path — not the WAF's detection surface. PQ *authentication* (ML-DSA certificates [330]) is a separate, harder client+server migration, likewise out of scope for the product surfaces. The modules teach the 2026-timeframe asymmetry: PQ encryption is broadly deployed; PQ authentication is not.
 - **Socket-plane L7 fast path:** a tracked design study (specification §9.9). The mechanism: kernel enforcement of header-class policies at the socket layer via `strparser`/kTLS, with synthesized per-policy programs. No body inspection and no HTTP/3. The kernel-module dependency and the verifier envelope are decided before any implementation claim.
+
+- **TR-203 L5 — the JA4/PQC corpus and the QUIC Initial read:** the botdef's JA4 corpus gains the PQC vectors ([TR-203 #264](https://github.com/trishula-dev/trishula/issues/264), leaf L5). The corpus pins a captured Go offer twice: the X25519MLKEM768 default and the GODEBUG `tlsmlkem=0` baseline. The KEX offer uses extension data: the RFC 10024 group list 4588 (0x11EC), 4587 (0x11EB), 4589 (0x11ED); the client share carries 1,216 bytes against 32 for bare X25519. ja3's group list carries the shift. The JA4 token stays stable across the same stack's KEX flip. The token shifts only with a changed cipher, extension or signature set. The QUIC Initial-packet fingerprint read is the designed probe: [the design note](https://github.com/trishula-dev/trishula/blob/main/docs/design/quic-initial-fingerprint-read.md) files the RFC 9001 boundary. The header plane reads at eBPF. The ClientHello shadow decrypts in userspace. The kernel counts and drops ([§9.2](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#92-hook-inventory)). Probe P2b stays PENDING until a recorded run lands.
 
 - **Named-algorithm stability:** `ScoredWindowBan` is version-pinned by this document (v1). Any change ships as a new version + a conformance test — never a silent rewrite. CRS applies the same discipline to rule semantics.
 

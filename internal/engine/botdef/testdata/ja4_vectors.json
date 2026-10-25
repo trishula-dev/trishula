@@ -1,5 +1,5 @@
 {
-  "note": "JA4 golden vectors (FoxIO JA4 spec, 2023). ciphers/extensions/signature_algorithms are uint16s in OFFER order (JA4 re-sorts internally; GREASE filtering is internal too). This file was machine-generated with per-row verification: the FoxIO reference algorithm reproduces every published token (expected_ja4, and the ext scope inside expected_ja4_r for the chrome rows) from the row's lists, asserted inside the generator. Sources: foxio-spec-example = the JA4.md worked example, all four variants published (o/ro cross-verified above); curl-local = a real captured curl/OpenSSL handshake (tls.peet.ws, 2026-10-10) — offer order from the ja3 string field, hash scope from ja4_r; NOTE the capture host prints the a-section without 2-digit zero-padding (t13d497h2) while this file pins the spec-canonical rendering (t13d4907h2) — hashes unchanged, format normalized per JA4.md ('2 character count'); chrome rows carry the sorted extension scopes + signature algorithms (incl. prepended ML-DSA 0904/0905/0906 for -151-dev) published in refraction-networking/utls#397, offer order reconstructed as [SNI(0), ALPN(16), then scope] (only counts/hashes are order-relevant). The issue-named curl vector (t13d1516h2_8daaf6fa27ae_171f2a6df4bc) has no published raw preimage; this captured real-curl vector stands in its place. expected_ja4_o/-ro for non-spec rows are self-computed per the FoxIO -o algorithm over those published lists.",
+  "note": "JA4 golden vectors (FoxIO JA4 spec, 2023). ciphers/extensions/signature_algorithms are uint16s in OFFER order (JA4 re-sorts internally; GREASE filtering is internal too). This file was machine-generated with per-row verification: the FoxIO reference algorithm reproduces every published token (expected_ja4, and the ext scope inside expected_ja4_r for the chrome rows) from the row's lists, asserted inside the generator. Sources: foxio-spec-example = the JA4.md worked example, all four variants published (o/ro cross-verified above); curl-local = a real captured curl/OpenSSL handshake (tls.peet.ws, 2026-10-10) \u2014 offer order from the ja3 string field, hash scope from ja4_r; NOTE the capture host prints the a-section without 2-digit zero-padding (t13d497h2) while this file pins the spec-canonical rendering (t13d4907h2) \u2014 hashes unchanged, format normalized per JA4.md ('2 character count'); chrome rows carry the sorted extension scopes + signature algorithms (incl. prepended ML-DSA 0904/0905/0906 for -151-dev) published in refraction-networking/utls#397, offer order reconstructed as [SNI(0), ALPN(16), then scope] (only counts/hashes are order-relevant). The issue-named curl vector (t13d1516h2_8daaf6fa27ae_171f2a6df4bc) has no published raw preimage; this captured real-curl vector stands in its place. expected_ja4_o/-ro for non-spec rows are self-computed per the FoxIO -o algorithm over those published lists.  TR-203 L5 PQC rows (2026-10-25): go-client-x25519mlkem768 and go-client-x25519 = a same-day A/B capture of Go's crypto/tls at tls.peet.ws/api/all (go1.27.3, User-Agent peet-ab-probe/1, SNI tls.peet.ws, ALPN h2 + http/1.1). The default run offers X25519MLKEM768: groups 4588,4587,4589,29,23,24,25 and shares 1,216 bytes (4588) + 32 bytes (29); the GODEBUG tlsmlkem=0 run offers groups 29,23,24,25 and one 32-byte 29 share. The two offers are byte-identical in ciphers, extensions and signature_algorithms. peet.ws publishes the SAME ja4 token for both (t13d1312h2_f57a46bbacb6_f50d94e863eb); the ja3 differs in the group list (03117a8ed39ef02427ebbc39f121275c vs 95b6f6d62c2c0f5258859e829e0055f5). Reading: the KEX offer uses extension DATA (supported_groups + key_share); the JA4 grammar hashes cipher-suite, extension-ID and signature-algorithm tokens, so a KEX flip alone never shifts the JA4 token \u2014 the token shift comes from a stack's cipher/extension/sig set (the Chrome ML-DSA 0904/0905/0906 rows above and these Go rows carry that set). The pinned pqc field records the KEX offer (the groups list + the offered share sizes); the grammar does not hash it; the QUIC Initial read design (docs/design/quic-initial-fingerprint-read.md, probe P2b) consumes the same shape. peet's published ja4 token pins expected_ja4; an independent render of the FoxIO algorithm reproduces it per row BEFORE the row lands (the same generator process as the rows above). FINDING against peet's own output: its published ja4_r for these rows drops the offered 0503 and 0603 signature algorithms (11 printed vs 13 offered \u2014 its extension dict lists 13), while its published ja4 hash reproduces from the FULL 13-sig list; this file pins expected_ja4_r from the full offer, not from peet's truncated ja4_r. expected_ja4_o and expected_ja4_ro = self-computed per the FoxIO -o algorithm over the row's lists (the corpus precedent). go-client-x25519mlkem768-q = DERIVED: the mlkem row's offer lists with transport 'q' per the grammar's transport table \u2014 no live QUIC capture feeds a published q token yet; probe P2b's design note owns the live read.",
   "vectors": [
     {
       "name": "foxio-spec-example",
@@ -358,6 +358,252 @@
       "expected_ja4_o": "t13d1516h2_8daaf6152771_e1ce07f1397f",
       "expected_ja4_r": "t13d1516h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,fe0d,ff01_0403,0804,0401,0503,0805,0501,0806,0601",
       "expected_ja4_ro": "t13d1516h2_002f,0035,009c,009d,1301,1302,1303,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0000,0010,0005,000a,000b,000d,0012,0017,001b,0023,002b,002d,0033,44cd,fe0d,ff01_0403,0804,0401,0503,0805,0501,0806,0601"
+    },
+    {
+      "name": "go-client-x25519mlkem768",
+      "transport": "t",
+      "legacy_version": 771,
+      "supported_versions": [
+        772,
+        771
+      ],
+      "sni": "tls.peet.ws",
+      "alpn": [
+        "h2",
+        "http/1.1"
+      ],
+      "ciphers": [
+        49195,
+        49199,
+        49196,
+        49200,
+        52393,
+        52392,
+        49161,
+        49171,
+        49162,
+        49172,
+        4865,
+        4866,
+        4867
+      ],
+      "extensions": [
+        0,
+        11,
+        65281,
+        23,
+        18,
+        5,
+        10,
+        13,
+        50,
+        16,
+        43,
+        51
+      ],
+      "signature_algorithms": [
+        2308,
+        2309,
+        2310,
+        2052,
+        1027,
+        2055,
+        2053,
+        2054,
+        1025,
+        1281,
+        1537,
+        1283,
+        1539
+      ],
+      "expected_ja4": "t13d1312h2_f57a46bbacb6_f50d94e863eb",
+      "expected_ja4_o": "t13d1312h2_45672f90a73c_0907710e1447",
+      "expected_ja4_r": "t13d1312h2_1301,1302,1303,c009,c00a,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,002b,0032,0033,ff01_0904,0905,0906,0804,0403,0807,0805,0806,0401,0501,0601,0503,0603",
+      "expected_ja4_ro": "t13d1312h2_c02b,c02f,c02c,c030,cca9,cca8,c009,c013,c00a,c014,1301,1302,1303_0000,000b,ff01,0017,0012,0005,000a,000d,0032,0010,002b,0033_0904,0905,0906,0804,0403,0807,0805,0806,0401,0501,0601,0503,0603",
+      "pqc": {
+        "groups": [
+          4588,
+          4587,
+          4589,
+          29,
+          23,
+          24,
+          25
+        ],
+        "key_share": [
+          {
+            "group": 4588,
+            "bytes": 1216
+          },
+          {
+            "group": 29,
+            "bytes": 32
+          }
+        ],
+        "kem_group": "X25519MLKEM768 4588 (0x11EC), RFC 10024"
+      }
+    },
+    {
+      "name": "go-client-x25519",
+      "transport": "t",
+      "legacy_version": 771,
+      "supported_versions": [
+        772,
+        771
+      ],
+      "sni": "tls.peet.ws",
+      "alpn": [
+        "h2",
+        "http/1.1"
+      ],
+      "ciphers": [
+        49195,
+        49199,
+        49196,
+        49200,
+        52393,
+        52392,
+        49161,
+        49171,
+        49162,
+        49172,
+        4865,
+        4866,
+        4867
+      ],
+      "extensions": [
+        0,
+        11,
+        65281,
+        23,
+        18,
+        5,
+        10,
+        13,
+        50,
+        16,
+        43,
+        51
+      ],
+      "signature_algorithms": [
+        2308,
+        2309,
+        2310,
+        2052,
+        1027,
+        2055,
+        2053,
+        2054,
+        1025,
+        1281,
+        1537,
+        1283,
+        1539
+      ],
+      "expected_ja4": "t13d1312h2_f57a46bbacb6_f50d94e863eb",
+      "expected_ja4_o": "t13d1312h2_45672f90a73c_0907710e1447",
+      "expected_ja4_r": "t13d1312h2_1301,1302,1303,c009,c00a,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,002b,0032,0033,ff01_0904,0905,0906,0804,0403,0807,0805,0806,0401,0501,0601,0503,0603",
+      "expected_ja4_ro": "t13d1312h2_c02b,c02f,c02c,c030,cca9,cca8,c009,c013,c00a,c014,1301,1302,1303_0000,000b,ff01,0017,0012,0005,000a,000d,0032,0010,002b,0033_0904,0905,0906,0804,0403,0807,0805,0806,0401,0501,0601,0503,0603",
+      "pqc": {
+        "groups": [
+          29,
+          23,
+          24,
+          25
+        ],
+        "key_share": [
+          {
+            "group": 29,
+            "bytes": 32
+          }
+        ],
+        "kem_group": "none (GODEBUG tlsmlkem=0)"
+      }
+    },
+    {
+      "name": "go-client-x25519mlkem768-q",
+      "transport": "q",
+      "legacy_version": 771,
+      "supported_versions": [
+        772,
+        771
+      ],
+      "sni": "tls.peet.ws",
+      "alpn": [
+        "h2",
+        "http/1.1"
+      ],
+      "ciphers": [
+        49195,
+        49199,
+        49196,
+        49200,
+        52393,
+        52392,
+        49161,
+        49171,
+        49162,
+        49172,
+        4865,
+        4866,
+        4867
+      ],
+      "extensions": [
+        0,
+        11,
+        65281,
+        23,
+        18,
+        5,
+        10,
+        13,
+        50,
+        16,
+        43,
+        51
+      ],
+      "signature_algorithms": [
+        2308,
+        2309,
+        2310,
+        2052,
+        1027,
+        2055,
+        2053,
+        2054,
+        1025,
+        1281,
+        1537,
+        1283,
+        1539
+      ],
+      "expected_ja4": "q13d1312h2_f57a46bbacb6_f50d94e863eb",
+      "expected_ja4_o": "q13d1312h2_45672f90a73c_0907710e1447",
+      "expected_ja4_r": "q13d1312h2_1301,1302,1303,c009,c00a,c013,c014,c02b,c02c,c02f,c030,cca8,cca9_0005,000a,000b,000d,0012,0017,002b,0032,0033,ff01_0904,0905,0906,0804,0403,0807,0805,0806,0401,0501,0601,0503,0603",
+      "expected_ja4_ro": "q13d1312h2_c02b,c02f,c02c,c030,cca9,cca8,c009,c013,c00a,c014,1301,1302,1303_0000,000b,ff01,0017,0012,0005,000a,000d,0032,0010,002b,0033_0904,0905,0906,0804,0403,0807,0805,0806,0401,0501,0601,0503,0603",
+      "pqc": {
+        "groups": [
+          4588,
+          4587,
+          4589,
+          29,
+          23,
+          24,
+          25
+        ],
+        "key_share": [
+          {
+            "group": 4588,
+            "bytes": 1216
+          },
+          {
+            "group": 29,
+            "bytes": 32
+          }
+        ],
+        "kem_group": "X25519MLKEM768 4588 (0x11EC), RFC 10024",
+        "derived": "same offer lists as go-client-x25519mlkem768; transport set to 'q' per the JA4 grammar transport table; no live QUIC capture feeds the token yet"
+      }
     }
   ],
   "alpn_cases": [
@@ -401,19 +647,19 @@
         },
         {
           "values": [
-            "0İ"
+            "0\u0130"
           ],
           "want": "30"
         },
         {
           "values": [
-            "a°"
+            "a\u00b0"
           ],
           "want": "60"
         },
         {
           "values": [
-            "0«"
+            "0\u00ab"
           ],
           "want": "3b"
         },
@@ -425,13 +671,13 @@
         },
         {
           "values": [
-            "01«Í"
+            "01\u00ab\u00cd"
           ],
           "want": "3d"
         },
         {
           "values": [
-            "0«Í1"
+            "0\u00ab\u00cd1"
           ],
           "want": "01"
         }

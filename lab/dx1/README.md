@@ -54,6 +54,32 @@ JSON body are the acceptance evidence for the [DX1 issue](https://github.com/tri
 (request through NGF reaches the engine → demo pod and returns; the §10.2
 variant-A diagram reproduced live).
 
+## TR-198 — the S3 claims gate (the request.auth vocabulary)
+
+```bash
+lab/dx1/dx1-auth.sh
+```
+
+Runs the design record's example set end to end through the lab (the
+[auth/JWT verdict record](https://github.com/trishula-dev/trishula/blob/main/docs/design/auth-jwt-verdict.md)
+places the claims policy at S3): an enforced vocabulary rule gates
+`/orders/*` on a verified identity carrying the `read:orders` scope; the
+pack itself carries the optional in-engine HS256 verifier bundle the
+operator supplies (the lab fixture key, never a secret). The script
+rebuilds the engine + operator images from the checkout, applies
+`dx1-rulepack-auth.yaml` + `dx1-wafpolicy-auth.yaml`, feeds the compiled
+bundle to the running engine, and probes through NGF:
+
+| probe | effect |
+|---|---|
+| no bearer | `403`, `X-Trishula-Decision: block`, `X-Trishula-Rule: auth:scope_insufficient` |
+| verified, no `read:orders` | `403`, the same gate (the membership read denies) |
+| verified + `read:orders` | `200` forward (the gate opens, not the route) |
+
+Idempotent like apply-effect; the lane replaces the consult bundle —
+re-running `just apply-effect` restores the SQLi gate shape afterwards.
+The lab is left running.
+
 ## TR-08c — apply→effect, the timed M9 test
 
 ```bash
