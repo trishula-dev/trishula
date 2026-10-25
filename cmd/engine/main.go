@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	rateban "github.com/trishula-dev/trishula/internal/engine/rateban"
 	"io"
 	"log"
 	"net/http"
@@ -25,6 +26,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -109,6 +111,40 @@ func startBundlePolling(ctx context.Context, path string, box *bundleBox, tick t
 	}()
 }
 
+// banEvidencePath (TR-195 leaf 1): the direct would-ban JSONL sink path.
+// Empty (the default) = the evidence log stays in the engine log (the
+// enforcer's file-tail reads it in leaf 2 when the flag is set). Fail-open:
+// a sink write error never affects the 403 already decided.
+var banEvidencePath string
+
+func recordDirectBan(d operator.Decision, r *http.Request) {
+	key := r.RemoteAddr
+	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+		key = strings.TrimSpace(strings.Split(fwd, ",")[0])
+	}
+	atSec := time.Now().Unix()
+	note := rateban.DirectBanNote(r.Method, r.URL.Path, d.RuleID)
+	rec := rateban.DirectBan(key, d.RuleID, atSec, note)
+	if banEvidencePath == "" {
+		log.Printf("engine: direct would-ban (no evidence file set): %+v", rec)
+		return
+	}
+	line, err := json.Marshal(rec)
+	if err != nil {
+		log.Printf("engine: direct would-ban marshal: %v", err)
+		return
+	}
+	f, err := os.OpenFile(banEvidencePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		log.Printf("engine: direct would-ban open %s: %v (fail open)", banEvidencePath, err)
+		return
+	}
+	defer f.Close()
+	if _, err := f.Write(append(line, '\n')); err != nil {
+		log.Printf("engine: direct would-ban write: %v (fail open)", err)
+	}
+}
+
 // newEngineHandler builds the engine host: /healthz answers ok engine-local
 // (it must not reach the upstream); every other path is transparently
 // proxied to the upstream. hop, when non-empty, is echoed on responses as
@@ -186,13 +222,26 @@ func newEngineHandlerWithBox(upstream, hop string, box *bundleBox) http.Handler 
 				return
 			}
 			w.Header().Set(hopHeader, "engine")
-			w.Header().Set("X-Trishula-Decision", string(decision.Action))
+			decisionWord := string(decision.Action)
+			if decision.BanDirect {
+				// TR-195 (issue #237): the manual ban names itself. The
+				// response reads decision=ban + the owning rule; the
+				// direct would-ban record joins the evidence stream (the
+				// enforcer's kernel-write input; the receipt trail).
+				decisionWord = "ban"
+				recordDirectBan(decision, r)
+			}
+			w.Header().Set("X-Trishula-Decision", decisionWord)
 			if decision.RuleID != "" {
 				w.Header().Set("X-Trishula-Rule", decision.RuleID)
 			}
-			log.Printf("engine: decision %s (rule=%s) for %s %s", decision.Action, decision.RuleID, r.Method, r.URL.Path)
+			log.Printf("engine: decision %s (rule=%s) for %s %s", decisionWord, decision.RuleID, r.Method, r.URL.Path)
 			if decision.Action == "block" {
-				http.Error(w, "blocked by "+decision.RuleID, http.StatusForbidden)
+				verb := "blocked"
+				if decision.BanDirect {
+					verb = "banned"
+				}
+				http.Error(w, verb+" by "+decision.RuleID, http.StatusForbidden)
 				return
 			}
 			// log/pass/challenge/no-match: forward (v0 consult surface;
@@ -266,8 +315,10 @@ func main() {
 	hop := flag.String("hop", "engine", "value for the X-Trishula-Hop response header (empty omits it)")
 	bundlePath := flag.String("bundle", "", "path the operator's bundle JSON is loaded from (internal/operator wire format v1); first valid content activates the consult, changes hot-reload (TR-08c)")
 	tlsCert := flag.String("tls-cert", "", "cert PEM to terminate TLS on the engine listener (TR-34 secondary mode, feature-gated; requires -tls-key; off = the default gateway-owned termination)")
+	banEvidence := flag.String("ban-evidence", "", "JSONL path the manual ban-rule would-bans append to (TR-195 leaf 1; empty = the evidence stays in the engine log)")
 	tlsKey := flag.String("tls-key", "", "key PEM for -tls-cert (TR-34 secondary mode)")
 	flag.Parse()
+	banEvidencePath = *banEvidence
 
 	if *upstream == "" {
 		fmt.Fprintln(os.Stderr, "engine: --upstream is required")
