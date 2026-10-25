@@ -33,6 +33,10 @@
 
 set -euo pipefail
 
+# the target gate (issue #261): the prereq = docker OR a reachable cluster.
+# shellcheck disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/prereq.sh"
+
 DX1_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${DX1_DIR}/../.." && pwd)"
 

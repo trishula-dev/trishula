@@ -1,6 +1,21 @@
 # lab/
 
-Demo + DX1 scenarios on kind with NGF (TR-06, TR-23).
+Demo + DX1 scenarios with NGF (TR-06, TR-23).
+
+## The target gate (issue #261)
+
+Every lab entry (`demo.sh`, `lab/dx1/setup.sh`) sources
+[`prereq.sh`](prereq.sh). The prereq = **docker OR kubernetes**:
+
+- docker without a cluster = the docker target (the standalone image path).
+- kubectl with a reachable cluster = the k8s target. Any context works:
+  a local kind or OrbStack, a hypervisor-hosted VM's node, or a cloud
+  Kubernetes (EKS, DOKS) — point `kubeconfig` at it and run.
+- Neither = the script refuses and names exactly what to install.
+
+`prereq.sh` exports `LAB_TARGET` / `LAB_CONTEXT` / `LAB_LOCAL`; the lab
+branches on them (the image load stays a local-cluster leg; a remote
+context needs its registry — the follow-up leaf).
 
 ## Environment gates
 
