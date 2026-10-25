@@ -21,6 +21,13 @@ const (
 	mapVerdictCache = "verdict_cache"
 	mapBanTable     = "ban_table"
 
+	// TR-203 L1 (issues #264/#242): the UDP flood leg's maps — the
+	// rate rows (per-source window counters), the knob row and the
+	// verdict counters.
+	mapRateWindows = "rate_windows"
+	mapShieldKnobs = "shield_knobs"
+	mapShieldStats = "shield_stats"
+
 	// Verdict actions (XDP "action" values in verdict_cache/ban_table).
 	actionAllow uint8 = 0
 	actionDrop  uint8 = 1
@@ -46,6 +53,9 @@ func TestKernelContract(t *testing.T) {
 		{"acl4 is LPM trie", mapACL4, "lpm_trie", 1 << 20},
 		{"verdict_cache is LRU", mapVerdictCache, "lru_hash", 1 << 20},
 		{"ban_table is LRU", mapBanTable, "lru_hash", 1 << 20},
+		{"rate_windows is LRU", mapRateWindows, "lru_hash", 1 << 16},
+		{"shield_knobs is array", mapShieldKnobs, "array", 1},
+		{"shield_stats is per-CPU", mapShieldStats, "percpu_array", 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

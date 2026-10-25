@@ -38,21 +38,23 @@ import (
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target native flow_dos ../../bpf/flow_tc.c -- -I../../bpf -O2 -g
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target native ban_dos ../../bpf/ban_xdp.c -- -I../../bpf -O2 -g
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target native udp_shield ../../bpf/shield_xdp.c -- -I../../bpf -O2 -g
 
 const (
-	ns195   = "tr195dos"
-	veth195 = "tr195h0"
-	nsDev   = "tr195n0"
-	nsV4195 = "10.77.0.66/24"
-	v4195   = "10.77.0.1/24"
-	off195  = "10.77.0.66"
-	host195 = "10.77.0.1"
-	pin195  = "/sys/fs/bpf/tr195"
-	pinFlow = "/sys/fs/bpf/tr195/flow_tc"
-	pinStat = "/sys/fs/bpf/tr195/flow_stats"
-	pinBan  = "/sys/fs/bpf/tr195/ban_xdp"
-	pinBans = "/sys/fs/bpf/tr195/bans_v4"
-	ev195   = "/tmp/tr195/dos_runner_evidence.jsonl"
+	ns195     = "tr195dos"
+	veth195   = "tr195h0"
+	nsDev     = "tr195n0"
+	nsV4195   = "10.77.0.66/24"
+	v4195     = "10.77.0.1/24"
+	off195    = "10.77.0.66"
+	host195   = "10.77.0.1"
+	pin195    = "/sys/fs/bpf/tr195"
+	pinFlow   = "/sys/fs/bpf/tr195/flow_tc"
+	pinStat   = "/sys/fs/bpf/tr195/flow_stats"
+	pinBan    = "/sys/fs/bpf/tr195/ban_xdp"
+	pinBans   = "/sys/fs/bpf/tr195/bans_v4"
+	pinShield = "/sys/fs/bpf/tr195/shield_xdp"
+	ev195     = "/tmp/tr195/dos_runner_evidence.jsonl"
 )
 
 func mustRoot195(t *testing.T) {
@@ -83,6 +85,7 @@ func cleanup195(t *testing.T) {
 	_ = os.Remove(pinStat)
 	_ = os.Remove(pinBan)
 	_ = os.Remove(pinBans)
+	_ = os.Remove(pinShield)
 	_ = exec.Command("ip", "netns", "del", ns195).Run()
 	_ = exec.Command("ip", "link", "del", veth195).Run()
 }
