@@ -75,24 +75,48 @@ func (v *TokenVerifier) Mint(state string, ttl time.Duration, now time.Time) (st
 	return b64NoPad.EncodeToString(body) + "." + v.sign(body), nil
 }
 
+// decode checks the signature and the shape and returns the payload
+// (shared by Verify and VerifyPeek).
+func decode(v *TokenVerifier, tok string) (payload, error) {
+	bodyB64, sigB64, ok := strings.Cut(tok, ".")
+	if !ok {
+		return payload{}, fmt.Errorf("%w: no separator", ErrMalformed)
+	}
+	body, err := b64NoPad.DecodeString(bodyB64)
+	if err != nil {
+		return payload{}, fmt.Errorf("%w: payload: %w", ErrMalformed, err)
+	}
+	if !hmac.Equal([]byte(v.sign(body)), []byte(sigB64)) {
+		return payload{}, ErrBadSignature
+	}
+	var p payload
+	if err := json.Unmarshal(body, &p); err != nil {
+		return payload{}, fmt.Errorf("%w: payload: %w", ErrMalformed, err)
+	}
+	return p, nil
+}
+
+// VerifyPeek checks the signature and the expiry and returns the state
+// WITHOUT consuming the one-shot window. The challenge flow peeks while
+// the solver reads the problem; only the solve consumes.
+func (v *TokenVerifier) VerifyPeek(tok string, now time.Time) (string, error) {
+	p, err := decode(v, tok)
+	if err != nil {
+		return "", err
+	}
+	if now.Unix() >= p.Exp {
+		return "", ErrExpired
+	}
+	return p.State, nil
+}
+
 // Verify checks the signature, the expiry and the one-shot window, and
 // returns the minted state on a pass. Every refusal = a distinct error
 // (the redirect hop's log reads the reason).
 func (v *TokenVerifier) Verify(tok string, now time.Time) (string, error) {
-	bodyB64, sigB64, ok := strings.Cut(tok, ".")
-	if !ok {
-		return "", fmt.Errorf("%w: no separator", ErrMalformed)
-	}
-	body, err := b64NoPad.DecodeString(bodyB64)
+	p, err := decode(v, tok)
 	if err != nil {
-		return "", fmt.Errorf("%w: payload: %w", ErrMalformed, err)
-	}
-	if !hmac.Equal([]byte(v.sign(body)), []byte(sigB64)) {
-		return "", ErrBadSignature
-	}
-	var p payload
-	if err := json.Unmarshal(body, &p); err != nil {
-		return "", fmt.Errorf("%w: payload: %w", ErrMalformed, err)
+		return "", err
 	}
 	if now.Unix() >= p.Exp {
 		return "", ErrExpired

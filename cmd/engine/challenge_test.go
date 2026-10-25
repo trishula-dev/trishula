@@ -89,11 +89,13 @@ func TestChallengeVerdictRedirectsWithToken(t *testing.T) {
 		t.Fatalf("the verified hop = %d, want 200", w2.Code)
 	}
 
-	// The replay: the same token = 403.
+	// The re-read: the hop peeks (nothing consumed); the same token =
+	// the problem page again (the replay refusal moved to the solve in
+	// leaf 3).
 	w3 := httptest.NewRecorder()
 	h.ServeHTTP(w3, hop)
-	if w3.Code != http.StatusForbidden {
-		t.Fatalf("the replayed hop = %d, want 403", w3.Code)
+	if w3.Code != http.StatusOK {
+		t.Fatalf("the re-read hop = %d, want 200 (the peek consumes nothing)", w3.Code)
 	}
 
 	// The tamper: a flipped payload byte = 403.
