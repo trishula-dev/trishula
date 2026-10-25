@@ -4,9 +4,8 @@ package shield
 // AUTOMATIC DoS leg. The runner sweeps the flow-features projection into
 // the ban path: the feature read → the cues → IngestCues (the scored
 // evidence) → Assess (the shadow crossing) → BanEnforcer.Record (the
-// kernel row + the receipt). The dynamic signature rides the cue and the
-// record verbatim (the watertight chain: the map, the evidence and the
-// kernel row read the same sig). Kernel-free core: the FeatureReader
+// kernel row + the receipt). The cue note, the evidence record and the
+// kernel row state the same signature. Kernel-free core: the FeatureReader
 // interface decouples the pinned-map adapter (the linux surface files
 // this record's leaf 3).
 

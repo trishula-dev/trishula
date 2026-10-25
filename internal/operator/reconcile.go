@@ -172,7 +172,7 @@ func (e *Eval) Decide(req cel.Request) (Decision, error) {
 					d.Action = v1alpha1.DefaultActionBlock // an enforced match stops the request
 				case cel.ActionBan:
 					d.Action = v1alpha1.DefaultActionBlock // a manual ban stops the request
-					d.BanDirect = true                      // the consult emits the direct would-ban
+					d.BanDirect = true                     // the consult emits the direct would-ban
 				}
 				return d, nil
 			}
