@@ -136,7 +136,7 @@ surface. Hosted CI stays the calibration surface.
 
 ## Proof
 
-The verbatim `lab/demo.sh` output for the Phase 0 exit sits on the recorded
+The verbatim `lab/demo.sh` output for the rc1 exit (2026-10-10) sits on the recorded
 run at main `ed9b271`. The hop, M9 and parity evidence trails link from the
 rows above.
 
