@@ -1,11 +1,10 @@
 package otel
 
 // bansink.go — TR-195 leaf 3 (issue #237): the verdict pipeline's ban
-// sink. The rateban engine's evidence rides BOTH surfaces through one
-// seat: the engine's own receipts (the JSONL the tests read) and the
-// verdict pipeline's ban log record (trishula.ban: the operator's
-// watertight-observability path — the record cites the ban key, tier,
-// score, reasons and, when present, the dynamic signature verdict.dos.sig).
+// sink. The rateban engine's evidence surface has two readers: the
+// engine's own records (the JSONL the tests read) and the verdict
+// pipeline's ban log record. The record states the ban key, tier, score,
+// reasons and, when present, the dynamic signature verdict.dos.sig.
 
 import (
 	rateban "github.com/trishula-dev/trishula/internal/engine/rateban"
@@ -13,8 +12,8 @@ import (
 
 // BanLogSink emits every would-ban the rateban engine produces as a
 // trishula.ban log record through the pipeline (EmitBan; the in-process
-// exporter = the v0 surface, the collector cutover rides TR-08c/TR-23 and
-// reuses the schema verbatim).
+// exporter = the v0 surface, the collector cutover is the TR-08c/TR-23
+// scope and reuses the schema verbatim).
 type BanLogSink struct{ p *Pipeline }
 
 // NewBanLogSink wires the pipeline as a rateban evidence sink. p must be

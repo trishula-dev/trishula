@@ -37,9 +37,9 @@ func main() {
 	}
 
 	// The verdict pipeline: the would-bans ride the trishula.ban log
-	// record (the operator's watertight-observability receipt). The
-	// in-process exporter = the v0 surface; the collector cutover rides
-	// TR-08c/TR-23 and reuses the schema verbatim. -no-otel turns the
+	// record (the operator's observability path). The
+	// in-process exporter = the v0 surface; the collector cutover is
+	// the TR-08c/TR-23 scope and reuses the schema verbatim. -no-otel turns the
 	// pipeline off (the runner keeps the host-log receipts).
 	pipes := flag.Bool("no-otel", false, "disable the verdict pipeline (the ban log records)")
 	flag.Parse()
