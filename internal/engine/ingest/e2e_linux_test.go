@@ -257,6 +257,17 @@ func TestFlowTCRingE2E(t *testing.T) {
 	// carried by the unit wire tests + the TR-06 real-kernel lab. The
 	// header-field (the reference-implementation flow_event) assertions above are the
 	// acceptance's "full header fields".
+	// TR-194: the TC consults stamp on every emitted event. Bit semantics
+	// (the stage-stamps record sec 5): 1 = the consult ran on a packet
+	// that reached the emit. The emit point sits after the L4 walk (bit 4)
+	// and after the ban probe (bit 5); the advisory peek runs at the emit
+	// (bit 6). Bits 0-3 (xdp.*) fill from the leaf-2 handoff map; the
+	// landed expectation on this harness: exactly bits 4|5|6.
+	if got.Stages != 0x70 {
+		t.Fatalf("event stages = %#x, want 0x70 (tc.classify|tc.ban|tc.fastpath)", got.Stages)
+	}
+	t.Logf("E2E: stage stamps read %#x (tc.classify|tc.ban|tc.fastpath)", got.Stages)
+
 	// Lost-count parity: C-side lost_events == Go Stats.RingLossTotal.
 	var lost uint64
 	zero := uint32(0)

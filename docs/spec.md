@@ -557,6 +557,8 @@ Cross-pod sharing: the shield pins maps on host BPFFS (`/sys/fs/bpf/trishula/`).
 
 Ring events carry a fixed 128B header + optional bounded slices (path hint, JA4-style fingerprint fields). Sizing: 16 MiB default. The relay samples (1/2^k) when consumers lag. An always-sampled high-priority class carries ban writes, cache hits and block decisions. The ring is never the payload path (§9.1). Loss is then a telemetry-quality issue, surfaced as `trishula_shield_ring_dropped_total`.
 
+TR-194 (2026-10-25): the stage-stamp bitmap grows the event wire to 208 bytes (+8 = 4.00%). The 16 MiB ring holds 80,659 records (from 83,886 at 200 bytes; −3.85%). The decoder reads both sizes; a landed record reads an all-absent bitmap.
+
 ### 9.5 Kernel-side rate accounting (feed §13)
 
 The shield keeps cheap per-source EWMA counters (`rate_windows`), sampled at XDP/TC. The signals: SYN rates, UDP rates and post-termination request-start rates on plaintext legs. The counters are *inputs* to the engine's ban algorithm (§13.3) and a *fast-path veto*. The engine writes a ban; the kernel enforces it without further userspace consultation. Kernel counters alone never issue a ban; they escalate evidence. A SYN-flood EWMA burst pre-scores the source for the engine's decision.
