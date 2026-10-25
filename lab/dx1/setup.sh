@@ -146,6 +146,12 @@ nodes:
   - containerPort: 31438
     hostPort: 31438
     protocol: tcp
+  - containerPort: 31441
+    hostPort: 31441
+    protocol: tcp
+  - containerPort: 31440
+    hostPort: 31440
+    protocol: udp
 YAML
   kind create cluster \
     --image "${KINDEST_NODE_REF}@sha256:${KINDEST_NODE_DIGEST}" \
@@ -396,6 +402,14 @@ if ! docker image inspect "ghcr.io/mendhak/http-https-echo:42" >/dev/null 2>&1; 
   docker_pull "ghcr.io/mendhak/http-https-echo:42"
 fi
 load_into_node "ghcr.io/mendhak/http-https-echo:42"
+# TR-203 L2: the terminator leg's image = the 2.7.2 dataplane build (its
+# nginx carries --with-http_v3_module; measure with `nginx -V` on the
+# image). The ref pins the same string the derived manifest carries.
+TERM_IMAGE="${TERM_IMAGE:-ghcr.io/nginx/nginx-gateway-fabric/nginx:2.7.2}"
+if ! docker image inspect "${TERM_IMAGE}" >/dev/null 2>&1; then
+  docker_pull "${TERM_IMAGE}"
+fi
+load_into_node "${TERM_IMAGE}"
 
 if [ "${NGF_INSTALLED_NEW}" = "1" ]; then
   kubectl rollout status --timeout=5m -n "${NGF_NS}" "deployment/${NGF_RELEASE}-nginx-gateway-fabric"
@@ -431,10 +445,13 @@ else
   FIXTURE_DIR="$(mktemp -d /tmp/dx1-lab-tls.XXXXXX)"
   # RSA-2048: the pair every openssl build (LibreSSL on macOS included) and
   # Go's x509 reader agree on. The key exchange never reads this key.
+  # SANs (TR-203 L2): the *.dx1.example.com DNS rows + the 127.0.0.1 IP
+  # SAN the host-side dials read (the h3spec leg dials by IP; the tls
+  # library then checks the IP SAN against the dialed address).
   openssl req -x509 -newkey rsa:2048 \
     -keyout "${FIXTURE_DIR}/tls.key" -out "${FIXTURE_DIR}/tls.crt" \
     -days 30 -nodes -subj '/CN=*.dx1.example.com' \
-    -addext 'subjectAltName=DNS:*.dx1.example.com,DNS:engine.dx1.example.com' \
+    -addext 'subjectAltName=DNS:*.dx1.example.com,DNS:engine.dx1.example.com,IP:127.0.0.1' \
     >/dev/null 2>&1 || {
     echo "the fixture pair generation failed (openssl $?) — the lab TLS leg stays down" >&2
     FIXTURE_DIR=""
@@ -447,11 +464,15 @@ else
       echo "the dx1-lab-tls Secret create failed (cluster reachable?)" >&2
       exit 2
     }
-    echo "dx1-lab-tls fixture in place (CN=*.dx1.example.com; 30-day lab fixture)"
+    echo "dx1-lab-tls fixture in place (CN=*.dx1.example.com; DNS + 127.0.0.1 IP SAN; 30-day lab fixture)"
+    DX1_TLS_FIXTURE=1   # the dx1-ns copy waits for the manifest stage (the ns applies first)
+  else
+    DX1_TLS_FIXTURE=0
   fi
 fi
 
-# --- 6. lab manifests: engine + echo + Gateway/HTTPRoute --------------------
+# --- 6. lab manifests: engine + echo + Gateway/HTTPRoute (+ the L2
+# terminator leg) -------------------------------------------------------------
 log "applying lab manifests (${MANIFESTS_DIR})"
 kubectl apply -f "${MANIFESTS_DIR}/dx1-namespace.yaml"
 kubectl apply -f "${MANIFESTS_DIR}/dx1-backend.yaml"
@@ -459,8 +480,27 @@ kubectl apply -f "${MANIFESTS_DIR}/dx1-engine.yaml"
 kubectl apply -f "${MANIFESTS_DIR}/dx1-gateway.yaml"
 kubectl apply -f "${MANIFESTS_DIR}/dx1-httproute.yaml"
 
+# TR-203 L2 (issue #264, leaf L2): the QUIC-ingress terminator leg. The
+# Secret mounts first (the fixture's dx1-ns copy), then the
+# terminator Service + Deployment. DX1_TLS_LEG=0 leaves the leg
+# unapplied (the fixture stays down — the leg's named absence).
+if [ "${DX1_TLS_LEG:-1}" = "1" ] && [ "${DX1_TLS_FIXTURE:-0}" = "1" ]; then
+  kubectl -n dx1 delete secret dx1-lab-tls --ignore-not-found >/dev/null 2>&1 || true
+  kubectl -n dx1 create secret tls dx1-lab-tls \
+    --cert="${FIXTURE_DIR}/tls.crt" --key="${FIXTURE_DIR}/tls.key" \
+    >/dev/null 2>&1 || {
+    echo "the dx1-ns dx1-lab-tls Secret create failed (the manifest stage needs it; the fixture stage produced it)" >&2
+    exit 2
+  }
+  echo "dx1-lab-tls fixture in the dx1 ns (the terminator mount)"
+  kubectl apply -f "${MANIFESTS_DIR}/dx1-terminator.yaml"
+fi
+
 kubectl rollout status --timeout=3m -n dx1 deployment/dx1-engine
 kubectl rollout status --timeout=3m -n dx1 deployment/dx1-echo
+if [ "${DX1_TLS_LEG:-1}" = "1" ]; then
+  kubectl rollout status --timeout=3m -n dx1 deployment/dx1-terminator
+fi
 
 # An existing 1.x lab (idempotent re-run): pin the https NodePort row too.
 case "${NGF_CHART_VERSION}" in
