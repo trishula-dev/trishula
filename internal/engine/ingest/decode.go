@@ -30,8 +30,17 @@ const (
 	// align-8 for the leading u64) — total 200 bytes. Verified live in-VM:
 	// the E2E fails loudly if any side drifts.
 	EventHdrSize = 200 // pads included; path hint at offset 66
-	MaxEventSize = EventHdrSize
 	PathHintLen  = 128
+
+	// TR-194 stage-stamp extension (the record's §5): `stages` rides at
+	// offset 200 (one __u64 appended after the tail pad). The record class
+	// grows to 208 bytes; bytes 0-199 stay byte-identical. The decoder
+	// reads BOTH sizes: a landed record carries an all-absent bitmap, so a
+	// mixed fleet stays honest (the old engine's gate counts the new size
+	// in SkippedTotal; the new engine reads the old size).
+	StagesOffset   = 200 // the stages field's offset in the extended record
+	StagesWireSize = 208 // the extended record size (200 + 8)
+	MaxEventSize   = StagesWireSize
 )
 
 var (
@@ -56,6 +65,7 @@ type FlowEvent struct {
 	TLSSeen    uint8
 	Family     uint8
 	PathHint   [128]byte
+	Stages     uint64 // TR-194: the 7-bit kernel-consult bitmap; 0 on landed (200-byte) records
 }
 
 // PathString returns the NUL-trimmed path hint.
@@ -122,6 +132,16 @@ func DecodeFlowEvent(raw []byte) (*FlowEvent, error) {
 	var tailPad [6]byte // C struct tail pad (align-8 rounding)
 	if _, err := r.Read(tailPad[:]); err != nil {
 		return nil, err
+	}
+	// TR-194: the extended record carries the stage bitmap at offset 200.
+	// Absence carries no claim: a landed record reads all-absent.
+	e.Stages = 0
+	if remaining := len(raw) - StagesOffset; remaining >= 8 {
+		ext := make([]byte, 8)
+		if _, err := r.Read(ext); err != nil {
+			return nil, err
+		}
+		e.Stages = binary.LittleEndian.Uint64(ext)
 	}
 	return &e, nil
 }

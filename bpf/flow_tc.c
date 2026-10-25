@@ -73,12 +73,30 @@ struct flow_event {
 	__u8 tls_seen;
 	__u8 family;            /* KEY_AF_INET / KEY_AF_INET6 (#62) */
 	char path_hint[128];
+/* TR-194 (issue #236): the 7-bit kernel-consult bitmap, appended last (the
+ * stage-stamps record sec 5 freeze). Bytes 0-199 stay identical; the field
+ * rides at offset 200; sizeof reads 208. Bits 0-3 (xdp.*) fill from the
+ * flow-keyed handoff map (leaf 2). At leaf 1 the TC emit stamps its own
+ * three consults: bit 4 tc.classify (the bounded L4 walk ran), bit 5 tc.ban
+ * (the ban_table probe ran; a live ban SHOTs before the emit = no event,
+ * no bit), bit 6 tc.fastpath (the sec 9.6 advisory peek ran). Bit = 1 reads
+ * "the consult ran on a packet that reached the emit". No bit names a drop
+ * or an engine stage. */
+	__u64 stages;
 };
 
 struct {
 	__uint(type, BPF_MAP_TYPE_RINGBUF);
 	__uint(max_entries, 1 << 24); /* 16 MiB per node (§9.4) */
 } events SEC(".maps");
+
+/* TR-194: the TC-plane consult bits the emit stamps (the record sec 3.2):
+ * classify = bit 4, the ban probe = bit 5, the fastpath advisory = bit 6.
+ * The XDP bits (0-3) fill from the leaf-2 handoff map; at leaf 1 they read 0. */
+#define TC_ST_CLASSIFY 0x10
+#define TC_ST_BAN      0x20
+#define TC_ST_FASTPATH 0x40
+#define TC_STAGES_BASE (TC_ST_CLASSIFY | TC_ST_BAN)
 
 /* Lost-record accounting (§9.4 loss surface; Engine.RingLossTotal). */
 struct {
@@ -160,7 +178,8 @@ static __always_inline int emit_flow_event(struct __sk_buff *skb,
 					   __u16 sport, __u16 dport,
 					   __u8 tcp_flags, __u8 family,
 					   __u16 payload_len,
-					   void *tcp_end)
+					   void *tcp_end,
+					   __u64 stages)
 {
 	struct flow_event *ev = bpf_ringbuf_reserve(&events, sizeof(*ev), 0);
 	if (!ev) {
@@ -174,6 +193,7 @@ static __always_inline int emit_flow_event(struct __sk_buff *skb,
 
 	__builtin_memset(ev, 0, sizeof(*ev));
 	ev->ts_ns = bpf_ktime_get_ns();
+	ev->stages = stages | TC_ST_FASTPATH; /* the advisory peek runs below */
 	ev->saddr_v4 = s4;
 	ev->daddr_v4 = d4;
 	if (s6)
@@ -269,7 +289,8 @@ static __always_inline int on_ip4(struct __sk_buff *skb, void *data,
 	__u16 payload_len = (__u32)skb->len - ((__u32)(long)tcp_end - (__u32)(long)data);
 	emit_flow_event(skb, data, data_end, ip->saddr, NULL, ip->daddr, NULL,
 			tcp->source, tcp->dest, tcp->syn ? 0x2 : 0,
-			KEY_AF_INET, (__u16)payload_len, tcp_end);
+			KEY_AF_INET, (__u16)payload_len, tcp_end,
+			TC_STAGES_BASE);
 
 	/* Per-flow accounting (shield → shield; §9.3). TR-31: the window
 	 * features stamp on both legs (first/last counted-segment ts).
@@ -333,7 +354,8 @@ static __always_inline int on_ip6(struct __sk_buff *skb, void *data,
 
 	emit_flow_event(skb, data, data_end, 0, ip6h->saddr.in6_u.u6_addr8,
 			0, ip6h->daddr.in6_u.u6_addr8, tcp->source, tcp->dest,
-			tcp->syn ? 0x2 : 0, KEY_AF_INET6, skb->len, tcp_end6);
+			tcp->syn ? 0x2 : 0, KEY_AF_INET6, skb->len, tcp_end6,
+			TC_STAGES_BASE);
 
 	/* TR-31: the per-flow accounting rides the IPv6 leg too — the
 	 * family byte in flow_key carries the discriminator (#62); the
