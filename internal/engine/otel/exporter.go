@@ -267,6 +267,16 @@ func newSpan(s sdktrace.ReadOnlySpan) Span {
 	for _, ev := range s.Events() {
 		span.Events = append(span.Events, ev.Name)
 	}
+	// TR-194: the shield events join as links (a context + attributes,
+	// never a span — the stage-stamps record §8).
+	for _, l := range s.Links() {
+		lk := Link{
+			TraceID:    l.SpanContext.TraceID().String(),
+			SpanID:     l.SpanContext.SpanID().String(),
+			Attributes: ksFromKVs(l.Attributes),
+		}
+		span.Links = append(span.Links, lk)
+	}
 	return span
 }
 

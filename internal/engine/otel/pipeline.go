@@ -65,6 +65,20 @@
 //	ban.key / ban.tier / ban.score / ban.reason (+ verdict.dos.sig when
 //	the record holds one; no request.id — the key IS the correlation).
 //
+//	Stage-stamp extension (TR-194, issue #236): the record schema stays
+//	trishula.verdict.v1 (additive; the M10 pin). When the verdict carries
+//	the ladder's walk rows, the span + the log record carry
+//	ladder.rows (the rows JSON: the §3.4 tokens, the v1 row shape
+//	{stage, matched, us}, walk order; run stages only — a skipped stage
+//	reads absent). When Emit receives correlated shield events
+//	(WithEvents), the span gains ONE LINK per event (the link carries the
+//	event fields: shield.ts_ns, shield.family, shield.sport, shield.dport,
+//	shield.tcp_flags, shield.payload_len, shield.path, shield.stages) and
+//	the log record carries shield.stages (the OR over the correlated
+//	bitmaps — the union of the kernel's consults, never invented). No
+//	correlated event reads NO shield field. The metric's datapoint set
+//	stays pinned (no stamp keys on the counter).
+//
 // The middleware span `trishula.request` (wire.go) carries request.id,
 // http.method and http.path as string attrs and parents the verdict span.
 package otel
@@ -72,6 +86,8 @@ package otel
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -107,14 +123,29 @@ const (
 	// Present on the verdict signals only when the verdict carries a sig;
 	// present on ban records always (a ban always carries its sig or nil —
 	// nil sig = no attr).
-	AttrDosSig      = "verdict.dos.sig"
-	AttrBanKey      = "ban.key"
-	AttrBanTier     = "ban.tier"
-	AttrBanScore    = "ban.score"
-	AttrBanReason   = "ban.reason"
-	AttrHTTPMethod  = "http.method"
-	AttrHTTPPath    = "http.path"
-	AttrServiceName = "service.name"
+	AttrDosSig = "verdict.dos.sig"
+	// TR-194 (issue #236): the stage-stamp fields. ladder.rows carries
+	// the walk rows JSON (the record's §7 ladder array);
+	// shield.stages carries the OR of the correlated FlowEvent bitmaps
+	// (the record's §7 shield object; optional = absence carries no
+	// claim). The shield.* link attributes carry one event's fields
+	// (the record's §8 list).
+	AttrVerdictLadder = "ladder.rows"
+	AttrShieldStages  = "shield.stages"
+	AttrShieldTSNS    = "shield.ts_ns"
+	AttrShieldFamily  = "shield.family"
+	AttrShieldSport   = "shield.sport"
+	AttrShieldDport   = "shield.dport"
+	AttrShieldFlags   = "shield.tcp_flags"
+	AttrShieldPayload = "shield.payload_len"
+	AttrShieldPath    = "shield.path"
+	AttrBanKey        = "ban.key"
+	AttrBanTier       = "ban.tier"
+	AttrBanScore      = "ban.score"
+	AttrBanReason     = "ban.reason"
+	AttrHTTPMethod    = "http.method"
+	AttrHTTPPath      = "http.path"
+	AttrServiceName   = "service.name"
 )
 
 // MetaPathHint is the TxContext.Metadata key the pipeline reads the route
@@ -246,8 +277,26 @@ func (p *Pipeline) Emit(ctx context.Context, tx *ingest.TxContext, v *ladder.Ver
 	// datapoint set is keyed by request in v0 (see package comment).
 	attrs := append(VerdictAttrs(tx, v), attribute.String(AttrRequestID, rid))
 
+	// TR-194: the correlated shield events — one span link per event
+	// (the record's §8; a link carries a context + attributes, never a
+	// span). The events' bitmaps fold into the record's shield.stages
+	// (the OR — the union of the kernel's consults, never invented).
+	events := emitEvents(opts)
+	links := make([]trace.Link, 0, len(events))
+	for _, fe := range events {
+		links = append(links, trace.Link{
+			SpanContext: eventLinkContext(fe),
+			Attributes:  eventLinkAttrs(fe),
+		})
+	}
+	startOpts := make([]trace.SpanStartOption, 0, 2)
+	startOpts = append(startOpts, trace.WithAttributes(attrs...))
+	if len(links) > 0 {
+		startOpts = append(startOpts, trace.WithLinks(links...))
+	}
+
 	// (a) the span — started, left recording while (b)/(c) emit below.
-	sctx, span := p.tracer.Start(ctx, SpanName, trace.WithAttributes(attrs...))
+	sctx, span := p.tracer.Start(ctx, SpanName, startOpts...)
 	defer span.End()
 
 	// (b) the metric — one increment with the verdict attributes + the
@@ -259,12 +308,22 @@ func (p *Pipeline) Emit(ctx context.Context, tx *ingest.TxContext, v *ladder.Ver
 	p.count.Add(sctx, 1, apiMetric.WithAttributes(metricKVs...))
 
 	// (c) the log — the SDK stamps TraceID/SpanID from sctx (the span is
-	// still recording, so the record correlates structurally).
+	// still recording, so the record correlates structurally). The
+	// record carries the stage-stamp fields additively (TR-194):
+	// shield.stages when events correlated, ladder.rows when the walk
+	// recorded rows; the metric's set above stays pinned.
+	logAttrs := append([]attribute.KeyValue(nil), attrs...)
+	if len(events) > 0 {
+		logAttrs = append(logAttrs, attribute.Int64(AttrShieldStages, orStages(events)))
+	}
+	if len(v.Rows) > 0 {
+		logAttrs = append(logAttrs, attribute.String(AttrVerdictLadder, ladderRowsJSON(v.Rows)))
+	}
 	rec := apiLog.Record{}
 	rec.SetEventName(SpanName)
 	rec.SetSeverity(apiLog.SeverityInfo)
 	rec.SetBody(attribute.StringValue(logBody(v.Action, rid)))
-	rec.AddAttributes(attrs...)
+	rec.AddAttributes(logAttrs...)
 	p.logr.Emit(sctx, rec)
 
 	return Correlation{RequestID: rid, TraceID: span.SpanContext().TraceID().String(), SpanID: span.SpanContext().SpanID().String()}, nil
@@ -372,6 +431,106 @@ func VerdictAttrs(tx *ingest.TxContext, v *ladder.Verdict) []attribute.KeyValue 
 // the verdict record cite the same measured facts).
 func dosSigJSON(s rateban.DoSSig) string {
 	b, err := json.Marshal(s)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// emitEvents collects the correlated shield events from the options
+// (nil events drop; an uncorrelated emit collects none).
+func emitEvents(opts []EmitOption) []*ingest.FlowEvent {
+	var events []*ingest.FlowEvent
+	for _, o := range opts {
+		for _, fe := range o.events {
+			if fe != nil {
+				events = append(events, fe)
+			}
+		}
+	}
+	return events
+}
+
+// orStages folds the correlated events' bitmaps (the OR: the union of
+// what the kernel consulted for the request — no bit ever invents).
+func orStages(events []*ingest.FlowEvent) int64 {
+	var acc uint64
+	for _, fe := range events {
+		if fe == nil {
+			continue
+		}
+		acc |= fe.Stages
+	}
+	return int64(acc)
+}
+
+// eventLinkContext derives the link's SpanContext from the event (the
+// record's §8: a link carries a context + attributes, never a span). The
+// ids hash the event's identity — deterministic, valid, and the event's
+// own; the link claims no existing trace (a collector joins on the
+// attributes, not on a span lookup).
+func eventLinkContext(fe *ingest.FlowEvent) trace.SpanContext {
+	h := sha256.New()
+	var be [8]byte
+	binary.BigEndian.PutUint64(be[:], fe.Timestamp)
+	h.Write(be[:])
+	h.Write(fe.SrcIP4[:])
+	h.Write(fe.SrcIP6[:])
+	h.Write(fe.DstIP4[:])
+	h.Write(fe.DstIP6[:])
+	var ports [4]byte
+	binary.BigEndian.PutUint16(ports[:2], fe.SrcPort)
+	binary.BigEndian.PutUint16(ports[2:], fe.DstPort)
+	h.Write(ports[:])
+	h.Write([]byte{fe.TCPFlags, fe.Family})
+	var rest [6]byte
+	binary.BigEndian.PutUint32(rest[:4], fe.Mark)
+	binary.BigEndian.PutUint16(rest[4:], fe.PayloadLen)
+	h.Write(rest[:])
+	h.Write(fe.PathHint[:])
+	var sc trace.SpanContextConfig
+	sum := h.Sum(nil)
+	copy(sc.SpanID[:], sum[:8])
+	copy(sc.TraceID[:], sum[8:24])
+	return trace.NewSpanContext(sc)
+}
+
+// eventLinkAttrs builds one link's attribute set: the event fields the
+// record's §8 names (timestamps, family, ports, TCP flags, payload
+// length, path hint, stages integer).
+func eventLinkAttrs(fe *ingest.FlowEvent) []attribute.KeyValue {
+	return []attribute.KeyValue{
+		attribute.Int64(AttrShieldTSNS, int64(fe.Timestamp)),
+		attribute.Int(AttrShieldFamily, int(fe.Family)),
+		attribute.Int(AttrShieldSport, int(fe.SrcPort)),
+		attribute.Int(AttrShieldDport, int(fe.DstPort)),
+		attribute.Int(AttrShieldFlags, int(fe.TCPFlags)),
+		attribute.Int(AttrShieldPayload, int(fe.PayloadLen)),
+		attribute.String(AttrShieldPath, fe.PathString()),
+		attribute.Int64(AttrShieldStages, int64(fe.Stages)),
+	}
+}
+
+// ladderJSONRow is the verdict record's v1 row shape (the stage-stamps
+// record §7: {stage, matched, us}; the tokens are the §3.4 names).
+type ladderJSONRow struct {
+	Stage   string   `json:"stage"`
+	Matched []string `json:"matched"`
+	US      int64    `json:"us"`
+}
+
+// ladderRowsJSON renders the walk rows for the ladder.rows attribute
+// (walk order; a row's matched array stays present — nil reads []).
+func ladderRowsJSON(rows []ladder.Row) string {
+	out := make([]ladderJSONRow, 0, len(rows))
+	for _, r := range rows {
+		row := ladderJSONRow{Stage: r.Stage.Token(), Matched: []string{}, US: r.US}
+		for _, id := range r.Matched {
+			row.Matched = append(row.Matched, string(id))
+		}
+		out = append(out, row)
+	}
+	b, err := json.Marshal(out)
 	if err != nil {
 		return ""
 	}
