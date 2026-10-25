@@ -45,6 +45,8 @@ NGF_RELEASE="${NGF_RELEASE:-dx1}"
 NGF_NS="${NGF_NS:-nginx-gateway}"
 GATEWAY_NAME="${GATEWAY_NAME:-edge-gateway}"
 NODE_HTTP_PORT="${NODE_HTTP_PORT:-31437}"
+NODE_HTTPS_PORT="${NODE_HTTPS_PORT:-31438}"   # the TLS-leg NodePort (TR-203 L4)
+DX1_TLS_LEG="${DX1_TLS_LEG:-1}"               # 0 = the pre-L4 shape (no https listener leg)
 NGF_INSTALLED_NEW="0"   # 1 once this run helm-installs NGF (the rollout-status gates)
 # The derived manifests: internal/cuegen generates them into the deployment
 # tree from the CUE sources (cue/lab/dx1; TR-46, issue #192). Hand edits
@@ -99,7 +101,17 @@ provider_kind() {
 }
 load_into_node() {
   if provider_kind; then
-    kind load docker-image "$1" --name "$(kind get clusters | head -1)" >/dev/null
+    # Pick the kind cluster the current kubecontext points at; the legacy
+    # head -1 read mis-loads on multi-cluster hosts (a second kind cluster
+    # on the same host got the image instead of the lab's cluster).
+    local cluster kind_cluster
+    cluster="$(kubectl config current-context 2>/dev/null | sed -E 's/^kind-//')" || cluster=""
+    if [ -n "$cluster" ] && kind get clusters 2>/dev/null | grep -qx "$cluster"; then
+      kind_cluster="$cluster"
+    else
+      kind_cluster="$(kind get clusters 2>/dev/null | head -1)"
+    fi
+    kind load docker-image "$1" --name "${kind_cluster}" >/dev/null
   else
     echo "provider kubernetes (OrbStack): $1 visible to the node via the shared docker daemon"
   fi
@@ -130,6 +142,9 @@ nodes:
   extraPortMappings:
   - containerPort: 31437
     hostPort: 31437
+    protocol: tcp
+  - containerPort: 31438
+    hostPort: 31438
     protocol: tcp
 YAML
   kind create cluster \
@@ -196,8 +211,14 @@ helm_sets() {
     --set "gateways[0].spec.listeners[0].port=80" \
     --set "gateways[0].spec.listeners[0].protocol=HTTP" \
     --set "gateways[0].spec.listeners[0].hostname=*.dx1.example.com" \
-    --set 'nginx.service.type=NodePort' \
-    --set-json "nginx.service.nodePorts=[{\"port\":${NODE_HTTP_PORT},\"listenerPort\":80}]"
+    --set 'nginx.service.type=NodePort'
+  # The TLS leg (TR-203 L4): the https NodePort row joins the same list; the
+  # https LISTENER itself comes from the committed dx1-gateway manifest.
+  if [ "$DX1_TLS_LEG" = "1" ]; then
+    printf '%s\n' --set-json "nginx.service.nodePorts=[{\"port\":${NODE_HTTP_PORT},\"listenerPort\":80},{\"port\":${NODE_HTTPS_PORT},\"listenerPort\":443}]"
+  else
+    printf '%s\n' --set-json "nginx.service.nodePorts=[{\"port\":${NODE_HTTP_PORT},\"listenerPort\":80}]"
+  fi
 }
 
 # crane_manifest_evidence <image-ref> — one line of live store evidence: the
@@ -302,10 +323,18 @@ install_ngf_1x() {
     done
     return 1
   }
-  # Pin the NodePort (the 1.x chart assigns a random one).
-  kubectl -n "${NGF_NS}" patch svc "${NGF_RELEASE}-nginx-gateway-fabric" \
-    --type=merge -p "{\"spec\":{\"ports\":[{\"name\":\"http\",\"port\":80,\"nodePort\":${NODE_HTTP_PORT}}]}}"
+  # The 1.x chart assigns a random NodePort: pin both rows here (TR-203 L4
+  # adds the https row; the http row keeps 31437).
+  pin_nodeports
   NGF_CHART_VERSION="${version}"
+}
+
+# pin_nodeports — the 1.x lane's Service carries one random NodePort; the
+# merge patch replaces the ports list, so both rows ride the patch. Re-run
+# safe (step 6 calls it on an existing 1.x lab too).
+pin_nodeports() {
+  kubectl -n "${NGF_NS}" patch svc "${NGF_RELEASE}-nginx-gateway-fabric" \
+    --type=merge -p "{\"spec\":{\"ports\":[{\"name\":\"http\",\"port\":80,\"nodePort\":${NODE_HTTP_PORT}},{\"name\":\"https\",\"port\":443,\"nodePort\":${NODE_HTTPS_PORT}}]}}"
 }
 
 if ! helm status "${NGF_RELEASE}" -n "${NGF_NS}" >/dev/null 2>&1; then
@@ -374,10 +403,52 @@ if [ "${NGF_INSTALLED_NEW}" = "1" ]; then
     1.*)
       ;; # the 1.x chart ships one deployment; a ${NGF_RELEASE}-nginx read fails on a missing deployment
     *)
-      # the 2.x architecture ships the nginx data plane as its own deployment
-      kubectl rollout status --timeout=5m -n "${NGF_NS}" "deployment/${NGF_RELEASE}-nginx"
+      # The 2.x dataplane runs as its own deployment. The 2.7.x chart names
+      # the dataplane after the GATEWAY (edge-gateway-nginx); older 2.x
+      # names read ${NGF_RELEASE}-nginx. Read both, one must roll.
+      if ! kubectl rollout status --timeout=5m -n "${NGF_NS}" \
+            "deployment/${GATEWAY_NAME}-nginx" 2>/tmp/dx1-dp-roll.log; then
+        cat /tmp/dx1-dp-roll.log >&2
+        kubectl rollout status --timeout=5m -n "${NGF_NS}" "deployment/${NGF_RELEASE}-nginx"
+      fi
       ;;
   esac
+fi
+
+# --- 5a. the TLS leg (TR-203 L4): the listener cert fixture + the Secret -----
+# The lab terminator surface needs a TLS leg before any key exchange reads
+# off it. The fixture pair is a self-signed LAB cert (openssl, local temp
+# dir), created into the dx1-lab-tls Secret in the Gateway ns — never a
+# product cert, never committed. The PQ signature migration (the CA/cert
+# chain) stays on the 2026.02/03 calendar lanes (issue #264, decision 4):
+# this fixture exists only to open the key-exchange leg. DX1_TLS_LEG=0 skips
+# the leg (the pre-L4 lab shape; the http steering leg carries the evidence
+# unchanged).
+log "TLS leg (TR-203 L4): the dx1-lab-tls fixture Secret"
+if [ "$DX1_TLS_LEG" != "1" ]; then
+  echo "DX1_TLS_LEG=0 — the https leg runs without its Secret: NGF marks the https listener Reconciled=false, the read reports the leg down"
+else
+  FIXTURE_DIR="$(mktemp -d /tmp/dx1-lab-tls.XXXXXX)"
+  # RSA-2048: the pair every openssl build (LibreSSL on macOS included) and
+  # Go's x509 reader agree on. The key exchange never reads this key.
+  openssl req -x509 -newkey rsa:2048 \
+    -keyout "${FIXTURE_DIR}/tls.key" -out "${FIXTURE_DIR}/tls.crt" \
+    -days 30 -nodes -subj '/CN=*.dx1.example.com' \
+    -addext 'subjectAltName=DNS:*.dx1.example.com,DNS:engine.dx1.example.com' \
+    >/dev/null 2>&1 || {
+    echo "the fixture pair generation failed (openssl $?) — the lab TLS leg stays down" >&2
+    FIXTURE_DIR=""
+  }
+  if [ -n "${FIXTURE_DIR:-}" ]; then
+    kubectl -n "${NGF_NS}" delete secret dx1-lab-tls --ignore-not-found >/dev/null 2>&1 || true
+    kubectl -n "${NGF_NS}" create secret tls dx1-lab-tls \
+      --cert="${FIXTURE_DIR}/tls.crt" --key="${FIXTURE_DIR}/tls.key" \
+      >/dev/null 2>&1 || {
+      echo "the dx1-lab-tls Secret create failed (cluster reachable?)" >&2
+      exit 2
+    }
+    echo "dx1-lab-tls fixture in place (CN=*.dx1.example.com; 30-day lab fixture)"
+  fi
 fi
 
 # --- 6. lab manifests: engine + echo + Gateway/HTTPRoute --------------------
@@ -390,6 +461,11 @@ kubectl apply -f "${MANIFESTS_DIR}/dx1-httproute.yaml"
 
 kubectl rollout status --timeout=3m -n dx1 deployment/dx1-engine
 kubectl rollout status --timeout=3m -n dx1 deployment/dx1-echo
+
+# An existing 1.x lab (idempotent re-run): pin the https NodePort row too.
+case "${NGF_CHART_VERSION}" in
+  1.*) [ "$DX1_TLS_LEG" = "1" ] && pin_nodeports ;;
+esac
 
 log "DX1 lab setup complete"
 kubectl -n "${NGF_NS}" get gateway,svc 2>/dev/null || true
