@@ -41,9 +41,14 @@ The termination leg reads the lab topology of
   `X-Trishula-Hop: engine`: the request passed the engine hop.
 - **listener read** — `kubectl` reads
   `gateway.edge-gateway listeners[0].protocol` and prints it. The DX1
-  lab ships the plain-HTTP listener today; the reference deployment
-  terminates TLS at this hop. The leg names both facts and prints the
-  live value. An HTTPS-listener leg is PENDING work on the lab itself.
+  lab ships the plain-HTTP listener row (listeners[0]; the reference
+  deployment terminates TLS at this hop). The HTTP-listener row carries
+  the read. An HTTPS row exists since TR-203 L4: listener `https` in
+  `deployment/dx1/manifests/dx1-gateway.yaml`. Its key-exchange read runs
+  separately: `bash lab/dx1/pqc-termination-read.sh`. The record:
+  [docs/deploy/tls-termination-pqc.md](../../docs/deploy/tls-termination-pqc.md).
+  The h3/QUIC listener leg stays PENDING on the lab itself. The TR-203 L2
+  lane owns the build.
 
 Without a reachable cluster the leg prints a loud SKIP line. The
 script never reports a skipped leg as a pass.
