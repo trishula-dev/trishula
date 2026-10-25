@@ -40,6 +40,31 @@ type residue_shieldBanVal struct {
 	_          [4]byte
 }
 
+type residue_shieldRateKey struct {
+	_    structs.HostLayout
+	Addr struct {
+		_  structs.HostLayout
+		V4 uint32
+		_  [12]byte
+	}
+	Family uint8
+	_      [3]byte
+}
+
+type residue_shieldRateVal struct {
+	_             structs.HostLayout
+	WindowStartNs uint64
+	Count         uint32
+	Pad           uint32
+}
+
+type residue_shieldShieldKnobVal struct {
+	_           structs.HostLayout
+	UdpFloodPps uint32
+	Pad         uint32
+	WindowNs    uint64
+}
+
 type residue_shieldVerdictKey struct {
 	_    structs.HostLayout
 	Addr struct {
@@ -65,6 +90,9 @@ type residue_shieldVerdictVal struct {
 const (
 	residue_shieldMapAcl4         = "acl4"
 	residue_shieldMapBanTable     = "ban_table"
+	residue_shieldMapRateWindows  = "rate_windows"
+	residue_shieldMapShieldKnobs  = "shield_knobs"
+	residue_shieldMapShieldStats  = "shield_stats"
 	residue_shieldMapVerdictCache = "verdict_cache"
 	residue_shieldProgShieldXdp   = "shield_xdp"
 )
@@ -120,6 +148,9 @@ type residue_shieldProgramSpecs struct {
 type residue_shieldMapSpecs struct {
 	Acl4         *ebpf.MapSpec `ebpf:"acl4"`
 	BanTable     *ebpf.MapSpec `ebpf:"ban_table"`
+	RateWindows  *ebpf.MapSpec `ebpf:"rate_windows"`
+	ShieldKnobs  *ebpf.MapSpec `ebpf:"shield_knobs"`
+	ShieldStats  *ebpf.MapSpec `ebpf:"shield_stats"`
 	VerdictCache *ebpf.MapSpec `ebpf:"verdict_cache"`
 }
 
@@ -151,6 +182,9 @@ func (o *residue_shieldObjects) Close() error {
 type residue_shieldMaps struct {
 	Acl4         *ebpf.Map `ebpf:"acl4"`
 	BanTable     *ebpf.Map `ebpf:"ban_table"`
+	RateWindows  *ebpf.Map `ebpf:"rate_windows"`
+	ShieldKnobs  *ebpf.Map `ebpf:"shield_knobs"`
+	ShieldStats  *ebpf.Map `ebpf:"shield_stats"`
 	VerdictCache *ebpf.Map `ebpf:"verdict_cache"`
 }
 
@@ -158,6 +192,9 @@ func (m *residue_shieldMaps) Close() error {
 	return _Residue_shieldClose(
 		m.Acl4,
 		m.BanTable,
+		m.RateWindows,
+		m.ShieldKnobs,
+		m.ShieldStats,
 		m.VerdictCache,
 	)
 }
