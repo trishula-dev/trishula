@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"encoding/binary"
 	"errors"
 	"testing"
 )
@@ -75,5 +76,57 @@ func TestDrainSurvivesMalformedAndStops(t *testing.T) {
 	}
 	if m.Len() != 1 {
 		t.Fatalf("tx table = %d, want 1", m.Len())
+	}
+}
+
+// TR-194 (issue #236): the stage-stamp bitmap rides FlowEvent. The wire
+// grows to 208 bytes: bytes 0-199 stay byte-identical, `stages` rides at
+// offset 200 (one __u64 after the 6-byte tail pad). A 200-byte record
+// reads all-absent; a 208-byte record carries the bits (7 kernel-plane
+// bits, bits 0-6; the stage-stamps record §5 freezes the layout).
+func TestDecodeStageStamps(t *testing.T) {
+	base := syntheticEvent(synEvent{
+		TS:       42,
+		SrcIP4:   [4]byte{10, 66, 0, 66},
+		DstIP4:   [4]byte{10, 66, 0, 1},
+		SrcPort:  53000,
+		DstPort:  443,
+		Mark:     7,
+		Payload:  1200,
+		HTTPSeen: 1,
+		Family:   4,
+		Path:     "/v1/chat/completions",
+	})
+	if len(base) != EventHdrSize {
+		t.Fatalf("synthetic base = %d bytes, want %d", len(base), EventHdrSize)
+	}
+	// (a) the landed 200-byte record: all stages read absent.
+	ev, err := DecodeFlowEvent(base)
+	if err != nil {
+		t.Fatalf("200-byte record: %v", err)
+	}
+	if ev.Stages != 0 {
+		t.Fatalf("200-byte record: stages = %#x, want 0", ev.Stages)
+	}
+	// (b) the extended 208-byte record: bytes 0-199 identical, stages at 200.
+	var stages uint64 = 0x70 // bits 4,5,6: tc.classify | tc.ban | tc.fastpath
+	ext := make([]byte, StagesWireSize)
+	copy(ext, base)
+	binary.LittleEndian.PutUint64(ext[StagesOffset:StagesOffset+8], stages)
+	ev, err = DecodeFlowEvent(ext)
+	if err != nil {
+		t.Fatalf("208-byte record: %v", err)
+	}
+	if ev.Stages != stages {
+		t.Fatalf("208-byte record: stages = %#x, want %#x", ev.Stages, stages)
+	}
+	if ev.HTTPSeen != 1 || ev.PathString() != "/v1/chat/completions" {
+		t.Fatalf("stage extension disturbed the landed fields: %+v", ev)
+	}
+	// (c) a 209-byte record still reads too large.
+	big := make([]byte, StagesWireSize+1)
+	copy(big, ext)
+	if _, err := DecodeFlowEvent(big); !errors.Is(err, ErrEventTooLarge) {
+		t.Fatalf("209-byte record: err=%v, want ErrEventTooLarge", err)
 	}
 }
