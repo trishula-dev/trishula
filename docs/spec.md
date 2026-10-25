@@ -452,7 +452,7 @@ The stack is deliberately three deployables:
 1. **Client → Gateway.** The gateway (reference: NGF) terminates TLS, applies edge policy, matches the `HTTPRoute`.
 2. **Gateway → Trishula Service.** Protected routes' `backendRefs` point at `trishula-engine`. The gateway health-checks the Service like any backend.
 3. **Trishula ingress hook (TC).** The same-node TC classifier tags the connection. It feeds cheap pre-connection metadata (SYN rate, ban-table hits, source reputation) into the engine.
-4. **Engine parse** → structured request view → **evaluation ladder** (§2.3). The ladder walks in order:
+4. **Engine parse** → structured request view → **evaluation ladder** (§2.3). The parse path runs the conformance gate first ([TR-44](https://github.com/trishula-dev/trishula/blob/main/docs/design/protocol-conformance-verdict.md); TR-199). The gate rejects the h1 framing-ambiguity classes at the parse path. The classes: `Content-Length` + `Transfer-Encoding` together; duplicate `Content-Length` values (RFC 9112 [section 6.1](https://www.rfc-editor.org/rfc/rfc9112.html#section-6.1), [section 6.3](https://www.rfc-editor.org/rfc/rfc9112.html#section-6.3)). The reject resolves pre-CRS as the `block` verdict with a parse-layer rule id (`http1:framing-cl-te`, `http1:framing-dup-cl`). The corpus rows and the verdict cells pin it (`test/crs-differential`, the CRS differential parity gate below). The ladder walks in order:
 kernel-cached verdicts/bans (hit ≈ no-op); the compiled matcher (µs); full CRS evaluation; CEL rules;
 schema validation; bot scoring; rate/ban checks; ML scoring.
 It short-circuits on the first decisive verdict, by the policy's action precedence (`block > challenge > log > pass`). SecLang `matcaction` overrides stay preserved for imported rules.
@@ -863,6 +863,8 @@ flowchart LR
 *Figure 11. Release-blocking in CI; evidence-generating in production.*
 
 Rules of the gate: parity is **verdict-level** (block/log/pass + matched-rule IDs + score ladder). The corpus: upstream CRS regression tests + curated adversarial corpora + recorded production samples[177][165]. A fast-path pattern that disagrees with the reference evaluator is **demoted automatically**. Exclusions are versioned and shadow-tested like any rule change.
+
+The corpus carries a third class on top: the **illegal-request rows**. The h1 framing-ambiguity rows ([TR-44](https://github.com/trishula-dev/trishula/blob/main/docs/design/protocol-conformance-verdict.md), TR-199) pin the parse-path reject cells. The cell: the `block` verdict with the parse-layer rule id. A CRS-only walk on the same shapes matches no attack rule. The gate README records the measured delta.
 
 <div class="pagebreak"></div>
 
