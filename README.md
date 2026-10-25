@@ -95,12 +95,17 @@ docs/             spec, paper, academy
 ## Run the demo (one command)
 
 ```bash
-bash lab/demo.sh
+just demo        # or: bash lab/demo.sh
 ```
 
-The script brings the DX1 lab up on any Docker-provider host. Needs `go`,
-`kubectl`, `helm`, `docker` and `curl`. It builds the engine and operator
-binaries, applies the policy and runs the timed apply→effect scenario. The
+`just` alone lists every lab lane; the runner installs with
+`brew install just`. The
+prereq gate = docker OR a reachable kubernetes cluster; the gate runs
+inside the scripts (lab/prereq.sh). The script brings the DX1 lab up on
+the cluster your kubeconfig points at — a local kind or OrbStack, or a
+cloud Kubernetes. Needs `go`, `kubectl`, `helm` and one of the two
+target surfaces. It builds the engine and operator binaries, applies
+the policy and runs the timed apply→effect scenario. The
 exit banner reads `DEMO-OK` or `DEMO-FAIL`. The verbatim recorded output sits
 on the issue record above.
 
