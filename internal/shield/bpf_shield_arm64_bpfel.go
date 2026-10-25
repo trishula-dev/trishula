@@ -40,6 +40,31 @@ type bpf_shieldBanVal struct {
 	_          [4]byte
 }
 
+type bpf_shieldRateKey struct {
+	_    structs.HostLayout
+	Addr struct {
+		_  structs.HostLayout
+		V4 uint32
+		_  [12]byte
+	}
+	Family uint8
+	_      [3]byte
+}
+
+type bpf_shieldRateVal struct {
+	_             structs.HostLayout
+	WindowStartNs uint64
+	Count         uint32
+	Pad           uint32
+}
+
+type bpf_shieldShieldKnobVal struct {
+	_           structs.HostLayout
+	UdpFloodPps uint32
+	Pad         uint32
+	WindowNs    uint64
+}
+
 type bpf_shieldVerdictKey struct {
 	_    structs.HostLayout
 	Addr struct {
@@ -65,6 +90,9 @@ type bpf_shieldVerdictVal struct {
 const (
 	bpf_shieldMapAcl4         = "acl4"
 	bpf_shieldMapBanTable     = "ban_table"
+	bpf_shieldMapRateWindows  = "rate_windows"
+	bpf_shieldMapShieldKnobs  = "shield_knobs"
+	bpf_shieldMapShieldStats  = "shield_stats"
 	bpf_shieldMapVerdictCache = "verdict_cache"
 	bpf_shieldProgShieldXdp   = "shield_xdp"
 )
@@ -120,6 +148,9 @@ type bpf_shieldProgramSpecs struct {
 type bpf_shieldMapSpecs struct {
 	Acl4         *ebpf.MapSpec `ebpf:"acl4"`
 	BanTable     *ebpf.MapSpec `ebpf:"ban_table"`
+	RateWindows  *ebpf.MapSpec `ebpf:"rate_windows"`
+	ShieldKnobs  *ebpf.MapSpec `ebpf:"shield_knobs"`
+	ShieldStats  *ebpf.MapSpec `ebpf:"shield_stats"`
 	VerdictCache *ebpf.MapSpec `ebpf:"verdict_cache"`
 }
 
@@ -151,6 +182,9 @@ func (o *bpf_shieldObjects) Close() error {
 type bpf_shieldMaps struct {
 	Acl4         *ebpf.Map `ebpf:"acl4"`
 	BanTable     *ebpf.Map `ebpf:"ban_table"`
+	RateWindows  *ebpf.Map `ebpf:"rate_windows"`
+	ShieldKnobs  *ebpf.Map `ebpf:"shield_knobs"`
+	ShieldStats  *ebpf.Map `ebpf:"shield_stats"`
 	VerdictCache *ebpf.Map `ebpf:"verdict_cache"`
 }
 
@@ -158,6 +192,9 @@ func (m *bpf_shieldMaps) Close() error {
 	return _Bpf_shieldClose(
 		m.Acl4,
 		m.BanTable,
+		m.RateWindows,
+		m.ShieldKnobs,
+		m.ShieldStats,
 		m.VerdictCache,
 	)
 }

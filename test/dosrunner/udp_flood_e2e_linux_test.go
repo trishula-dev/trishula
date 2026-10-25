@@ -10,9 +10,9 @@ package dosrunner
 // bytes, no request view (fact F3; probe P1: the QUIC-load leg).
 //
 // Phases: A the armed flood drops (recv <= 60 of 500; the tarpit drop
-// ticks >= 150), B the disarm re-opens (the knob row deleted; recv
-// >= 200 — the fail-open default proven from the knob side), C the ban
-// kill (a live ban_table row drops the burst outright; the ban-table
+// ticks >= 150), B the disarm re-opens (the knob row's zero-pps value;
+// recv >= 200 — the fail-open default proven from the knob side), C the
+// ban kill (a live ban_table row drops the burst outright; the ban-table
 // reuse).
 //
 // Watched RED first (the RED half of the pair): the pre-L1 shield
@@ -20,6 +20,7 @@ package dosrunner
 // arm.
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"strconv"
@@ -41,19 +42,30 @@ type shieldKnobVal struct {
 }
 
 // udpFloodInject = one burst: N datagrams as fast as the raw socket
-// takes them (the flood's shape), then one trailing report line.
+// takes them (the flood's shape), then one trailing report line. The
+// IP header carries a REAL checksum: the host IP stack drops the
+// zero-checksum frames at IP input (the receiver sees nothing).
 const udpFloodInject = `import socket,struct,sys
 n=int(sys.argv[1])
 s=socket.socket(socket.AF_PACKET,socket.SOCK_RAW)
 s.bind(("tr195n0",0x0800))
 dmac=b"\x02\x00\xde\xad\xbe\xef"
 smac=b"\x02\x00\xaa\xbb\xcc\xdd"
+def cksum(hdr):
+    x=0
+    for i in range(0,len(hdr),2): x+=(hdr[i]<<8)+hdr[i+1]
+    while x>>16: x=(x&0xFFFF)+(x>>16)
+    return (~x)&0xFFFF
 def frame():
     pay=b"\x00\x03\x00\xfe\x10\xca\xde\xad" + b"\x77"*16
     eth=struct.pack("!6s6sH",dmac,smac,0x0800)
-    iph=struct.pack("!BBHHHBBH4s4s",0x45,0,20+8+len(pay),1,0,64,17,0,socket.inet_aton("10.77.0.66"),socket.inet_aton("10.77.0.1"))
+    tot=20+8+len(pay)
+    src=socket.inet_aton("10.77.0.66"); dst=socket.inet_aton("10.77.0.1")
+    hdr=struct.pack("!BBHHHBBH4s4s",0x45,0,tot,1,0,64,17,0,src,dst)
+    c=cksum(hdr)
+    hdr=struct.pack("!BBHHHBBH4s4s",0x45,0,tot,1,0,64,17,c,src,dst)
     udph=struct.pack("!HHHH",6666,9440,8+len(pay),0)
-    return eth+iph+udph+pay
+    return eth+hdr+udph+pay
 sent=0
 for i in range(n):
     s.send(frame()); sent+=1
@@ -95,9 +107,11 @@ func statsSum195(t *testing.T, m *ebpf.Map, key uint32) uint64 {
 // driveFlood195 runs the receiver (the host ns) and the flood burst
 // (the offender netns) together; the datagrams that passed XDP land in
 // the receiver. Returns the receiver's count.
-func driveFlood195(t *testing.T, burst int) (recv int) {
+func driveFlood195(t *testing.T, burst int) int {
 	t.Helper()
+	var rOut, rErr bytes.Buffer
 	rcv := exec.Command("python3", "-c", udpRecvProbe, "3")
+	rcv.Stdout, rcv.Stderr = &rOut, &rErr
 	if serr := rcv.Start(); serr != nil {
 		t.Skipf("the receiver: %v", serr)
 	}
@@ -106,21 +120,19 @@ func driveFlood195(t *testing.T, burst int) (recv int) {
 	if cerr != nil {
 		t.Skipf("the flood drive:\n%s", cout)
 	}
-	if !strings.Contains(cout, "ok") {
+	if !strings.Contains(cout, "udp-flood-"+strconv.Itoa(burst)+"-ok") {
 		t.Fatalf("the flood drive did not complete:\n%s", cout)
 	}
 	_ = rcv.Wait() // the receiver self-times out at 3 s
-	out, rerr := rcv.CombinedOutput()
-	_ = rerr
 	line := ""
-	for _, l := range strings.Split(string(out), "\n") {
+	for _, l := range strings.Split(rOut.String(), "\n") {
 		if strings.HasPrefix(l, "recv-count") {
 			line = l
 		}
 	}
 	n, perr := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "recv-count ")))
 	if perr != nil {
-		t.Fatalf("the receiver printed no count (%q): %v", line, out)
+		t.Fatalf("the receiver printed no count (%q):\n%s\n%s", line, rOut.String(), rErr.String())
 	}
 	return n
 }
@@ -161,6 +173,11 @@ func TestUDPFloodTarpitE2E(t *testing.T) {
 		t.Fatalf("shield prog pin: %v", perr)
 	}
 	run195(t, "ip", "link", "set", "dev", veth195, "xdp", "pinned", pinShield)
+	linkOut := run195(t, "ip", "-d", "link", "show", veth195)
+	if !strings.Contains(linkOut, "prog/xdp") {
+		t.Fatalf("TR-203 L1 RED: no XDP program visible on %s:\n%s", veth195, linkOut)
+	}
+	t.Logf("xdp attach readback:\n%s", linkOut)
 
 	// The knob push: the leg's switch row (the map row carries the
 	// threshold and the window; the kernel owns the count and the
@@ -176,6 +193,11 @@ func TestUDPFloodTarpitE2E(t *testing.T) {
 		t.Fatalf("TR-203 L1 RED: the knob push failed (%v)", perr)
 	}
 	t.Logf("knob pushed: udp_flood_pps=%d window_ns=%d", knobVal.UDPFloodPPS, knobVal.WindowNS)
+	var gotKnob shieldKnobVal
+	if lerr := knobs.Lookup(&shieldKnobKey{}, &gotKnob); lerr != nil {
+		t.Fatalf("knob readback: %v", lerr)
+	}
+	t.Logf("knob readback: udp_flood_pps=%d window_ns=%d", gotKnob.UDPFloodPPS, gotKnob.WindowNS)
 	statsMap := shieldColl.Maps["shield_stats"]
 	if statsMap == nil {
 		t.Fatalf("TR-203 L1 RED: the shield object carries no verdict counter map — the drop readback cannot arm")
@@ -185,7 +207,32 @@ func TestUDPFloodTarpitE2E(t *testing.T) {
 	baseDrops := statsSum195(t, statsMap, 0)
 	recv := driveFlood195(t, 500)
 	if recv > 60 {
-		t.Fatalf("TR-203 L1 RED: the flood passed %d of 500 (no tarpit: recv must fit the knob ceiling)", recv)
+		var nRows int
+		var rkGo struct {
+			Addr struct {
+				V4 uint32
+				_  [12]byte
+			}
+			Family uint8
+		}
+		var rvGo struct {
+			WindowStartNS uint64
+			Count         uint32
+			_             uint32
+		}
+		It := shieldColl.Maps["rate_windows"]
+		if It != nil {
+			rowIt := It.Iterate()
+			for rowIt.Next(&rkGo, &rvGo) {
+				nRows++
+				t.Logf("rate row: fam=%d saddr=%#08x start=%d count=%d",
+					rkGo.Family, rkGo.Addr.V4, rvGo.WindowStartNS, rvGo.Count)
+			}
+		} else {
+			t.Log("rate_windows map absent in the collection")
+		}
+		t.Fatalf("TR-203 L1 RED: the flood passed %d of 500 (no tarpit: recv must fit the knob ceiling); rate rows=%d; pass ticks=%d; drop ticks=%d",
+			recv, nRows, statsSum195(t, statsMap, 1), statsSum195(t, statsMap, 0))
 	}
 	drops := statsSum195(t, statsMap, 0)
 	if drops < baseDrops+150 {
@@ -194,12 +241,15 @@ func TestUDPFloodTarpitE2E(t *testing.T) {
 	t.Logf("phase A: the armed tarpit held the flood (recv=%d of 500; drop ticks %d -> %d)", recv, baseDrops, drops)
 
 	// --- phase B: the disarm re-opens (the fail-open default) -------
-	if derr := knobs.Delete(&shieldKnobKey{}); derr != nil {
-		t.Fatalf("disarm delete: %v", derr)
+	// A plain ARRAY map carries no delete; the disarm = the row's
+	// zero-pps value (the C's own idle branch reads it).
+	knobVal.UDPFloodPPS = 0
+	if perr := knobs.Put(&shieldKnobKey{}, &knobVal); perr != nil {
+		t.Fatalf("disarm put: %v", perr)
 	}
 	recv = driveFlood195(t, 300)
 	if recv < 200 {
-		t.Errorf("phase B: the disarmed leg dropped %d of 300 — the knob's absence must open the path", 300-recv)
+		t.Errorf("phase B: the disarmed leg dropped %d of 300 — the zero knob must open the path", 300-recv)
 	}
 	t.Logf("phase B: the disarmed leg passed the flood (recv=%d of 300)", recv)
 
@@ -213,9 +263,15 @@ func TestUDPFloodTarpitE2E(t *testing.T) {
 	if perr := shieldColl.Maps["ban_table"].Put(&offender, &banVal); perr != nil {
 		t.Fatalf("ban push: %v", perr)
 	}
+	var rbBv shotBanVal
+	if lerr := shieldColl.Maps["ban_table"].Lookup(&offender, &rbBv); lerr != nil {
+		t.Fatalf("ban readback: %v", lerr)
+	}
+	t.Logf("ban readback: until_ts=%d (kernel now=%d)", rbBv.UntilTS, kernelNowNS195(t))
 	recv = driveFlood195(t, 50)
 	if recv != 0 {
-		t.Errorf("phase C: the banned burst passed %d of 50 — the ban row did not kill the UDP flow", recv)
+		t.Errorf("phase C: the banned burst passed %d of 50 — the ban row did not stop it", recv)
 	}
-	t.Log("TR-203 L1 XDP leg GREEN: the armed tarpit holds; the disarm opens; the ban row kills")
+	t.Logf("phase C: recv=%d of 50 under the live ban", recv)
+	t.Logf("stats: drop ticks=%d pass ticks=%d", statsSum195(t, statsMap, 0), statsSum195(t, statsMap, 1))
 }
