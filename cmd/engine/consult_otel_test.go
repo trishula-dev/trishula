@@ -161,3 +161,62 @@ func TestConsultEmitsVerdictSignals(t *testing.T) {
 		}
 	}
 }
+
+func TestConsultNilPipeEmitsNothing(t *testing.T) {
+	box := &bundleBox{}
+	bundle := compileBanBundle(t)
+	e, err := loadBundle(bundle)
+	if err != nil {
+		t.Fatalf("bundle load: %v", err)
+	}
+	box.set(bundle, e)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+	h := newEngineHandlerWithBox(upstream.URL, "engine", box)
+
+	req, _ := http.NewRequest(http.MethodGet, "http://engine.local/secret/x", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("ban probe = %d, want 403", w.Code)
+	}
+	// no pipe = the transparent-proxy shape: the decision stands, nothing
+	// panics, nothing emits (the nil pipe = the no-signal contract).
+}
+
+func TestConsultEmitFailureKeepsDecision(t *testing.T) {
+	// A closed pipeline = a failing emit surface. The decision must stand,
+	// the response must stay the 403, and the failure stays logged.
+	p, err := otel.New(otel.Config{ServiceName: "trishula-test"})
+	if err != nil {
+		t.Fatalf("pipeline: %v", err)
+	}
+	box := &bundleBox{pipe: p}
+	bundle := compileBanBundle(t)
+	e, err := loadBundle(bundle)
+	if err != nil {
+		t.Fatalf("bundle load: %v", err)
+	}
+	box.set(bundle, e)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+	h := newEngineHandlerWithBox(upstream.URL, "engine", box)
+
+	if perr := p.Shutdown(t.Context()); perr != nil {
+		t.Fatalf("shutdown: %v", perr)
+	}
+	req, _ := http.NewRequest(http.MethodGet, "http://engine.local/secret/x", nil)
+	req.RemoteAddr = "10.9.9.1:39000"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("ban probe after a pipeline shutdown = %d, want 403 (observability never blocks the request)", w.Code)
+	}
+	if got := w.Header().Get("X-Trishula-Decision"); got != "ban" {
+		t.Errorf("X-Trishula-Decision = %q, want ban", got)
+	}
+}
