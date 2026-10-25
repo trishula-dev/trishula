@@ -775,6 +775,7 @@ CEL is the choice over new DSLs, Rego and proxy-wasm. The reasons: a small and w
 request.method, request.path, request.headers (map),
 request.body.{text, json, form, bytes}, request.uri_queries,
 request.client.{ip, asn, geo, reputation, ban_state},
+request.auth.{verified | subject | issuer | audiences | scopes | expiry_epoch | claims},
 request.ja4, request.rate_windows,
 response.{status, headers, body-chunks},
 tx.{score, matched_rules, flags: {smuggling_suspect, oversized_body, ...}}
@@ -795,6 +796,25 @@ request.client.reputation < 0.3
 ```
 
 Ladder position: after the CRS short-circuit, before schema gating, for observability parity. Per-rule `action/phase/tags/severity` carries the SecLang semantics for imported-rule parity.
+
+**The claims vocabulary (TR-198).** The view carries the `request.auth` names of the [auth/JWT verdict record](https://github.com/trishula-dev/trishula/blob/main/docs/design/auth-jwt-verdict.md). `request.auth.verified` reads bool. `request.auth.issuer` and `request.auth.subject` read string. `request.auth.audiences` and `request.auth.scopes` read list(string). `request.auth.expiry_epoch` reads int (epoch seconds). `request.auth.claims` reads map(string, dyn).
+
+The gateway's verified identity metadata fills the names. The optional in-engine HS256/RS256 verifier bundle is the second source. The operator supplies the bundle. The engine verifies the token bytes the authorization header carries. The header never reads as a claim source. A self-asserted identity header never fills a name.
+
+A missed or failed verification sets `request.auth.verified = false`. The missed reads resolve the empty list or map value. CEL reads the miss. No rule panics.
+
+The gate: every allow-shaped rule carries `request.auth.verified` in its condition. So `verified = false` holds every allow path. The claims gate runs at S3, after the CRS short-circuit, before schema gating. Its deny verdict is policy-selected block (403 class). The scope comparison uses the language operators first: `"read:orders" in request.auth.scopes`. The comprehension form is `request.auth.scopes.exists(s, s in ["read:orders"])`. Rules compare `request.auth.expiry_epoch` against the engine-supplied epoch (`now`). CEL never reads a clock. Every comparison costs against the per-rule budget. An over-budget rule aborts as an error verdict. An error never reads as a clean no-match.
+
+Example claims-gate rule:
+
+```
+// the S3 claims gate: /orders/* admits a verified
+// identity carrying read:orders (the verified gate
+// in the deny condition; the record's taxonomy id)
+// auth:scope_insufficient (action: enforce)
+path.matches("/orders/*") &&
+(!request.auth.verified || !("read:orders" in request.auth.scopes))
+```
 
 ### 11.4 The compiled fast path: Vectorscan matcher
 

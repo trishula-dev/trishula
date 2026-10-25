@@ -47,6 +47,24 @@ func (a Action) Valid() bool {
 // compile failure surfaces at Eval as an error verdict, TestCompileError).
 type RulePack struct {
 	Rules []Rule `yaml:"rules" json:"rules"`
+	// AuthVerifier is the pack's optional verifier bundle (TR-198): the
+	// operator supplies the HS256/RS256 keys, the claims source the S3
+	// stage verifies the bearer token against when the gateway's verified
+	// identity metadata channel carries no identity. The parse builds the
+	// Verifier ONCE (fail closed: an unparsable key fails the pack).
+	AuthVerifier *VerifierConfig `yaml:"verifier,omitempty" json:"verifier,omitempty"`
+
+	// verifier is the AuthVerifier's parsed form (not serialized: the
+	// bundle re-parses at load).
+	verifier *Verifier
+}
+
+// Verifier returns the pack's parsed verifier bundle (nil = none).
+func (p *RulePack) Verifier() *Verifier {
+	if p == nil {
+		return nil
+	}
+	return p.verifier
 }
 
 // LoadRulePack reads a rule-pack YAML file from disk.
@@ -83,6 +101,13 @@ func ParseRulePack(data []byte) (*RulePack, error) {
 		if strings.TrimSpace(r.Expression) == "" {
 			return nil, fmt.Errorf("rule %q: expression is required", r.ID)
 		}
+	}
+	if pack.AuthVerifier != nil {
+		v, err := NewVerifier(*pack.AuthVerifier)
+		if err != nil {
+			return nil, fmt.Errorf("parse rule pack: %w", err)
+		}
+		pack.verifier = v
 	}
 	return &pack, nil
 }
