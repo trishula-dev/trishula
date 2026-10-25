@@ -89,7 +89,7 @@ func TestEngineBundleBlocksSQLi(t *testing.T) {
 	defer upstream.Close()
 
 	bundle := compileLabBundle(t)
-	eng, err := newEngineHandlerWithBundle(upstream.URL, "engine", bundle)
+	eng, err := newEngineHandlerWithBundle(upstream.URL, "engine", bundle, nil)
 	if err != nil {
 		t.Fatalf("build engine handler: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestBuildEngineHandlerBundleLoadFailures(t *testing.T) {
 		}
 		bundle.RulePackDigests[0] = "sha256-deadbeef"
 		corrupt, _ := json.Marshal(&bundle)
-		if _, err := newEngineHandlerWithBundle(upstream.URL, "engine", corrupt); err == nil {
+		if _, err := newEngineHandlerWithBundle(upstream.URL, "engine", corrupt, nil); err == nil {
 			t.Fatal("corrupt bundle must fail Load, not proxy unaudited")
 		}
 	})

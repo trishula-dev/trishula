@@ -31,6 +31,9 @@ import (
 	"time"
 
 	"github.com/trishula-dev/trishula/internal/engine/cel"
+	"github.com/trishula-dev/trishula/internal/engine/ingest"
+	"github.com/trishula-dev/trishula/internal/engine/ladder"
+	otel "github.com/trishula-dev/trishula/internal/engine/otel"
 	"github.com/trishula-dev/trishula/internal/operator"
 )
 
@@ -46,6 +49,11 @@ type bundleBox struct {
 	mu     sync.RWMutex
 	eval   *operator.Eval
 	loaded []byte // last successfully loaded bundle bytes (reload dedup)
+	// pipe (TR-195 leaf 4, issue #237): the verdict pipeline. Nil = no
+	// emit (the transparent proxy and the tests that need no signals).
+	// Non-nil = every consult decision emits the correlated verdict triad,
+	// and a ban decision emits the trishula.ban record with the signature.
+	pipe *otel.Pipeline
 }
 
 func (b *bundleBox) get() *operator.Eval {
@@ -117,7 +125,7 @@ func startBundlePolling(ctx context.Context, path string, box *bundleBox, tick t
 // a sink write error never affects the 403 already decided.
 var banEvidencePath string
 
-func recordDirectBan(d operator.Decision, r *http.Request) {
+func recordDirectBan(d operator.Decision, r *http.Request) rateban.BanEvidence {
 	key := r.RemoteAddr
 	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
 		key = strings.TrimSpace(strings.Split(fwd, ",")[0])
@@ -125,23 +133,83 @@ func recordDirectBan(d operator.Decision, r *http.Request) {
 	atSec := time.Now().Unix()
 	note := rateban.DirectBanNote(r.Method, r.URL.Path, d.RuleID)
 	rec := rateban.DirectBan(key, d.RuleID, atSec, note)
+	rec.OSig = &rateban.DoSSig{Class: "manual-rule", Paths: []string{r.URL.Path}}
 	if banEvidencePath == "" {
 		log.Printf("engine: direct would-ban (no evidence file set): %+v", rec)
-		return
+		return rec
 	}
 	line, err := json.Marshal(rec)
 	if err != nil {
 		log.Printf("engine: direct would-ban marshal: %v", err)
-		return
+		return rec
 	}
 	f, err := os.OpenFile(banEvidencePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		log.Printf("engine: direct would-ban open %s: %v (fail open)", banEvidencePath, err)
-		return
+		return rec
 	}
 	defer f.Close()
 	if _, err := f.Write(append(line, '\n')); err != nil {
 		log.Printf("engine: direct would-ban write: %v (fail open)", err)
+	}
+	return rec
+}
+
+// emitConsultSignals publishes one consult decision to the verdict
+// pipeline (TR-195 leaf 4, issue #237): the triad (span, metric, log) with
+// the verdict attributes, and for a ban decision the additional
+// trishula.ban record (ban key, tier, score, reasons, signature). Nil
+// pipe = no emit. A failed emit logs and continues (observability is a
+// receipt surface; it never blocks the request).
+func emitConsultSignals(box *bundleBox, r *http.Request, d operator.Decision, decisionWord string, banRec *rateban.BanEvidence) {
+	if box == nil || box.pipe == nil {
+		return
+	}
+	rid, ok := otel.RequestIDFromContext(r.Context())
+	if !ok || rid == "" {
+		rid = r.Header.Get(otel.HeaderRequestID)
+	}
+	if rid == "" {
+		rid = otel.RequestIDFromContextOrGenerate(r.Context())
+	}
+	ctx := otel.ContextWithRequestID(r.Context(), rid)
+	tx := &ingest.TxContext{Metadata: map[string]string{otel.MetaPathHint: r.URL.Path}}
+	action := ladderAction(decisionWord)
+	v := &ladder.Verdict{
+		Action: action,
+		Phase:  ladder.PhaseRequestHeaders,
+	}
+	if d.RuleID != "" {
+		v.Rules = []ladder.RuleID{ladder.RuleID(d.RuleID)}
+	}
+	if banRec != nil && banRec.OSig != nil {
+		sig := *banRec.OSig
+		v.DosSig = &sig
+	}
+	if _, err := box.pipe.Emit(ctx, tx, v); err != nil {
+		log.Printf("engine: verdict emit error (the decision stands): %v", err)
+	}
+	if banRec != nil {
+		if err := box.pipe.EmitBan(*banRec); err != nil {
+			log.Printf("engine: ban emit error (the decision stands): %v", err)
+		}
+	}
+}
+
+// ladderAction maps the consult decision word to the ladder action
+// vocabulary (the verdict schema's action values).
+func ladderAction(word string) ladder.Action {
+	switch word {
+	case "pass":
+		return ladder.ActionAllow
+	case "log":
+		return ladder.ActionLog
+	case "challenge":
+		return ladder.ActionChallenge
+	case "ban":
+		return ladder.ActionBan
+	default:
+		return ladder.ActionBlock
 	}
 }
 
@@ -157,8 +225,8 @@ func newEngineHandler(upstream, hop string) http.Handler {
 // bytes (the load-at-boot shape): nil keeps the pure transparent proxy;
 // non-nil bytes load BEFORE any request is served — a failing bundle is a
 // constructor error (fail closed at boot, never proxy unaudited).
-func newEngineHandlerWithBundle(upstream, hop string, bundle []byte) (http.Handler, error) {
-	box := &bundleBox{}
+func newEngineHandlerWithBundle(upstream, hop string, bundle []byte, pipe *otel.Pipeline) (http.Handler, error) {
+	box := &bundleBox{pipe: pipe}
 	if bundle != nil {
 		e, err := loadBundle(bundle)
 		if err != nil {
@@ -173,8 +241,8 @@ func newEngineHandlerWithBundle(upstream, hop string, bundle []byte) (http.Handl
 // bundle path (the hot-reload shape): consult activates on the file's
 // first valid content, reloads on change, keeps the previous bundle on a
 // corrupt reload.
-func newEngineHandlerWithBundlePath(ctx context.Context, upstream, hop, path string, tick time.Duration) (http.Handler, *bundleBox) {
-	box := &bundleBox{}
+func newEngineHandlerWithBundlePath(ctx context.Context, upstream, hop, path string, tick time.Duration, pipe *otel.Pipeline) (http.Handler, *bundleBox) {
+	box := &bundleBox{pipe: pipe}
 	if data, err := os.ReadFile(path); err == nil {
 		if e, err := loadBundle(data); err == nil {
 			box.set(data, e)
@@ -223,14 +291,17 @@ func newEngineHandlerWithBox(upstream, hop string, box *bundleBox) http.Handler 
 			}
 			w.Header().Set(hopHeader, "engine")
 			decisionWord := string(decision.Action)
+			var banRec *rateban.BanEvidence
 			if decision.BanDirect {
 				// TR-195 (issue #237): the manual ban names itself. The
 				// response reads decision=ban + the owning rule; the
 				// direct would-ban record joins the evidence stream (the
 				// enforcer's kernel-write input; the receipt trail).
 				decisionWord = "ban"
-				recordDirectBan(decision, r)
+				rec := recordDirectBan(decision, r)
+				banRec = &rec
 			}
+			emitConsultSignals(box, r, decision, decisionWord, banRec)
 			w.Header().Set("X-Trishula-Decision", decisionWord)
 			if decision.RuleID != "" {
 				w.Header().Set("X-Trishula-Rule", decision.RuleID)
@@ -317,8 +388,18 @@ func main() {
 	tlsCert := flag.String("tls-cert", "", "cert PEM to terminate TLS on the engine listener (TR-34 secondary mode, feature-gated; requires -tls-key; off = the default gateway-owned termination)")
 	banEvidence := flag.String("ban-evidence", "", "JSONL path the manual ban-rule would-bans append to (TR-195 leaf 1; empty = the evidence stays in the engine log)")
 	tlsKey := flag.String("tls-key", "", "key PEM for -tls-cert (TR-34 secondary mode)")
+	noOtel := flag.Bool("no-otel", false, "disable the verdict pipeline (the consult signals; TR-195 leaf 4)")
 	flag.Parse()
 	banEvidencePath = *banEvidence
+
+	var pipe *otel.Pipeline
+	if !*noOtel {
+		p, err := otel.New(otel.Config{ServiceName: "trishula-engine"})
+		if err != nil {
+			log.Fatalf("engine: verdict pipeline: %v", err)
+		}
+		pipe = p
+	}
 
 	if *upstream == "" {
 		fmt.Fprintln(os.Stderr, "engine: --upstream is required")
@@ -327,7 +408,7 @@ func main() {
 	}
 	var handler http.Handler
 	if *bundlePath != "" {
-		handler, _ = newEngineHandlerWithBundlePath(context.Background(), *upstream, *hop, *bundlePath, 200*time.Millisecond)
+		handler, _ = newEngineHandlerWithBundlePath(context.Background(), *upstream, *hop, *bundlePath, 200*time.Millisecond, pipe)
 	} else {
 		handler = newEngineHandler(*upstream, *hop)
 	}
