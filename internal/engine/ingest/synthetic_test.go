@@ -88,3 +88,18 @@ var (
 	_              = fmt.Sprintf
 	_              = strings.TrimSpace
 )
+
+// stagedEvent appends the TR-194 stages trailer (one LE u64, pad 0) to a
+// landed 200-byte record (the record's §5 extension form: 208 bytes).
+func stagedEvent(raw []byte, stages uint64) []byte {
+	return appendStages(raw, stages, 0)
+}
+
+// appendStages appends a LE u64 stages word plus pad bytes (pad>0 builds
+// an over-budget frame for the size-gate rows).
+func appendStages(raw []byte, stages uint64, pad int) []byte {
+	var word [8]byte
+	nativeEndian.PutUint64(word[:], stages)
+	out := append(raw, word[:]...)
+	return append(out, make([]byte, pad)...)
+}

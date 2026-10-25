@@ -41,6 +41,24 @@ const (
 	StagesOffset   = 200 // the stages field's offset in the extended record
 	StagesWireSize = 208 // the extended record size (200 + 8)
 	MaxEventSize   = StagesWireSize
+
+	// TR-194 stage-bit vocabulary (the record's §3.1/§3.2 freeze; the C
+	// side carries the same bits as bpf/flow_tc.c's TC_ST_* macros — the
+	// wire-parity test binds both forms). A bit = 1 reads "the consult
+	// ran on a packet that reached the emit". Bits 0–6 carry the
+	// kernel-plane consults; 57 bits stay reserved. No bit names a drop
+	// or an engine stage.
+	StageXDPBan     uint64 = 1 << 0 // xdp.ban — the XDP handoff map fills (leaf 2)
+	StageXDPAcl     uint64 = 1 << 1 // xdp.acl
+	StageXDPCache   uint64 = 1 << 2 // xdp.cache
+	StageXDPPass    uint64 = 1 << 3 // xdp.pass
+	StageTCClassify uint64 = 1 << 4 // tc.classify (the bounded L4 walk ran)
+	StageTCBan      uint64 = 1 << 5 // tc.ban (the ban_table probe ran)
+	StageTCFastpath uint64 = 1 << 6 // tc.fastpath (the §9.6 advisory peek ran)
+	// StageBitsKernel is the carried-bit mask for the wire class: bits
+	// 0–6. The reserved range reads zero on every landed record.
+	StageBitsKernel uint64 = StageXDPBan | StageXDPAcl | StageXDPCache |
+		StageXDPPass | StageTCClassify | StageTCBan | StageTCFastpath
 )
 
 var (

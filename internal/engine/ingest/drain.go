@@ -36,7 +36,10 @@ func DrainFake(m *TxManager, rd RecordSource) (int, error) {
 			// malformed → log-warn + continue (the contract: never fatal)
 			continue
 		}
-		_ = m.NoteFlow(ev.Key())
+		// TR-194: the decoded record joins the tx (the correlation
+		// carrier; bounded by ShieldEventsCap).
+		tx := m.NoteFlow(ev.Key())
+		tx.pushShieldEvent(ev)
 		n++
 	}
 }
@@ -74,7 +77,10 @@ func (e *Engine) DrainShield(rd RecordSource) error {
 			atomic.AddUint64(&e.stats.SkippedTotal, 1)
 			continue
 		}
-		_ = e.tx.NoteFlow(ev.Key())
+		tx := e.tx.NoteFlow(ev.Key())
+		// TR-194: the decoded record joins the tx (the correlation
+		// carrier; bounded by ShieldEventsCap).
+		tx.pushShieldEvent(ev)
 		atomic.AddUint64(&e.stats.DecodedTotal, 1)
 	}
 }

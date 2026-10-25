@@ -268,6 +268,26 @@ func TestFlowTCRingE2E(t *testing.T) {
 	}
 	t.Logf("E2E: stage stamps read %#x (tc.classify|tc.ban|tc.fastpath)", got.Stages)
 
+	// TR-194 leaves 2-3: both altitudes stated on the live wire.
+	// (a) Kernel altitude: the consult bitmap reads from the live ring
+	// event (0x70 above — the TC consults ran at the emit point).
+	// (b) Engine altitude: the kernel wire carries no engine claim — the
+	// reserved range reads zero (bits 0-6 name the kernel-plane consults;
+	// the engine's own stages land on the verdict record's ladder rows).
+	if got.Stages&^StageBitsKernel != 0 {
+		t.Fatalf("event stages = %#x carry reserved bits (the kernel wire never carries an engine stage)", got.Stages)
+	}
+	// (c) The drain leg: the decoded record joins the flow's tx (the
+	// correlation carrier; the source for shield.stages + the links).
+	mgr := NewTxManager()
+	tx := mgr.NoteFlow(got.Key())
+	tx.pushShieldEvent(got)
+	if len(tx.ShieldEvents) != 1 || tx.ShieldEvents[0].Stages != got.Stages {
+		t.Fatalf("drain leg: tx shield events = %d, stages %#x (the stamps must reach the correlation carrier)",
+			len(tx.ShieldEvents), got.Stages)
+	}
+	t.Logf("E2E: both altitudes stated — kernel: the stamps read %#x on the live ring record (the drain leg carries them); engine: the kernel wire carries bits 0-6 only", got.Stages)
+
 	// Lost-count parity: C-side lost_events == Go Stats.RingLossTotal.
 	var lost uint64
 	zero := uint32(0)

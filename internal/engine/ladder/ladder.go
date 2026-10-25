@@ -76,6 +76,40 @@ const (
 // Valid reports whether st indexes a real ladder slot (S0–S7).
 func (st Stage) Valid() bool { return st >= 0 && st < stageCount }
 
+// Token returns the canonical stage-stamp token (the stage-stamps record
+// §3.4: one canonical name per stage; the tokens are a wire contract — a
+// rename is a record amendment, never a code-only edit).
+func (st Stage) Token() string {
+	switch st {
+	case StageKernel:
+		return "kernel"
+	case StageMatcher:
+		return "matcher"
+	case StageCRS:
+		return "crs"
+	case StageCEL:
+		return "cel"
+	case StageSchema:
+		return "schema"
+	case StageBots:
+		return "bots"
+	case StageRateBan:
+		return "rate_ban"
+	case StageML:
+		return "ml"
+	default:
+		return ""
+	}
+}
+
+// Row is one run stage's verdict-record row (the stage-stamps record §4
+// tier T1, one row per run stage; the §7 v1 row shape {stage, matched, us}).
+type Row struct {
+	Stage   Stage    // the walk position; Token() names it on the record
+	Matched []RuleID // the contributing rule ids (nil = matched nothing)
+	US      int64    // the stage's measured wall, µs (0 = the sub-µs floor)
+}
+
 // Verdict is the ladder's per-transaction accumulator (the reference-implementation Verdict, the
 // slice-relevant fields: Features/CacheKey/BanInput/Telemetry land with
 // their consuming stages — no speculative fields, the cel.Request rule).
@@ -86,6 +120,10 @@ type Verdict struct {
 	Rules  []RuleID // every contributing rule/stage, walk order
 	Score  int64    // anomaly accumulator input (TR-09 consumes)
 	Phase  Phase    // phase the current action was resolved in
+	// Rows (TR-194, issue #236): one row per run stage, walk order — the
+	// verdict record's ladder-array source. A short-circuited or unwired
+	// stage leaves no row (absence, never a passed read; the record §6).
+	Rows []Row
 	// DosSig (TR-195, issue #237): the dynamic signature of the DoS
 	// verdict that crossed. The values match the cue's measured values:
 	// the map read, the evidence row and the verdict record state the

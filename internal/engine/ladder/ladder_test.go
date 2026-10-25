@@ -326,3 +326,78 @@ func TestParseGateVerdict(t *testing.T) {
 		}
 	}
 }
+
+// TR-194 (issue #236): the walk records one row per run stage (the
+// stage-stamps record §4, tier T1): walk order, canonical tokens, the
+// matched rules, and the stage's µs wall. Unwired slots read no row — a
+// skipped stage stays absent (the record's §6 rule: absent, never passed).
+func TestEvaluateTxRecordsStageRows(t *testing.T) {
+	t.Run("rows in walk order with tokens + matched", func(t *testing.T) {
+		s0 := &stubStage{st: StageKernel}
+		s1 := &stubStage{st: StageMatcher,
+			frag: &Verdict{Action: ActionLog, Rules: []RuleID{"crs:920480"}}}
+		e := NewEngine()
+		if err := e.Use(StageKernel, s0); err != nil {
+			t.Fatalf("Use(S0): %v", err)
+		}
+		if err := e.Use(StageMatcher, s1); err != nil {
+			t.Fatalf("Use(S1): %v", err)
+		}
+		v := e.EvaluateTx(fixtureTx())
+		if len(v.Rows) != 2 {
+			t.Fatalf("rows = %d, want 2 (one row per run stage)", len(v.Rows))
+		}
+		if v.Rows[0].Stage != StageKernel || v.Rows[0].Stage.Token() != "kernel" {
+			t.Fatalf("row 0 = %v, want stage kernel", v.Rows[0])
+		}
+		if v.Rows[1].Stage != StageMatcher || v.Rows[1].Stage.Token() != "matcher" {
+			t.Fatalf("row 1 = %v, want stage matcher", v.Rows[1])
+		}
+		if len(v.Rows[1].Matched) != 1 || v.Rows[1].Matched[0] != RuleID("crs:920480") {
+			t.Fatalf("row 1 matched = %v, want [crs:920480]", v.Rows[1].Matched)
+		}
+		if v.Rows[0].Matched != nil {
+			t.Fatalf("row 0 matched = %v, want nil (the stage matched nothing)", v.Rows[0].Matched)
+		}
+		if v.Rows[0].US < 0 {
+			t.Fatalf("row 0 us = %d, want >= 0 (the stage's measured wall)", v.Rows[0].US)
+		}
+	})
+
+	t.Run("short-circuit: the tail reads no row", func(t *testing.T) {
+		s0 := &stubStage{st: StageKernel,
+			frag: &Verdict{Action: ActionBlock, Rules: []RuleID{"shield:ban"}}}
+		s7 := &stubStage{st: StageML}
+		e := NewEngine()
+		if err := e.Use(StageKernel, s0); err != nil {
+			t.Fatalf("Use(S0): %v", err)
+		}
+		if err := e.Use(StageML, s7); err != nil {
+			t.Fatalf("Use(S7): %v", err)
+		}
+		v := e.EvaluateTx(fixtureTx())
+		if s7.calls != 0 {
+			t.Fatalf("S7 calls = %d, want 0 (the decisive verdict stops the walk)", s7.calls)
+		}
+		if len(v.Rows) != 1 || v.Rows[0].Stage != StageKernel {
+			t.Fatalf("rows = %+v, want the sole kernel row (absence, never a passed read)", v.Rows)
+		}
+	})
+
+	t.Run("the token set is the record's vocabulary", func(t *testing.T) {
+		want := []string{"kernel", "matcher", "crs", "cel", "schema", "bots", "rate_ban", "ml"}
+		seen := map[string]bool{}
+		for st := Stage(0); st < StageML; st++ {
+			tok := st.Token()
+			if seen[tok] {
+				t.Fatalf("stage %d token %q repeats a name (one canonical name per stage)", int(st), tok)
+			}
+			seen[tok] = true
+		}
+		for i, w := range want {
+			if got := Stage(i).Token(); got != w {
+				t.Fatalf("stage %d token = %q, want %q (the wire order is walk order)", i, got, w)
+			}
+		}
+	})
+}

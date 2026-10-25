@@ -36,6 +36,29 @@ type TxContext struct {
 	LastNS   uint64
 	Packets  uint64
 	Metadata map[string]string // event extras (path hints etc.), TR-04b fills
+
+	// ShieldEvents (TR-194, issue #236): the flow's correlated ring
+	// records in arrival order — the span-link + shield.stages source on
+	// the verdict record. Bounded (the drain keeps the last
+	// ShieldEventsCap); a burst flow cannot grow the tx unbounded.
+	ShieldEvents []*FlowEvent
+}
+
+// ShieldEventsCap bounds one tx's correlated ring records (the drain
+// keeps the newest; older records overwrite on a burst flow).
+const ShieldEventsCap = 16
+
+// pushShieldEvent appends one decoded record to the tx (bounded ring:
+// the newest record wins at cap).
+func (tx *TxContext) pushShieldEvent(ev *FlowEvent) {
+	if tx == nil || ev == nil {
+		return
+	}
+	if len(tx.ShieldEvents) >= ShieldEventsCap {
+		copy(tx.ShieldEvents, tx.ShieldEvents[len(tx.ShieldEvents)-ShieldEventsCap+1:])
+		tx.ShieldEvents = tx.ShieldEvents[:ShieldEventsCap-1]
+	}
+	tx.ShieldEvents = append(tx.ShieldEvents, ev)
 }
 
 // TxManager owns the flow→tx table (the reference-implementation NoteFlow).
