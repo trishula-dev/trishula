@@ -93,6 +93,39 @@ func LoadCorpus() (Corpus, error) {
 	return Corpus{Cases: cases}, nil
 }
 
+// headOf builds the exact h1 request head text the engine parse path reads
+// for a corpus case: raw_head when the case pins raw wire (the TR-199
+// framing classes; the headers map shape cannot carry duplicate field
+// lines), otherwise the synthesized shape (request line + fields + blank
+// line) from the case fields. Field keys sort for a deterministic byte
+// set: the framing checks read field lines, never map order.
+func headOf(c Case) string {
+	if c.Request.RawHead != "" {
+		return c.Request.RawHead
+	}
+	version := c.Request.Version
+	switch {
+	case version == "":
+		version = "1.1"
+	case strings.HasPrefix(version, "HTTP/"):
+		// already the wire form (HTTP/1.0 / HTTP/1.1)
+	default:
+		version = "HTTP/" + version
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s %s %s\r\n", c.Request.Method, c.Request.URI, version)
+	keys := make([]string, 0, len(c.Request.Headers))
+	for k := range c.Request.Headers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		fmt.Fprintf(&b, "%s: %s\r\n", k, c.Request.Headers[k])
+	}
+	b.WriteString("\r\n")
+	return b.String()
+}
+
 // stageEmbeddedFS materializes an embed.FS subtree (base) onto disk under
 // dir (same relative paths), so directive Include lines resolve.
 func stageEmbeddedFS(fsys embed.FS, base, dir string) error {
@@ -142,6 +175,12 @@ type Request struct {
 	Version string            `json:"version"`
 	Headers map[string]string `json:"headers"`
 	Body    string            `json:"body,omitempty"`
+	// RawHead carries the exact h1 request head the engine parse path
+	// reads (TR-199 conformance rows, the framing classes). The headers
+	// map shape collapses duplicate field names, so a class that lives in
+	// duplicate field lines pins raw wire bytes instead of the map.
+	// Empty on the CRS-parity rows (the synthesized shape below).
+	RawHead string `json:"raw_head,omitempty"`
 }
 
 // Expect is the expectation the engine-mirror stage asserts (all optional:
@@ -156,4 +195,16 @@ type Expect struct {
 	// Phase2Offseed are the observed off-seed ids (live-probe evidence,
 	// README table) — the mirror pins them as reference-observed.
 	Phase2Offseed []int `json:"phase2_offseed,omitempty"`
+	// RejectRule names the parse-layer rule id of the TR-199 conformance
+	// reject cell the pre-CRS gate pins for this row (the conformance
+	// verdict record's reject table: the block verdict at the parse path).
+	// Empty on the CRS-parity rows: those parse clean and reach CRS.
+	RejectRule string `json:"reject_rule,omitempty"`
+	// ParseReject pins the row's parse-path cell for a CRS-parity shape
+	// that carries an h1 grammar anomaly on the wire (case 17: the
+	// raw-space request target — the record's row-1 grammar class). The
+	// engine parse path rejects BEFORE the CRS walk; the CRS parity cell
+	// stays the rule-semantics pin. Absent (false) = the row parses clean
+	// and passes to CRS untouched.
+	ParseReject bool `json:"parse_reject,omitempty"`
 }
