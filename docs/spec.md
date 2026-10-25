@@ -1640,7 +1640,7 @@ spec:
 
 **The GA track (the bare `2026.01` cut, then the calendar trains).** ML enforcement ships with a promotion workflow. The async semantic judge ships with a verdict cache. Behavioral DoS detectors cover slowloris and rapid-reset shapes. Prefix escalation goes GA (opt-in); the full `trishulactl` surface ships; academy Modules 2 & 5 land. The socket-plane L7 fast path gets its design note + `WAFPolicy`→eBPF template spike behind the §9.9 evaluation gate. The DPU (BlueField-class) shield port and the OpenShift/multi-arch builds enter evaluation and build lanes.
 
-**The post-GA trains.** The lane carries ext_proc no-hop activation on Envoy-family estates. It carries the HTTP/3 ingress posture evaluation (§7.1 Module 5) and the response-side schema/exfil guard. EPP-deep integrations follow where GIE composes further.
+**The post-GA trains.** The lane carries ext_proc no-hop activation on Envoy-family estates. The re-encryption leg of the TLS-termination lane (TLS inspection on the egress side) is the named post-GA boundary of TR-203. The PQC signature migration (the CA/cert chain) follows the 2026.02/03 trains. The response-side schema/exfil guard and EPP-deep integrations follow where GIE composes further.
 
 ### 20.3 Open questions
 
