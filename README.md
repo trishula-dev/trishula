@@ -43,57 +43,22 @@ Each slice landed as a watched-RED then GREEN leaf PR per [AGENTS.md](AGENTS.md)
 ## Measured performance
 
 Budgets read off [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage).
-Wall numbers read from the last recorded per-row CI run:
-[39920698798](https://github.com/trishula-dev/trishula/actions/runs/39920698798/job/120312408390),
-head `24d5be7`, before the #150 perf levers. The numbers re-read at each release. The rc3 re-read waits on the per-row CI rows: the verbose bench step lands on [trishula#230](https://github.com/trishula-dev/trishula/pull/230) and prints the rows on every run after it.
+Wall numbers read from the last recorded per-row CI run. The run:
+[40147859961](https://github.com/trishula-dev/trishula/actions/runs/40147859961/job/121029622516),
+head `05affd9`, the rc3 content with the verbose bench step (#230).
+The numbers re-read at each release.
 
 | Cell | Budget p99 | Last build p99 | Verdict |
 |---|---|---|---|
-| idle-get | 600 µs | 546.7 µs | holds (0.91x) |
-| attack-sqli-small | 1500 µs | 828.3 µs | holds (0.55x) |
-| attack-xss-small | 1500 µs | 1733.5 µs | unmet (1.16x) — variance class, [#147](https://github.com/trishula-dev/trishula/issues/147) |
-| ladder-json-1k | 600 µs | 548.6 µs | holds (0.91x) |
-| ladder-json-8k | 600 µs | 798.7 µs | unmet (1.33x) — variance class, [#147](https://github.com/trishula-dev/trishula/issues/147) |
-| ladder-json-64k | 1200 µs | 577.2 µs | holds (0.48x) |
-| ladder-form-dense-1k | 600 µs | 116319.7 µs | pinned open — the [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage) finding |
-| ladder-form-dense-8k | 600 µs | 180720.5 µs | pinned open — the [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage) finding |
-| steady-json-8k (the [M2](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage) e2e cell) | 1500 µs | 320.0 µs | holds (0.21x) |
-
-The gate set: `test/bench` runs the [§17.2](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#172-benchmark-plan)
-recipes in CI. A verdict re-reads per run. Per-row walls print in the job log
-when a row breaks the gate; green runs print package lines only.
-
-The [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage)
-arg-dense finding stays open: the form rows read ≥194x over budget. The perf
-levers (`SecRxPreFilter` + serialized CI packages) ride
-[#150](https://github.com/trishula-dev/trishula/pull/150). After the levers,
-the attack cell reads 0.22–0.31 ms per evaluate on the measurement host.
-
-| Control-plane gate | Budget | Recorded | Verdict |
-|---|---|---|---|
-| apply→effect (M9) | 5000 ms | 1465 ms and 2618 ms, [#76](https://github.com/trishula-dev/trishula/issues/76#issuecomment-6093110531) | holds |
-
-CRS parity: 19/19 corpus cases at 100% verdict parity, one documented skip
-([#7](https://github.com/trishula-dev/trishula/issues/7#issuecomment-6092716820)).
-
-The dev VM walls ([#147](https://github.com/trishula-dev/trishula/issues/147#issuecomment-6361589665)):
-one quiet run on the OrbStack rig (noble, arm64, 8 vCPU, Go 1.26.0), prefilter
-off vs on. The pinned
-[§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage)
-finding holds on the VM at 13x-95x (prefilter on). The `64k` row
-carries a guest-side p99 tail on the VM; hosted CI reads the same row at
-0.48x-0.86x and stays the calibration surface.
-
-| Cell | Budget p99 | VM p99 (prefilter off) | VM p99 (prefilter on) |
-|---|---|---|---|
-| steady-json-8k | 1500 µs | 794.6 µs | 188.8 µs |
-| attack-xss-small | 1500 µs | 1039.5 µs | 925.8 µs |
-| attack-sqli-small | 1500 µs | 1095.7 µs | 548.3 µs |
-| ladder-json-1k | 600 µs | 611.3 µs | 483.3 µs |
-| ladder-json-8k | 600 µs | 347.3 µs | 626.6 µs |
-| ladder-json-64k | 1200 µs | 9890.9 µs | 14189.2 µs |
-| ladder-form-dense-8k | 600 µs | 63354.1 µs | 56770.3 µs |
-
+| idle-get | 600 µs | 865.0 µs | unmet (1.44x) on this read — runner noise; the quiet rig reads 0.30x |
+| attack-sqli-small | 1500 µs | 1029.0 µs | holds (0.69x) |
+| attack-xss-small | 1500 µs | 1078.9 µs | holds (0.72x) — variance class, [#147](https://github.com/trishula-dev/trishula/issues/147) |
+| ladder-json-1k | 600 µs | 825.7 µs | unmet (1.38x) on this read — runner noise; the quiet rig reads 0.64x |
+| ladder-json-8k | 600 µs | 862.1 µs | unmet (1.44x) — variance class, [#147](https://github.com/trishula-dev/trishula/issues/147) |
+| ladder-json-64k | 1200 µs | 1096.6 µs | holds (0.91x) |
+| ladder-form-dense-1k | 600 µs | 15395.2 µs | pinned open — the [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage) |
+| ladder-form-dense-8k | 600 µs | 135633.1 µs | pinned open — the [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage) |
+| steady-json-8k (the [M2](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage) e2e cell) | 1500 µs | 433.7 µs | holds (0.29x) |
 ## Upcoming features
 
 The list pairs each not-shipped feature with its tracker.
