@@ -1016,7 +1016,8 @@ flowchart TB
 *Figure 13. Division of labor: kernel counts and drops; the engine scores and decides; bans feed back kernel-ward.*
 
 - **L3/L4 floods:** shield XDP tarpits/drops (§9.2), independent of any policy. This layer is fail-open by default (a shield bug must never take the path down; R7 discipline).
-- **Slowloris / connection starvation:** kernel `flow_stats` (§9.3) feed the engine's behavioral detector; the response is L2/L3 bans. A per-request WAF cannot win this fight; a flow-keyed kernel counter can.
+- **Slowloris / connection starvation:** kernel `flow_stats` (§9.3) feed the engine's behavioral detector; the response is L2/L3 bans. A per-request WAF cannot win this fight; a flow-keyed kernel counter can. The shield runner (`cmd/shield`, TR-195) closes the loop automatically: it reads the pinned `flow_stats` map, forms the detector cues with the measured signature (`segs`, `bytes/seg`, `span`), ingests them into the scored ban path, and the enforcer publishes the kernel row. The signature rides the evidence record verbatim (`osig`), so the map read, the evidence row and the kernel drop cite the same measured facts.
+- **Manual bans:** operators can ban directly with a CEL rule (`action: ban` in a rule pack); the engine emits the would-ban record on the same enforcer path (TR-195, issue #237).
 - **h2 rapid-reset shape:** the engine parser reads stream-reset ratios per connection; it flags `tx.flags.rapid_reset_suspect`, scores and (on confirmation) bans.
 - **Application-layer request floods:** §13.2 algorithms + ban ladder.
 - **Oversized/malformed:** parser admission caps (§17.2 R-DoS) — 413/400 fast, with no resource asymmetry.

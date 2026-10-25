@@ -2,6 +2,8 @@ package rateban
 
 import (
 	"errors"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -48,14 +50,44 @@ type FlowFeatures struct {
 	LastNS  uint64
 }
 
+// DoSSig is the dynamic signature of one DoS verdict (the operator's
+// watertight-observability decision): what the HTTP facts were, carried
+// verbatim on the cue, the evidence record and the OTel verdict record —
+// one content, three surfaces, one key ties them.
+type DoSSig struct {
+	// Class reads the detector name (slowloris_suspect, rapid_reset_suspect).
+	Class string `json:"class"`
+	// The measured window shape: segments, bytes per segment, the span.
+	Segs        uint32 `json:"segs"`
+	BytesPerSeg uint32 `json:"bytesPerSeg"`
+	SpanSec     int64  `json:"spanSec"`
+	// Paths carries up to three request paths the window observed (most
+	// frequent first; the flow-keyed facts the ring/tx view read).
+	Paths []string `json:"paths,omitempty"`
+}
+
+// String renders the printable signature for the evidence note.
+func (s DoSSig) String() string {
+	base := "class=" + string(s.Class) + " segs=" + strconv.FormatUint(uint64(s.Segs), 10) +
+		" bytes/seg=" + strconv.FormatUint(uint64(s.BytesPerSeg), 10) +
+		" span=" + strconv.FormatInt(s.SpanSec, 10) + "s"
+	if len(s.Paths) > 0 {
+		base += " paths=[" + strings.Join(s.Paths, ", ") + "]"
+	}
+	return base
+}
+
 // Cue is one behavioural DoS cue ready for the ban path: the offender key,
-// the detector class and the measured shape in the note. The note is the
-// R11 analyst's reading: `slowloris_suspect (segs=28 bytes/seg=10 span=34s)`.
+// the detector class, the structured signature and the printable note. The
+// note = the R11 analyst's reading; the sig = the watertight chain.
 type Cue struct {
 	Key   string
 	Class CueClass
 	AtSec int64
 	Note  string
+	// Sig (TR-195, issue #237): the dynamic signature. Zero value = the
+	// legacy note-only form.
+	Sig DoSSig
 }
 
 // The leaf defaults (the CRD knobs land with the policy slice). Each name
@@ -131,7 +163,11 @@ func (e *Engine) IngestCues(cues []Cue) ([]BanEvidence, error) {
 			errs = append(errs, err)
 			continue
 		}
-		recs = append(recs, e.Assess(c.Key, c.AtSec)...)
+		// TR-195: the dynamic signature rides the record verbatim, sink
+		// copy included (the watertight chain: the map, the evidence and
+		// the kernel row read the same sig). No crossing = no record = no
+		// signature (the absence carries no claim).
+		recs = append(recs, e.AssessWithSig(c.Key, c.AtSec, &c.Sig)...)
 	}
 	return recs, errors.Join(errs...)
 }
