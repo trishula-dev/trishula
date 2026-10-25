@@ -101,7 +101,7 @@ func (p pinnedBansV4) DeleteBansV4(k BansV4Key) error {
 // NewDosRunnerFromPins opens the pinned maps and wires the runner core
 // (the features → the cues → the assess → the enforce-records; the
 // evidence rides the same JSONL the enforcer writes).
-func NewDosRunnerFromPins(flowStatsPin, bansV4Pin string) (*DosRunner, error) {
+func NewDosRunnerFromPins(flowStatsPin, bansV4Pin string, opts ...RunnerOption) (*DosRunner, error) {
 	fs, err := ebpf.LoadPinnedMap(flowStatsPin, nil)
 	if err != nil {
 		return nil, fmt.Errorf("flow_stats pin: %w", err)
@@ -111,15 +111,44 @@ func NewDosRunnerFromPins(flowStatsPin, bansV4Pin string) (*DosRunner, error) {
 		return nil, fmt.Errorf("bans_v4 pin: %w", err)
 	}
 	l := &Loader{}
-	rb := rateban.New(monotonicSec(l), rateban.EvidenceSinkFunc(func(rateban.BanEvidence) error {
-		return nil
-	}))
+	sink := rateban.EvidenceSink(nil)
+	ro := runnerOption{}
+	for _, o := range opts {
+		o(&ro)
+	}
+	if ro.applyBanSink != nil {
+		sink = ro.applyBanSink
+	}
+	if sink == nil {
+		sink = rateban.EvidenceSinkFunc(func(rateban.BanEvidence) error { return nil })
+	}
+	rb := rateban.New(monotonicSec(l), sink)
 	enf := NewBanEnforcer(pinnedBansV4{m: bv}, NewJSONLEvidenceSink())
 	return &DosRunner{
 		Feats: pinnedFeatureReader{m: fs},
 		Rb:    rb,
 		Enf:   enf,
 	}, nil
+}
+
+// runnerOption is one NewDosRunnerFromPins knob (the v0 surface is small;
+// the OTel ban sink is the first knob).
+type runnerOption struct {
+	applyBanSink rateban.EvidenceSink
+}
+
+// RunnerOption is the exported knob for NewDosRunnerFromPins.
+type RunnerOption func(*runnerOption)
+
+// WithBanSink sets the rateban evidence sink the runner's engine records
+// would-bans through (the fanout of the receipts; nil default = the no-op
+// sink, the host still reads the records the Sweep returns).
+func WithBanSink(s rateban.EvidenceSink) RunnerOption {
+	return func(o *runnerOption) {
+		if s != nil {
+			o.applyBanSink = s
+		}
+	}
 }
 
 // monotonicSec returns a rateban clock over CLOCK_MONOTONIC seconds (the

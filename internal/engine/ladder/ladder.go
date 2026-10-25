@@ -11,6 +11,10 @@
 // enforced, at this slice of the ladder (TR-05 posture).
 package ladder
 
+import (
+	rateban "github.com/trishula-dev/trishula/internal/engine/rateban"
+)
+
 // Action is the reference-implementation verdict action vocabulary (one per resolved verdict).
 type Action string
 
@@ -82,4 +86,10 @@ type Verdict struct {
 	Rules  []RuleID // every contributing rule/stage, walk order
 	Score  int64    // anomaly accumulator input (TR-09 consumes)
 	Phase  Phase    // phase the current action was resolved in
+	// DosSig (TR-195, issue #237): the dynamic signature of a DoS verdict,
+	// verbatim from the cue that crossed (the watertight chain: the map
+	// read, the evidence row and the verdict record cite the same measured
+	// facts). Nil = the verdict carries no signature (the absence carries
+	// no claim).
+	DosSig *rateban.DoSSig
 }

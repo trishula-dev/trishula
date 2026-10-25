@@ -58,6 +58,13 @@
 //	  event_name     = "trishula.verdict"
 //	  attrs          = the same set as the span (request.id, verdict.*)
 //
+//	DoS signature extension (TR-195, issue #237): when the Verdict carries
+//	a DosSig, verdict.dos.sig rides the span and the log record (the
+//	DoSSig JSON: class, segs, bytesPerSeg, spanSec, paths). Flow-keyed
+//	would-bans emit their own record: event `trishula.ban`, WARN, attrs
+//	ban.key / ban.tier / ban.score / ban.reason (+ verdict.dos.sig when
+//	the record holds one; no request.id — the key IS the correlation).
+//
 // The middleware span `trishula.request` (wire.go) carries request.id,
 // http.method and http.path as string attrs and parents the verdict span.
 package otel
@@ -72,8 +79,10 @@ import (
 	"sync"
 	"time"
 
+	"encoding/json"
 	"github.com/trishula-dev/trishula/internal/engine/ingest"
 	"github.com/trishula-dev/trishula/internal/engine/ladder"
+	rateban "github.com/trishula-dev/trishula/internal/engine/rateban"
 	"go.opentelemetry.io/otel/attribute"
 	apiLog "go.opentelemetry.io/otel/log"
 	apiMetric "go.opentelemetry.io/otel/metric"
@@ -93,9 +102,19 @@ const (
 	AttrVerdictRoute  = "verdict.route"
 	AttrVerdictRules  = "verdict.rules"
 	AttrVerdictScore  = "verdict.score"
-	AttrHTTPMethod    = "http.method"
-	AttrHTTPPath      = "http.path"
-	AttrServiceName   = "service.name"
+	// AttrDosSig (TR-195, issue #237): the dynamic signature of a DoS
+	// verdict, the DoSSig JSON (class, segs, bytesPerSeg, spanSec, paths).
+	// Present on the verdict signals only when the verdict carries a sig;
+	// present on ban records always (a ban always carries its sig or nil —
+	// nil sig = no attr).
+	AttrDosSig      = "verdict.dos.sig"
+	AttrBanKey      = "ban.key"
+	AttrBanTier     = "ban.tier"
+	AttrBanScore    = "ban.score"
+	AttrBanReason   = "ban.reason"
+	AttrHTTPMethod  = "http.method"
+	AttrHTTPPath    = "http.path"
+	AttrServiceName = "service.name"
 )
 
 // MetaPathHint is the TxContext.Metadata key the pipeline reads the route
@@ -319,13 +338,30 @@ func VerdictAttrs(tx *ingest.TxContext, v *ladder.Verdict) []attribute.KeyValue 
 			rules = append(rules, string(r))
 		}
 	}
-	return []attribute.KeyValue{
+	attrs := []attribute.KeyValue{
 		attribute.String(AttrVerdictAction, action),
 		attribute.String(AttrVerdictPhase, phase),
 		attribute.String(AttrVerdictRoute, route),
 		attribute.String(AttrVerdictRules, strings.Join(rules, ",")),
 		attribute.Int64(AttrVerdictScore, score),
 	}
+	if v != nil && v.DosSig != nil {
+		// TR-195: the dynamic signature rides the verdict record verbatim
+		// (the watertight chain; the JSON = the DoSSig schema).
+		attrs = append(attrs, attribute.String(AttrDosSig, dosSigJSON(*v.DosSig)))
+	}
+	return attrs
+}
+
+// dosSigJSON renders the DoSSig's JSON form for the attribute value (the
+// one content, every surface: the cue, the evidence row, the map fact and
+// the verdict record cite the same measured facts).
+func dosSigJSON(s rateban.DoSSig) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // metricAttrs strips the span-only attrs (rules/score) from the metric set
@@ -367,3 +403,40 @@ const MetricKeyTraceID = "trace.id"
 
 // init guard: the attribute key is shared with the exporter (exporter.go).
 var attrKeyTraceID = attribute.Key(MetricKeyTraceID)
+
+// SpanBan is the ban log record's event/span name (v0: a flow-keyed ban
+// carries no HTTP request, so no request span and no request.id — the
+// record keys itself by the ban key).
+const SpanBan = "trishula.ban"
+
+// EmitBan publishes one flow-keyed would-ban/ban as a log record (TR-195,
+// issue #237; the operator's watertight-observability decision). The
+// record carries ban.key / ban.tier / ban.score / ban.reason and — when the
+// record holds a signature — verdict.dos.sig, the DoSSig JSON. The verdict
+// record's own surface (Emit) carries the same sig on the request that
+// caused the crossing. Flow-keyed bans ride no request context, so the
+// record carries no span: the key IS the correlation (ban.key).
+func (p *Pipeline) EmitBan(b rateban.BanEvidence) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.done {
+		return ErrShutdown
+	}
+	reason := strings.Join(b.ReasonCodes, ",")
+	attrs := []attribute.KeyValue{
+		attribute.String(AttrBanKey, b.Key),
+		attribute.String(AttrBanTier, b.Tier),
+		attribute.Float64(AttrBanScore, b.Score),
+		attribute.String(AttrBanReason, reason),
+	}
+	if b.OSig != nil {
+		attrs = append(attrs, attribute.String(AttrDosSig, dosSigJSON(*b.OSig)))
+	}
+	rec := apiLog.Record{}
+	rec.SetEventName(SpanBan)
+	rec.SetSeverity(apiLog.SeverityWarn)
+	rec.SetBody(attribute.StringValue("would-ban " + b.Tier + " " + b.Key))
+	rec.AddAttributes(attrs...)
+	p.logr.Emit(context.Background(), rec)
+	return nil
+}
