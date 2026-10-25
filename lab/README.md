@@ -2,6 +2,11 @@
 
 Demo + DX1 scenarios with NGF (TR-06, TR-23).
 
+## Prerequisites
+
+- `just` — the entry runner: `just` alone lists every lane; `just demo` runs it. (brew install just)
+- The direct form stays: `bash lab/demo.sh` = `just demo`.
+
 ## The target gate (issue #261)
 
 Every lab entry (`demo.sh`, `lab/dx1/setup.sh`) sources
