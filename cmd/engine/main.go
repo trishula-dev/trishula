@@ -296,21 +296,68 @@ func newEngineHandlerWithBox(upstream, hop string, box *bundleBox) http.Handler 
 			return
 		}
 		if r.URL.Path == challengeHopPath && box.challenge != nil {
-			// TR-197: the redirect hop. A valid one-shot token = 200; a
-			// replayed, expired, tampered or missing token = 403. The
-			// evidence-of-work probe lands with the next leaf (#239).
-			tok := r.URL.Query().Get("token")
-			state, err := box.challenge.Verify(tok, time.Now())
-			if err != nil {
-				log.Printf("engine: challenge hop refused (%v) for %s", err, r.RemoteAddr)
-				w.Header().Set(hopHeader, "engine")
-				http.Error(w, "challenge refused: "+err.Error(), http.StatusForbidden)
+			// TR-197 leaf 3 (issue #239): the evidence-of-work hop.
+			// No answer = the signed problem (the original token peeks —
+			// nothing consumed). An answer = the proof check, then BOTH
+			// tokens consume once (the problem + the original), then the
+			// pass grant mints for the original request path.
+			q := r.URL.Query()
+			tok, ans, prob := q.Get("token"), q.Get("answer"), q.Get("problem")
+			now := time.Now()
+			w.Header().Set(hopHeader, "engine")
+			if ans == "" {
+				if _, err := box.challenge.VerifyPeek(tok, now); err != nil {
+					log.Printf("engine: challenge hop refused (%v) for %s", err, r.RemoteAddr)
+					http.Error(w, "challenge refused: "+err.Error(), http.StatusForbidden)
+					return
+				}
+				probTok, pr, merr := func() (string, challenge.Problem, error) {
+					p, t, e := challenge.MintProblem(box.challenge, challenge.ProblemDifficulty, now)
+					return t, p, e
+				}()
+				if merr != nil {
+					log.Printf("engine: challenge problem mint error: %v", merr)
+					http.Error(w, "challenge problem unavailable", http.StatusForbidden)
+					return
+				}
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				fmt.Fprintf(w, "challenge: solve the probe, retry with answer=%s&problem=<token>\n", probTok)
+				fmt.Fprintf(w, "problem-token=%s\n", probTok)
+				fmt.Fprintf(w, "salt=%s\n", pr.Salt)
+				fmt.Fprintf(w, "diff=%d\n", pr.Diff)
+				log.Printf("engine: challenge problem issued for %s", r.RemoteAddr)
 				return
 			}
-			log.Printf("engine: challenge hop verified state=%q from %s", state, r.RemoteAddr)
-			w.Header().Set(hopHeader, "engine")
+			pr, perr := challenge.ParseProblem(box.challenge, prob, now)
+			if perr != nil {
+				log.Printf("engine: challenge problem refused (%v) for %s", perr, r.RemoteAddr)
+				http.Error(w, "challenge problem refused: "+perr.Error(), http.StatusForbidden)
+				return
+			}
+			if !challenge.VerifyProof(pr.Salt, ans, pr.Diff) {
+				log.Printf("engine: challenge proof rejected for %s", r.RemoteAddr)
+				http.Error(w, "challenge proof rejected", http.StatusForbidden)
+				return
+			}
+			state, verr := box.challenge.Verify(tok, now)
+			if verr != nil {
+				log.Printf("engine: challenge consumed-refused (%v) for %s", verr, r.RemoteAddr)
+				http.Error(w, "challenge refused: "+verr.Error(), http.StatusForbidden)
+				return
+			}
+			_, reqPath, _ := strings.Cut(state, " ") // the mint state = remote + " " + path
+			passTok, merr := challenge.MintPass(box.challenge, reqPath, 10*time.Minute, now)
+			if merr != nil {
+				log.Printf("engine: challenge pass mint error: %v", merr)
+				http.Error(w, "challenge pass unavailable", http.StatusForbidden)
+				return
+			}
+			http.SetCookie(w, &http.Cookie{
+				Name: "trishula_pass", Value: passTok, Path: "/", HttpOnly: true,
+				MaxAge: int((10 * time.Minute).Seconds()), SameSite: http.SameSiteLaxMode,
+			})
+			log.Printf("engine: challenge solved state=%q from %s", state, r.RemoteAddr)
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("challenge verified; retry the original request"))
 			return
 		}
@@ -344,7 +391,20 @@ func newEngineHandlerWithBox(upstream, hop string, box *bundleBox) http.Handler 
 			}
 			log.Printf("engine: decision %s (rule=%s) for %s %s", decisionWord, decision.RuleID, r.Method, r.URL.Path)
 			if decision.Action == "challenge" {
-				// TR-197 (issue #239): the challenge verdict answers 429 +
+				// TR-197 leaf 3: the pass grant (the solved probe's
+				// cookie) forwards matching requests for its TTL; the
+				// grant states the granted path.
+				if box.challenge != nil {
+					if ck, cerr := r.Cookie("trishula_pass"); cerr == nil {
+						if granted, perr := challenge.VerifyPassPeek(box.challenge, ck.Value, time.Now()); perr == nil && granted == r.URL.Path {
+							log.Printf("engine: challenge pass accepted for %s (granted %s)", r.RemoteAddr, granted)
+							w.Header().Set(hopHeader, "engine")
+							proxy.ServeHTTP(w, r)
+							return
+						}
+					}
+				}
+				// TR-197 leaf 2 (issue #239): the challenge verdict answers 429 +
 				// the signed redirect token when a key is configured; the
 				// mechanism off = the deterministic 403 (no redirect, no
 				// mint — the gate never pretends to challenge).
