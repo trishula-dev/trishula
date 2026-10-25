@@ -207,6 +207,10 @@ type EngineStream struct {
 	// Rows are the staged route rows (routetemplate.Stage): the compiled
 	// row truth the fail-open projection reads.
 	Rows []routetemplate.RouteStage
+	// CELRows are the compiled CEL-class rows (TR-196): the fast-path
+	// tier's compiled row truth from the bundle's fastPath leg. Nil or
+	// empty when the bundle carries no CEL-class rule.
+	CELRows []fastpath.FastPathCELRule
 	// DefaultAction is the policy's no-match disposition.
 	DefaultAction string
 }
@@ -251,11 +255,11 @@ func CompileCase(c Case) (EngineStream, error) {
 			})
 		}
 		b.RulePacks = []cel.RulePack{b.RulePacks[0], casePack}
-		digests, err := operator.PackDigests(b.RulePacks)
-		if err != nil {
-			return EngineStream{}, fmt.Errorf("digest case %s: %w", c.Name, err)
+		// The CEL-class leg recomputes (the compile gate runs on the
+		// spliced packs; the rows land on the bundle's fastPath leg).
+		if err := operator.CompileFastPathCELRows(&b); err != nil {
+			return EngineStream{}, fmt.Errorf("cel leg case %s: %w", c.Name, err)
 		}
-		b.RulePackDigests = digests
 	}
 	e, err := operator.Load(b)
 	if err != nil {
@@ -271,7 +275,11 @@ func CompileCase(c Case) (EngineStream, error) {
 			return EngineStream{}, fmt.Errorf("stage case %s: %w", c.Name, err)
 		}
 	}
-	return EngineStream{Eval: e, Bundle: &b, Rows: rows, DefaultAction: c.Policy.DefaultAction}, nil
+	var celRows []fastpath.FastPathCELRule
+	if b.FastPath != nil && len(b.FastPath.CELRules) > 0 {
+		celRows = b.FastPath.CELRules
+	}
+	return EngineStream{Eval: e, Bundle: &b, Rows: rows, CELRows: celRows, DefaultAction: c.Policy.DefaultAction}, nil
 }
 
 // EngineDecision is the engine verdict stream's resolution for one case.
@@ -347,7 +355,9 @@ type Projection struct {
 
 // ProjectCase runs both streams for one case and classifies the pair.
 // The kernel leg never runs here: this projection is the kernel-free
-// userspace stream the gate drives on every host.
+// userspace stream the gate drives on every host. One fast-path class
+// rules the case: the CEL class (the compiled rows) when the case
+// carries rules, the route class over the LPM rows otherwise.
 func ProjectCase(c Case) (Projection, error) {
 	stream, err := CompileCase(c)
 	if err != nil {
@@ -355,6 +365,9 @@ func ProjectCase(c Case) (Projection, error) {
 	}
 	frame := BuildFrame(c.Frame)
 	fast := TemplateDecision(stream.Rows, frame)
+	if len(stream.CELRows) > 0 {
+		fast = CELRulesDecision(stream.CELRows, frame)
+	}
 	engine, err := stream.Evaluate(c.View)
 	if err != nil {
 		// The error verdict resolves (fail safe); the projection reports
@@ -362,7 +375,7 @@ func ProjectCase(c Case) (Projection, error) {
 		return Projection{Fast: fast, Engine: engine, Class: "unresolved-engine", ShapeCounts: c.Classes}, nil
 	}
 	p := Projection{Fast: fast, Engine: engine, ShapeCounts: c.Classes}
-	p.Class, p.SplitSub = classify(fast, engine, stream.Rows)
+	p.Class, p.SplitSub = classify(fast, engine, stream.Rows, stream.CELRows)
 	p.PinDelta = pinDelta(c, fast)
 	return p, nil
 }
@@ -370,15 +383,23 @@ func ProjectCase(c Case) (Projection, error) {
 // classify names the mismatch budget class of one (fast, engine) pair.
 // The classes are exhaustive by construction; "unexplained" stays the
 // defensive row for a state the projector does not name (a future decision
-// state needs a budget row, never a silent pass).
-func classify(fast Decision, engine EngineDecision, rows []routetemplate.RouteStage) (string, string) {
+// state needs a budget row, never a silent pass). The drop-row backing
+// reads the case's own leg: the route rows or the compiled CEL rows (one
+// class rides one case; the two legs never stage together).
+func classify(fast Decision, engine EngineDecision, rows []routetemplate.RouteStage, celRows []fastpath.FastPathCELRule) (string, string) {
 	if fast.Drop {
 		// Row truth: a drop is backed only by a staged drop row (the mark
 		// names it). Anything else is the fail-open class.
-		if !fast.Marked || int(fast.RowID) >= len(rows) {
-			return "failopen-drop", ""
+		backed := false
+		if fast.Marked {
+			if int(fast.RowID) < len(rows) && rows[fast.RowID].Action == fastpath.RouteTemplateActionDrop {
+				backed = true
+			}
+			if int(fast.RowID) < len(celRows) && celRows[fast.RowID].Action == fastpath.RouteTemplateActionDrop {
+				backed = true
+			}
 		}
-		if rows[fast.RowID].Action != fastpath.RouteTemplateActionDrop {
+		if !backed {
 			return "failopen-drop", ""
 		}
 		if engine.Decisive {

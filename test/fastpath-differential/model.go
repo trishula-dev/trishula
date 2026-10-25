@@ -23,6 +23,11 @@ import (
 const (
 	reqSnapMax     = 96 // the bounded request-line read
 	routePrefixMax = 64 // the LPM key width in bytes
+	// The TR-196 CEL-class bounds (bpf/flow_tc.c's fp leg); the model
+	// mirrors them so a template-bound change names itself here.
+	celMethodExtractMax = 8  // the method-token scan window
+	celScanPathMax      = 64 // the bounded path extract
+	celScanQueryMax     = 32 // the bounded query extract
 	// The TC verdicts the program returns (the uABI constants the C
 	// inlines; TC_ACT_OK and TC_ACT_SHOT are frozen since forever).
 	tcActOK   uint32 = 0
@@ -206,6 +211,159 @@ func prefixEqual(a, b []byte) bool {
 		}
 	}
 	return true
+}
+
+// The TR-196 CEL-class bounds (bpf/flow_tc.c's fp leg); the model mirrors
+// them so a template-bound change names itself here.
+
+// CELRulesDecision projects the compiled CEL-class rows over one frame
+// (the C leg's decisions byte-for-byte): the bounded method/path/query
+// extract, the per-row leg compares (the compare method, the decomposed
+// glob prefix/suffix, the query substring scan), the first match wins
+// with its compiled action, and every parse miss or absent leg forwards
+// (fail-open). The quirk rows the model and the C share: a path that
+// overruns the extract cap cannot back a suffix or exact leg (the kernel
+// cannot see the true tail), so such rows skip; a query past the scan cap
+// reads only the capped window (a false negative only — fail-open).
+func CELRulesDecision(rows []fastpath.FastPathCELRule, frame []byte) Decision {
+	// eth: 14 bytes; the fp leg runs on IPv4 only (the flow leg parses
+	// both families; the corpus frames the v4 shape).
+	if len(frame) < 14 || frame[12] != 0x08 || frame[13] != 0x00 {
+		return DefaultForward()
+	}
+	if len(frame) < 14+20 {
+		return DefaultForward()
+	}
+	ihl := int(frame[14] & 0x0F)
+	if ihl < 5 || frame[14+9] != 6 {
+		return DefaultForward()
+	}
+	tcp := 14 + ihl*4
+	if len(frame) < tcp+20 {
+		return DefaultForward()
+	}
+	doff := int(frame[tcp+12] >> 4)
+	if doff < 5 {
+		return DefaultForward()
+	}
+	reqOff := tcp + doff*4
+	if len(frame) <= reqOff {
+		return DefaultForward()
+	}
+	body := frame[reqOff:]
+
+	// The method token: up to 8 bytes before the first space.
+	method := []byte(nil)
+	methodLen := 0
+	for i := 0; i < celMethodExtractMax && i < len(body); i++ {
+		if body[i] == ' ' {
+			method = body[:i]
+			methodLen = i
+			break
+		}
+	}
+	if method == nil {
+		// No space inside the method window: the path and the query
+		// cannot extract; no row matches (fail-open).
+		return DefaultForward()
+	}
+
+	// The path: from the method end to a space, CR, LF or '?', capped at
+	// the extract bound (the C loops the same window).
+	p0 := methodLen
+	pathStart := p0 + 1
+	path := body[pathStart:min(len(body), pathStart+celScanPathMax)]
+	terminated := false
+	qAt := -1
+	for i := 0; i < len(path); i++ {
+		c := path[i]
+		if c == '?' {
+			qAt = pathStart + i
+			path = path[:i]
+			terminated = true
+			break
+		}
+		if c == ' ' || c == '\r' || c == '\n' {
+			path = path[:i]
+			terminated = true
+			break
+		}
+	}
+	// The overrun marker: the extract hit the cap and the byte past it is
+	// not a terminator (the C reads the same byte through the helper).
+	pathContinue := false
+	if len(path) == celScanPathMax && !terminated && pathStart+celScanPathMax < len(body) {
+		next := body[pathStart+celScanPathMax]
+		if next != ' ' && next != '\r' && next != '\n' {
+			pathContinue = true
+		}
+	}
+	if len(path) == 0 && qAt < 0 {
+		// An empty target with no query (a line ending in two spaces):
+		// the leg has nothing to compare; no row matches.
+		return DefaultForward()
+	}
+
+	// The query: after the '?' to a space, CR or LF, capped at the scan
+	// bound (a capped miss reads fail-open: a false negative only).
+	var query []byte
+	if qAt >= 0 {
+		end := len(body)
+		for i := qAt + 1; i < len(body); i++ {
+			if body[i] == ' ' || body[i] == '\r' || body[i] == '\n' {
+				end = i
+				break
+			}
+		}
+		query = body[qAt+1 : min(end, qAt+1+celScanQueryMax)]
+	}
+
+	for i, r := range rows {
+		if r.Method != "" && string(method) != r.Method {
+			continue
+		}
+		if r.PathExact {
+			if pathContinue || len(path) != len(r.PathGlobPrefix) || string(path) != r.PathGlobPrefix {
+				continue
+			}
+		} else if r.PathGlobPrefix != "" || r.PathGlobSuffix != "" {
+			if len(path) < len(r.PathGlobPrefix) || string(path[:len(r.PathGlobPrefix)]) != r.PathGlobPrefix {
+				continue
+			}
+			if r.PathGlobSuffix != "" {
+				if pathContinue || len(path) < len(r.PathGlobSuffix) {
+					continue
+				}
+				if string(path[len(path)-len(r.PathGlobSuffix):]) != r.PathGlobSuffix {
+					continue
+				}
+			}
+		}
+		if r.QuerySubstring != "" {
+			found := false
+			for s := 0; len(r.QuerySubstring)+s <= len(query); s++ {
+				if string(query[s:s+len(r.QuerySubstring)]) == r.QuerySubstring {
+					found = true
+					break
+				}
+			}
+			if !found {
+				continue
+			}
+		}
+		return rowDecisionCEL(r, uint32(i))
+	}
+	return DefaultForward()
+}
+
+// rowDecisionCEL renders the matched CEL row's decision (the part-1
+// primitives: forward+mark, drop).
+func rowDecisionCEL(r fastpath.FastPathCELRule, id uint32) Decision {
+	d := Decision{Marked: true, RowID: id}
+	if r.Action == fastpath.RouteTemplateActionDrop {
+		d.Drop = true
+	}
+	return d
 }
 
 // rowDecision renders the matched row's action (the part-1 primitives:

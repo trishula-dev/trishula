@@ -111,13 +111,11 @@ func compileResolved(ctx context.Context, p *v1alpha1.WAFPolicy, src RulePackSou
 		packs = append(packs, pack)
 	}
 	b.RulePacks = packs
-	digests, err := packDigests(b.RulePacks)
-	if err != nil {
+	// The CEL fast-path class leg (TR-196): the resolved packs splice in,
+	// the compile recomputes the leg and re-digests.
+	if err := CompileFastPathCELRows(&b); err != nil {
 		return Bundle{}, fmt.Errorf("reconcile %s/%s: %w", p.Namespace, p.Name, err)
 	}
-	// Rule provenance rides the bundle's own record today (ids are in the
-	// packs); the reconcile log line names the pack ids it compiled.
-	b.RulePackDigests = digests
 	return b, nil
 }
 

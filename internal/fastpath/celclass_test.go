@@ -31,7 +31,7 @@ func TestGlobSegments(t *testing.T) {
 		fails bool
 	}{
 		{"one star", "/v1/chat/*", CELGlobDecomp{Prefix: "/v1/chat/"}, false},
-		{"leading star", "/*-admin", CELGlobDecomp{Suffix: "-admin"}, false},
+		{"leading star", "/*-admin", CELGlobDecomp{Prefix: "/", Suffix: "-admin"}, false},
 		{"middle star", "/a*d", CELGlobDecomp{Prefix: "/a", Suffix: "d"}, false},
 		{"literal full match", "/v1/chat", CELGlobDecomp{Prefix: "/v1/chat", Exact: true}, false},
 		{"two stars", "/*x*y", CELGlobDecomp{}, true},

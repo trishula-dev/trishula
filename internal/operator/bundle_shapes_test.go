@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	v1alpha1 "github.com/trishula-dev/trishula/api/v1alpha1"
+	"github.com/trishula-dev/trishula/internal/engine/cel"
 	fastpath "github.com/trishula-dev/trishula/internal/fastpath"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -24,11 +25,37 @@ import (
 // Compile's canonical JSON rendering plus that newline.
 const shapesDir = "testdata/bundle-shapes"
 
-// shapePolicies maps each committed shape file to the policy it compiles
-// from. The policy set covers the compile surface: the 2-row route class,
-// the 8-row bound corner, a single drop class, the kernel-free surface,
-// and a route class with a CRS rule-set ref.
-func shapePolicies() map[string]v1alpha1.WAFPolicy {
+// shapeSpec is one committed shape's source: the policy plus the optional
+// custom rule pack (the TR-196 CEL-class shapes).
+type shapeSpec struct {
+	policy v1alpha1.WAFPolicy
+	rules  []cel.Rule
+}
+
+// compileShape compiles one shape's source to its bundle: the policy
+// compile, then the optional pack splice (the seed pack stays first, the
+// TR-08b contract) with the compiled CEL-class leg and the re-digests.
+func compileShape(spec shapeSpec) *Bundle {
+	b, err := Compile(spec.policy)
+	if err != nil {
+		panic(err)
+	}
+	if len(spec.rules) > 0 {
+		pack := cel.RulePack{Rules: spec.rules}
+		b.RulePacks = append(b.RulePacks, pack)
+		if err := CompileFastPathCELRows(&b); err != nil {
+			panic(err)
+		}
+	}
+	return &b
+}
+
+// shapePolicies maps each committed shape file to its source. The policy
+// set covers the compile surface: the 2-row route class, the 8-row bound
+// corner, a single drop class, the kernel-free surface, a route class
+// with a CRS rule-set ref, and the TR-196 CEL-class rows (one glob row,
+// two rows, and a pack whose rules all route T2: no kernel leg).
+func shapePolicies() map[string]shapeSpec {
 	rm := func(p string, a v1alpha1.RouteAction) v1alpha1.RouteMark {
 		return v1alpha1.RouteMark{Prefix: p, Action: a}
 	}
@@ -65,12 +92,31 @@ func shapePolicies() map[string]v1alpha1.WAFPolicy {
 		Name:   "owasp-crs",
 		Source: v1alpha1.RuleSetSource{CRSVersion: "4.0.0", Profile: v1alpha1.CRSProfilePL1},
 	}}
-	return map[string]v1alpha1.WAFPolicy{
-		"route_class_2row.json":      two,
-		"route_class_8row.json":      eight,
-		"route_class_drop_only.json": drop,
-		"no_kernel_fields.json":      base("engine-only"),
-		"route_class_ruleset.json":   ruleset,
+	celGlob := base("cel-class-glob")
+	cel2row := base("cel-class-2row")
+	celT2 := base("cel-class-t2pack")
+	dxGlob := func(id, glob string) cel.Rule {
+		return cel.Rule{ID: id, Action: cel.ActionEnforce,
+			Expression: "request.method == \"POST\" && path.matches(\"" + glob + "\")"}
+	}
+	return map[string]shapeSpec{
+		"route_class_2row.json":      {policy: two},
+		"route_class_8row.json":      {policy: eight},
+		"route_class_drop_only.json": {policy: drop},
+		"no_kernel_fields.json":      {policy: base("engine-only")},
+		"route_class_ruleset.json":   {policy: ruleset},
+		"cel_class_glob.json": {policy: celGlob, rules: []cel.Rule{
+			{ID: "DX-LAB-001", Action: cel.ActionEnforce,
+				Expression: "request.method == \"POST\" && path.matches(\"/v1/chat/*\") && request.query.contains(\"UNION\")"},
+		}},
+		"cel_class_2row.json": {policy: cel2row, rules: []cel.Rule{
+			dxGlob("DX-LAB-010", "/v1/chat/*"),
+			dxGlob("DX-LAB-011", "/*-admin"),
+		}},
+		"cel_class_t2pack.json": {policy: celT2, rules: []cel.Rule{
+			{ID: "DX-LAB-101", Action: cel.ActionEnforce,
+				Expression: "request.query.startsWith(\"x=1\")"},
+		}},
 	}
 }
 
@@ -108,11 +154,8 @@ func TestCommittedBundleShapes(t *testing.T) {
 			if !committed[name] {
 				t.Fatalf("committed shape %s is missing; recompile the shapePolicies entry and write Marshal's bytes plus a newline", name)
 			}
-			b, err := Compile(policies[name])
-			if err != nil {
-				t.Fatalf("Compile(%s): %v", name, err)
-			}
-			data, err := json.Marshal(&b)
+			b := compileShape(policies[name])
+			data, err := json.Marshal(b)
 			if err != nil {
 				t.Fatalf("marshal shape %s: %v", name, err)
 			}
@@ -130,18 +173,39 @@ func TestCommittedBundleShapes(t *testing.T) {
 			if _, err := Load(back); err != nil {
 				t.Fatalf("wire gate: Load(%s): %v", name, err)
 			}
-			if back.Tenant != policies[name].Namespace {
-				t.Errorf("shape %s tenant = %q, want %q", name, back.Tenant, policies[name].Namespace)
+			if back.Tenant != policies[name].policy.Namespace {
+				t.Errorf("shape %s tenant = %q, want %q", name, back.Tenant, policies[name].policy.Namespace)
 			}
-			if policies[name].Spec.Routes == nil && back.FastPath != nil {
+			if policies[name].policy.Spec.Routes == nil && back.FastPath != nil &&
+				len(back.FastPath.CELRules) == 0 {
 				t.Errorf("kernel-free shape %s carries a kernel leg: %+v", name, back.FastPath)
 			}
-			if policies[name].Spec.Routes != nil {
+			if len(policies[name].rules) > 0 {
 				if back.FastPath == nil {
-					t.Fatalf("shape %s carries no kernel leg, want %d route rows", name, len(policies[name].Spec.Routes))
+					// The T2-route shape: every rule routed T2, no
+					// kernel leg, no kernel claim. The rule packs stay.
+					if len(back.RulePacks) < 2 {
+						t.Errorf("t2 shape %s carries %d packs, want the seed and the case pack", name, len(back.RulePacks))
+					}
+					return
 				}
-				if got := len(back.FastPath.Routes); got != len(policies[name].Spec.Routes) {
-					t.Fatalf("shape %s carries %d route rows, want %d", name, got, len(policies[name].Spec.Routes))
+				// The compiled CEL-class rows read back per the shape: the
+				// byte parity above already pins the leg; the row count
+				// and the one-class shape read here.
+				if back.FastPath == nil || len(back.FastPath.CELRules) != len(b.FastPath.CELRules) {
+					t.Fatalf("cel shape %s: %d cel rows on the wire, want %d",
+						name, len(back.FastPath.CELRules), len(b.FastPath.CELRules))
+				}
+				if len(back.FastPath.Routes) > 0 {
+					t.Errorf("cel shape %s carries %d route rows; one leg rides one shape", name, len(back.FastPath.Routes))
+				}
+			}
+			if policies[name].policy.Spec.Routes != nil {
+				if back.FastPath == nil {
+					t.Fatalf("shape %s carries no kernel leg, want %d route rows", name, len(policies[name].policy.Spec.Routes))
+				}
+				if got := len(back.FastPath.Routes); got != len(policies[name].policy.Spec.Routes) {
+					t.Fatalf("shape %s carries %d route rows, want %d", name, got, len(policies[name].policy.Spec.Routes))
 				}
 				for _, field := range []string{"spec.routes[].prefix", "spec.routes[].action"} {
 					if got := back.Split[field]; got != fastpath.VerdictKernel.String() {

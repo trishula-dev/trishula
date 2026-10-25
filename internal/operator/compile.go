@@ -153,11 +153,20 @@ type FastPathRoute struct {
 }
 
 // FastPathValues is the kernel-path parameter leg (TR-40b): the route
-// template's placeholders, filled from the compiled policy.
+// template's placeholders, filled from the compiled policy. TR-196 grows
+// the leg with the CEL-class compiled rows (the fast-path tier's compiled
+// row truth; one leg per class, one class per bundle).
 type FastPathValues struct {
 	// Routes are the route classes in policy order. Bounded by the
 	// template contract (8 rows).
 	Routes []FastPathRoute `json:"routes"`
+	// CELRules are the compiled CEL-class fast-path rows (TR-196, issue
+	// #238), in rule-pack rule order: the method compare, the path glob
+	// (decomposed prefix/suffix) and the query substring legs, plus the
+	// kernel action code. Bounded by the compile gate (8 rows). The
+	// rows carry the decomposed forms — the wire carries the compiled
+	// kernel truth; the rule expressions stay in the rule packs.
+	CELRules []fastpath.FastPathCELRule `json:"celRules,omitempty"`
 }
 
 // seedPackPath locates the seed rule pack relative to this package
@@ -223,7 +232,6 @@ func Compile(policy v1alpha1.WAFPolicy) (Bundle, error) {
 			return Bundle{}, fmt.Errorf("compile: rule set %d (%s): %w", i, ref.Name, err)
 		}
 	}
-
 	// The v0 CEL plane: the seed pack. Compiled once per Compile call; the
 	// engine env compiles each rule's program lazily at load/eval (the spec's CEL DSL,
 	// load ≠ compile). A custom CEL rules source rides a later TR-08
@@ -239,12 +247,55 @@ func Compile(policy v1alpha1.WAFPolicy) (Bundle, error) {
 	applyPolicyBudget(pack.Rules, policy.Spec.CELBudget)
 	b.RulePacks = []cel.RulePack{*pack}
 
+	// The CEL fast-path class leg (TR-196): the compiled rows from this
+	// bundle's rule packs (the seed pack here; the reconcile recomputes
+	// the leg after custom packs splice in).
+	if err := CompileFastPathCELRows(&b); err != nil {
+		return Bundle{}, fmt.Errorf("compile: %w", err)
+	}
+	return b, nil
+}
+
+// CompileFastPathCELRows computes the bundle's compiled CEL-class
+// fast-path rows (TR-196) from the bundle's own rule packs, in pack
+// order, replaces the leg's rows and recomputes the pack digests (the
+// splice re-digests). A rule outside the class set routes the slow path
+// (no row, no kernel claim — the compile skips list carries the reject
+// rows); the row bound fails closed with the rule named. The setFastPath
+// helper keeps the two-leg pointer shape: no leg, no pointer.
+func CompileFastPathCELRows(b *Bundle) error {
+	if b == nil {
+		return errors.New("compile: nil bundle")
+	}
+	rules := make([]cel.Rule, 0, 8)
+	for i := range b.RulePacks {
+		rules = append(rules, b.RulePacks[i].Rules...)
+	}
+	rows, _, err := fastpath.CompileCELFastPathRows(rules)
+	if err != nil {
+		return fmt.Errorf("fastPath cel leg: %w", err)
+	}
+	if len(rows) == 0 {
+		if b.FastPath != nil && len(b.FastPath.Routes) == 0 {
+			b.FastPath = nil // a leg with neither class carries nothing
+		}
+	} else {
+		ensureFastPath(b).CELRules = rows
+	}
 	digests, err := packDigests(b.RulePacks)
 	if err != nil {
-		return Bundle{}, err
+		return err
 	}
 	b.RulePackDigests = digests
-	return b, nil
+	return nil
+}
+
+// ensureFastPath returns the bundle's kernel leg, allocating when absent.
+func ensureFastPath(b *Bundle) *FastPathValues {
+	if b.FastPath == nil {
+		b.FastPath = &FastPathValues{}
+	}
+	return b.FastPath
 }
 
 // policySplitStrings renders the split record for the wire: one census
@@ -299,7 +350,10 @@ func validRoutes(routes []v1alpha1.RouteMark) error {
 // validFastPathLeg gates a loaded bundle's kernel leg the same way (tamper
 // and corruption fail the load, never reach the loader). The cell names
 // follow the census field paths with the row index, so a failure names the
-// offending cell either way.
+// offending cell either way. The TR-196 CEL-class rows ride the same gate:
+// every compiled row re-validates (bounds, printables, the leg presence,
+// the action vocabulary, the star-free decomposed legs) and duplicate row
+// ids fail closed.
 func validFastPathLeg(leg *FastPathValues) error {
 	if leg == nil {
 		return nil
@@ -324,6 +378,20 @@ func validFastPathLeg(leg *FastPathValues) error {
 		default:
 			return fmt.Errorf("spec.routes[%d].action code %d is outside the template vocabulary", i, r.Action)
 		}
+	}
+	if len(leg.CELRules) > fastpath.FastPathCELMaxRules {
+		return fmt.Errorf("fastPath cel leg carries %d rows; the bound is %d rows", len(leg.CELRules), fastpath.FastPathCELMaxRules)
+	}
+	seenCel := make(map[string]bool, len(leg.CELRules))
+	for i := range leg.CELRules {
+		row := leg.CELRules[i]
+		if err := fastpath.ValidateFastPathCELRule(row); err != nil {
+			return fmt.Errorf("fastPath cel leg row %d: %w", i, err)
+		}
+		if seenCel[row.ID] {
+			return fmt.Errorf("fastPath cel leg row %d: id %q repeats an earlier row", i, row.ID)
+		}
+		seenCel[row.ID] = true
 	}
 	return nil
 }
