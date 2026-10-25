@@ -37,6 +37,20 @@ type Span struct {
 	Attributes   []KV
 	Resource     []KV
 	Events       []string // span event names, order preserved
+
+	// Links (TR-194, issue #236): shield events attach as span links —
+	// one link per correlated FlowEvent; the link attributes carry the
+	// event fields (the stage-stamps record §8). Empty = no correlated
+	// event (absence carries no claim).
+	Links []Link
+}
+
+// Link is one exported span link: a context + attributes, never a span
+// (the one-server-span contract holds; the stage-stamps record §8).
+type Link struct {
+	TraceID    string
+	SpanID     string
+	Attributes []KV
 }
 
 // MetricPoint is one exported metric datapoint. TraceID carries the trace

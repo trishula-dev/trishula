@@ -152,6 +152,20 @@ type Config struct {
 	ServiceName string
 }
 
+// EmitOption carries optional per-emit context (v0: the correlated shield
+// events; TR-194). Zero value is valid.
+type EmitOption struct {
+	events []*ingest.FlowEvent
+}
+
+// WithEvents passes the request's correlated ring events to Emit: the
+// verdict span gains one link per event; the record gains shield.stages
+// (the OR over the events' bitmaps — the union of what the kernel
+// consulted, never invented).
+func WithEvents(events []*ingest.FlowEvent) EmitOption {
+	return EmitOption{events: events}
+}
+
 // Correlation is what one Emit produced, keyed identically to the emitted
 // signals; callers log it, tests assert it.
 type Correlation struct {
@@ -212,7 +226,7 @@ func New(conf Config) (*Pipeline, error) {
 // Signal order (documented contract): span started → metric + log recorded
 // on the span context → span ended (End flushes synchronously through the
 // simple span processor, so the Snapshot is complete on return).
-func (p *Pipeline) Emit(ctx context.Context, tx *ingest.TxContext, v *ladder.Verdict) (Correlation, error) {
+func (p *Pipeline) Emit(ctx context.Context, tx *ingest.TxContext, v *ladder.Verdict, opts ...EmitOption) (Correlation, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.done {
