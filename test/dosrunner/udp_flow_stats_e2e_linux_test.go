@@ -9,7 +9,6 @@ package dosrunner
 // enforcement = the XDP class's next leaf; probe P1's seed).
 
 import (
-	"encoding/binary"
 	"os"
 	"os/exec"
 	"strings"
@@ -19,11 +18,12 @@ import (
 	"github.com/cilium/ebpf"
 )
 
-// udpSaddrLE = the LE readback of the offender source 10.77.0.66; the
-// TR-31 e2e pins the direction. kafInet = the wire family value the C
-// writes for IPv4 rows (the flow_key KEY_AF_INET constant).
+// udpSaddrLE = the LE readback of the offender source 10.77.0.66: the
+// union bytes land [0a 4d 00 42], the LE u32 = 0x42004d0a; the TR-31
+// e2e pins the direction. kafInet = the wire family value the C writes
+// for IPv4 rows (the flow_key KEY_AF_INET constant).
 const (
-	udpSaddrLE = uint32(66<<24 | 77<<16 | 10)
+	udpSaddrLE = uint32(66<<24 | 77<<8 | 10)
 	kafInet    = uint8(4)
 )
 
@@ -144,8 +144,6 @@ func TestUDPFlowStatsRows(t *testing.T) {
 	if gotSegs < 24 {
 		t.Errorf("UDP row seg_count = %d, want >= 24 of the 30 driven", gotSegs)
 	}
-	_ = rows
-	_ = binary.LittleEndian
 }
 
 // run195outNS = the netns command wrapper returning the combined output.

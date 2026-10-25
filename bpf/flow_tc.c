@@ -254,6 +254,105 @@ static __always_inline int emit_flow_event(struct __sk_buff *skb,
 	return 1;
 }
 
+/* TR-203 L1: the UDP classifiers (issue #264, pulled from #242 leaf 1).
+ * Same contract as the TCP walk: the ban probe = TC_ACT_SHOT on a live
+ * ban; the flow_stats row = the datagram count + the payload byte count
+ * + the window stamps; every failure fails open. No FlowEvent at this
+ * leaf. The flow_key layout stands (no protocol byte in the wire at
+ * v0): a colliding 5-tuple merges one TCP row and one UDP row into one
+ * row; the detectors read the merged row as noise. */
+static __always_inline int udp_classify4(struct __sk_buff *skb, void *data,
+					 void *data_end, struct iphdr *ip,
+					 void *payload)
+{
+	struct udphdr *udp = payload;
+	if ((void *)(udp + 1) > data_end)
+		return TC_ACT_OK;
+
+	struct ban_key bk = {
+		.addr = {.addr = {.v4 = ip->saddr}},
+		.family = KEY_AF_INET,
+		.key_class = 0,
+	};
+	struct ban_val *ban = bpf_map_lookup_elem(&ban_table, &bk);
+	if (ban) {
+		if (ban->until_ts > bpf_ktime_get_ns())
+			return TC_ACT_SHOT;
+	}
+
+	/* The byte count mirrors the TCP rows: the payload bytes only
+	 * (the bytes after the UDP header; not the header bytes). */
+	__u32 payload_len = (__u32)skb->len -
+			    ((__u32)(long)(udp + 1) - (__u32)(long)data);
+	struct flow_key fk;
+	__builtin_memset(&fk, 0, sizeof(fk));
+	fk.saddr.addr.v4 = ip->saddr;
+	fk.daddr.addr.v4 = ip->daddr;
+	fk.sport = udp->source;
+	fk.dport = udp->dest;
+	fk.family = KEY_AF_INET;
+	struct flow_stat *st = bpf_map_lookup_elem(&flow_stats, &fk);
+	if (!st) {
+		struct flow_stat init = {0};
+		__u64 now = bpf_ktime_get_ns();
+		init.first_seg_ts = now;
+		init.last_seg_ts = now;
+		init.req_bytes = payload_len;
+		init.seg_count = 1;
+		bpf_map_update_elem(&flow_stats, &fk, &init, BPF_NOEXIST);
+	} else {
+		st->last_seg_ts = bpf_ktime_get_ns();
+		__sync_fetch_and_add(&st->req_bytes, payload_len);
+		__sync_fetch_and_add(&st->seg_count, 1);
+	}
+	return TC_ACT_OK;
+}
+
+static __always_inline int udp_classify6(struct __sk_buff *skb, void *data,
+					 void *data_end, struct ipv6hdr *ip6h,
+					 void *payload)
+{
+	struct udphdr *udp = payload;
+	if ((void *)(udp + 1) > data_end)
+		return TC_ACT_OK;
+
+	struct ban_key bk = {
+		.addr = {.addr = {.v6 = {0}}},
+		.family = KEY_AF_INET6,
+		.key_class = 0,
+	};
+	__builtin_memcpy(bk.addr.addr.v6, ip6h->saddr.in6_u.u6_addr8, 16);
+	struct ban_val *ban = bpf_map_lookup_elem(&ban_table, &bk);
+	if (ban) {
+		if (ban->until_ts > bpf_ktime_get_ns())
+			return TC_ACT_SHOT;
+	}
+
+	__u32 payload_len = (__u32)skb->len -
+			    ((__u32)(long)(udp + 1) - (__u32)(long)data);
+	struct flow_key fk;
+	__builtin_memset(&fk, 0, sizeof(fk));
+	__builtin_memcpy(fk.saddr.addr.v6, ip6h->saddr.in6_u.u6_addr8, 16);
+	__builtin_memcpy(fk.daddr.addr.v6, ip6h->daddr.in6_u.u6_addr8, 16);
+	fk.sport = udp->source;
+	fk.dport = udp->dest;
+	fk.family = KEY_AF_INET6;
+	struct flow_stat *st = bpf_map_lookup_elem(&flow_stats, &fk);
+	if (!st) {
+		struct flow_stat init = {0};
+		__u64 now = bpf_ktime_get_ns();
+		init.first_seg_ts = now;
+		init.last_seg_ts = now;
+		init.req_bytes = payload_len;
+		init.seg_count = 1;
+		bpf_map_update_elem(&flow_stats, &fk, &init, BPF_NOEXIST);
+	} else {
+		st->last_seg_ts = bpf_ktime_get_ns();
+		__sync_fetch_and_add(&st->req_bytes, payload_len);
+		__sync_fetch_and_add(&st->seg_count, 1);
+	}
+	return TC_ACT_OK;
+}
 static __always_inline int on_ip4(struct __sk_buff *skb, void *data,
 				  void *data_end, struct iphdr *ip)
 {
@@ -261,7 +360,13 @@ static __always_inline int on_ip4(struct __sk_buff *skb, void *data,
 	if (payload > data_end)
 		return TC_ACT_OK;
 
-	/* L4 bounded walk (TCP only at v0; UDP slice lands with §12). */
+	/* TR-203 L1 (issue #264): the UDP slice — QUIC reads as UDP at
+	 * this altitude (posture F3): datagram counts, window stamps, the
+	 * ban probe. No frame parse, no ringbuf emit at this leaf. */
+	if (ip->protocol == IPPROTO_UDP)
+		return udp_classify4(skb, data, data_end, ip, payload);
+
+	/* L4 bounded walk (TCP at v0; the UDP slice = TR-203 L1). */
 	if (ip->protocol != IPPROTO_TCP)
 		return TC_ACT_OK;
 	struct tcphdr *tcp = payload;
@@ -329,6 +434,8 @@ static __always_inline int on_ip6(struct __sk_buff *skb, void *data,
 	void *payload = (void *)(ip6h + 1);
 	if (payload > data_end)
 		return TC_ACT_OK;
+	if (ip6h->nexthdr == IPPROTO_UDP)
+		return udp_classify6(skb, data, data_end, ip6h, payload);
 	if (ip6h->nexthdr != IPPROTO_TCP)
 		return TC_ACT_OK;
 	struct tcphdr *tcp = payload;
