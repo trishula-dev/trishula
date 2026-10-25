@@ -200,3 +200,27 @@ row. A failed probe files a finding, not a pass.
 - The non-claims of section 3 move only on recorded evidence, by PR.
 - The parent record [TR-29 #29](https://github.com/trishula-dev/trishula/issues/29)
   closes on this PR. The evaluation continues on the plan of section 5.
+
+## 4.1 The dated read — probe P5, the 0-RTT posture (TR-203 L3, 2026-10-25)
+
+The [TR-203 lane](https://github.com/trishula-dev/trishula/issues/264) carries the engine
+inline H3 listener (leaf 3). The record lives in
+[ADR-0006](../adr/0006-inline-h3-listener.md). Probe P5's row above stays as filed.
+This dated read states the row's live posture:
+
+- **The 0-RTT posture reads reject.** The opt-in listener's QUIC transport accepts no
+  early data. The transport names the limitation in its documented list:
+  `0-RTT is not supported` (golang.org/x/net/quic, the package doc's Limitations block).
+  The listener pins no session-resumption material. The TLS shape carries a nil session
+  cache and no ticket keys. Early data never reaches the ladder.
+- **The engine's QUIC surface = the mode's own ladder path.** The inline listener
+  serves each h3 request through the engine's handler. The consult, the verdict and the
+  proxy read the same view the h1/h2 legs see. The engine test
+  `TestInlineH3ZeroRTTPostureIsReject` pins the config shape. The verbatim transcript
+  joins this leaf's receipt on the lane issue.
+- **The boundary stays.** The kernel plane reads QUIC as UDP, never as requests
+  (fact F3). The default deployment stays gateway-terminated (decision 1 of the lane).
+  The mode serves the leg only under its explicit flag.
+
+The posture update files with this leaf's PR. The row reads live at every later read. A
+later dated read replaces this read as the row's current statement.
