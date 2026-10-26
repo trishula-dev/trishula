@@ -95,9 +95,16 @@ func TestBundleShapesContract(t *testing.T) {
 					t.Errorf("Stage(%s): row %d = %+v, want %q, %d bits, action %d, id %d", name, i, s, r.Prefix, want, r.Action, i)
 				}
 			}
-			for _, field := range []string{"spec.routes[].prefix", "spec.routes[].action"} {
-				if got := b.Split[field]; got != fastpath.VerdictKernel.String() {
-					t.Errorf("shape %s split[%s] = %q, want %q", name, field, got, fastpath.VerdictKernel.String())
+			for i := range b.FastPath.CELRules {
+				if err := fastpath.ValidateFastPathCELRule(b.FastPath.CELRules[i]); err != nil {
+					t.Errorf("shape %s cel row %d: %v", name, i, err)
+				}
+			}
+			if len(b.FastPath.Routes) > 0 {
+				for _, field := range []string{"spec.routes[].prefix", "spec.routes[].action"} {
+					if got := b.Split[field]; got != fastpath.VerdictKernel.String() {
+						t.Errorf("shape %s split[%s] = %q, want %q", name, field, got, fastpath.VerdictKernel.String())
+					}
 				}
 			}
 		})

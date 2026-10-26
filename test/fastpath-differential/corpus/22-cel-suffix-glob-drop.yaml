@@ -1,0 +1,27 @@
+name: 22-cel-suffix-glob-drop
+surface: 'the leading-star glob''s suffix leg composites over the walk''s 1M verifier envelope; the compile routes the rule T2 (the engine tier) and stages no row'
+skipped: false
+policy:
+  defaultAction: pass
+  rules:
+  - id: DX-LAB-003
+    action: enforce
+    expression: |
+      request.method == "POST" &&
+      path.matches("/*-admin")
+frame:
+  ethertype: ipv4
+  tcpDoff: 5
+  line: POST /v1/-admin?q=1 HTTP/1.1
+  pad: 0
+view:
+  method: POST
+  path: /v1/-admin
+  query: q=1
+  rate5m: 0
+classes:
+- cel-t2-route
+- cel-glob-row
+expect:
+  outcome: forward
+  marked: false

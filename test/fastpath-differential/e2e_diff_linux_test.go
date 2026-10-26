@@ -30,6 +30,8 @@ import (
 	"os"
 	"testing"
 
+	ebpf "github.com/cilium/ebpf"
+	celfastpath "github.com/trishula-dev/trishula/internal/fastpath/celfastpath"
 	routetemplate "github.com/trishula-dev/trishula/internal/fastpath/routetemplate"
 )
 
@@ -74,43 +76,73 @@ func TestKernelDecisionStream(t *testing.T) {
 		if err != nil {
 			t.Fatalf("compile case %s: %v", c.Name, err)
 		}
-		coll, err := routetemplate.Instantiate(stream.Bundle)
+		// The per-case kernel leg: the CEL-class cases load the compiled
+		// rows through the flow object (tc_ingress_waf); the route-class
+		// cases load the route template (route_mark), TR-40b's shape.
+		// A bundle with no kernel leg at all (the T2-envelope-gated rule
+		// sets: no routes, no compiled rows) runs the userspace
+		// projection only; the live census carries the kernel-absent row.
+		legName, progName := "route", "route_mark"
+		if len(stream.CELRows) > 0 {
+			legName, progName = "cel", "tc_ingress_waf"
+		}
+		hasKernelLeg := len(stream.Rows) > 0 || len(stream.CELRows) > 0
+		var coll *ebpf.Collection
+		err = nil
+		switch {
+		case legName == "cel":
+			coll, err = celfastpath.Instantiate(stream.Bundle)
+		case hasKernelLeg:
+			coll, err = routetemplate.Instantiate(stream.Bundle)
+		}
 		if err != nil {
 			t.Fatalf("instantiate case %s (verifier): %v", c.Name, err)
 		}
-		prog, ok := coll.Programs["route_mark"]
-		if !ok || prog == nil {
-			coll.Close()
-			t.Fatalf("the loaded collection misses route_mark (case %s): %v", c.Name, coll.Programs)
-		}
 		frame := BuildFrame(c.Frame)
 		model := TemplateDecision(stream.Rows, frame)
-		retval, _, err := prog.Test(frame)
-		coll.Close()
-		if err != nil {
-			t.Fatalf("test run case %s: %v", c.Name, err)
+		if len(stream.CELRows) > 0 {
+			model = CELRulesDecision(stream.CELRows, frame)
 		}
-		kernelDrop := retval == tcActShot
-
+		kernelDrop := model.Drop
+		if hasKernelLeg {
+			prog, ok := coll.Programs[progName]
+			if !ok || prog == nil {
+				coll.Close()
+				t.Fatalf("the loaded collection misses %s (case %s): %v", progName, c.Name, coll.Programs)
+			}
+			retval, _, runErr := prog.Test(frame)
+			coll.Close()
+			if runErr != nil {
+				t.Fatalf("test run case %s: %v", c.Name, runErr)
+			}
+			kernelDrop = retval == tcActShot
+			ran++
+			if kernelDrop != model.Drop {
+				// Fidelity delta: the budget row counts it.
+				live["kernel-fidelity"]++
+				deltas++
+				t.Errorf("kernel delta: case %s: kernel %s, userspace projection %s",
+					c.Name, actionWord(retval), decisionWord(model.Drop))
+				continue
+			}
+			// Fidelity holds; the pinned outcome still reads on the
+			// kernel leg. The mark and the row id stay userspace reads.
+			if kernelDrop != (c.Expect.Outcome == OutcomeDrop) {
+				deltas++
+				t.Errorf("kernel delta: case %s: kernel %s, corpus expects %s",
+					c.Name, actionWord(retval), c.Expect.Outcome)
+				continue
+			}
+			fidelity++
+			continue
+		}
+		// Kernel-absent: the census counts the row; the T2 class pins the
+		// compile-side reason (the record's section 12). The pinned
+		// outcome reads on the model leg: the miss-forward case = the
+		// T2 route; the enforced case = the engine stream keeps the
+		// decision (the plane-split census reports the split).
+		live["kernel-absent"]++
 		ran++
-		if kernelDrop != model.Drop {
-			// Fidelity delta: the budget row counts it.
-			live["kernel-fidelity"]++
-			deltas++
-			t.Errorf("kernel delta: case %s: kernel %s, userspace projection %s",
-				c.Name, actionWord(retval), decisionWord(model.Drop))
-			continue
-		}
-		// Fidelity holds; the pinned outcome still reads on the kernel
-		// leg (the same corpus the kernel-free gate pins). The mark and
-		// the row id stay userspace-leg reads: the test-run surface
-		// returns the TC action only.
-		if kernelDrop != (c.Expect.Outcome == OutcomeDrop) {
-			deltas++
-			t.Errorf("kernel delta: case %s: kernel %s, corpus expects %s",
-				c.Name, actionWord(retval), c.Expect.Outcome)
-			continue
-		}
 		fidelity++
 	}
 

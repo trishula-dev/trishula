@@ -1,0 +1,29 @@
+name: 24-cel-query-cap-forward
+surface: 'the query rule rides the engine tier two-fold (the literal past the scan cap, and the envelope gate: the query pass composites with any second pass); the rule routes T2'
+skipped: false
+policy:
+  defaultAction: pass
+  rules:
+  - id: DX-LAB-004
+    action: enforce
+    expression: |
+      request.method == "GET" &&
+      path.matches("/v1/wide/*") &&
+      request.query.contains("LATEUNION")
+frame:
+  ethertype: ipv4
+  tcpDoff: 5
+  line: GET /v1/wide/pad?aa=bbbbbbbbbbbbbb&cc=dddddddddddddd&ee=LATEUNION HTTP/1.1
+  pad: 0
+view:
+  method: GET
+  path: /v1/wide/pad
+  query: aa=bbbbbbbbbbbbbb&cc=dddddddddddddd&ee=LATEUNION
+  rate5m: 0
+classes:
+- cel-t2-route
+- cel-query-row
+- cel-cap-quirk
+expect:
+  outcome: forward
+  marked: false

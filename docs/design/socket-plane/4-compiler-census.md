@@ -437,3 +437,32 @@ The anti-claim rows hold on top of the table:
 [§9.9]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-tracked-evaluation-not-a-v1-commitment
 
 [§17]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#17-performance-targets--benchmark-plan
+
+## 12. The composition envelope (the load receipt)
+
+Rule: one compiled program carries at most two leg families. The 1M-instruction
+verifier bound is per program, and each additional composed pass multiplies the
+walk's explored state. The load-prove receipt carries 46 recorded load runs (the
+byte-cell spine, clang 18, go 1.26, root, trishula-build-dev):
+
+| Composition | Rows | Verdict | Receipt |
+| --- | --- | --- | --- |
+| Glob family only (the exact/prefix rows) | 2, 4, 8 | loads (the 8-row form over the bound at the row ladder) | the r2/r4/iso forms; the r8 row reads the isolate boundary |
+| Glob + method | 8 | loads, xlated 31360B (3920 insns) | the shipped form (the gm pair receipt) |
+| Glob + suffix | 8 | loads | the gs pair receipt |
+| Glob + query | 2, 4, 6, 8 | rejects, the bound at any row count | the gq pair; the vc2/vc3 row ladder |
+| Glob + method + suffix | 8 | rejects | the gms triple |
+| All four legs | 8 | rejects | the gmqs four-leg row |
+| Method + query | 8 | loads | the mq8 row |
+
+The compile gate turns the receipt into the class boundary. A rule carrying the
+query-substring leg routes T2 (the engine tier) with the reason row verbatim:
+the query pass composites with any second pass over the envelope. A rule whose
+glob segments carry a suffix routes T2 the same way: the third body composites
+the pair receipt over the bound (the gms reading).
+
+The boundary is the fail-open ladder, never a capability loss. The routed rules
+stay in the rule packs; the engine evaluates them with the full construct set (part 2,
+the ladder tiers). The extension path = the fp leg ladder: one program per leg
+family, the rows split at compile time, the tail-call surface behind the
+template contract's no-tail-call row (section 5) - the gate re-reads there.

@@ -1,0 +1,32 @@
+name: 28-cel-two-rows-second-matches
+surface: 'the second rule sits past the envelope seat, so the compile routes it T2; the staged row does not match the frame and the engine keeps the rule'
+skipped: false
+policy:
+  defaultAction: pass
+  rules:
+  - id: DX-LAB-020
+    action: enforce
+    expression: |
+      request.method == "POST" &&
+      path.matches("/v1/chat/*")
+  - id: DX-LAB-021
+    action: enforce
+    expression: |
+      request.method == "POST" &&
+      path.matches("/v2/admin/*")
+frame:
+  ethertype: ipv4
+  tcpDoff: 5
+  line: POST /v2/admin/users?q=1 HTTP/1.1
+  pad: 0
+view:
+  method: POST
+  path: /v2/admin/users
+  query: q=1
+  rate5m: 0
+classes:
+- cel-t2-route
+- cel-glob-row
+expect:
+  outcome: forward
+  marked: false

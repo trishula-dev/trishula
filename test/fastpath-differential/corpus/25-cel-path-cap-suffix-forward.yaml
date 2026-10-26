@@ -1,0 +1,27 @@
+name: 25-cel-path-cap-suffix-forward
+surface: 'the suffix leg rides the engine tier (the envelope gate); the rule routes T2 and the frame forwards with no kernel row'
+skipped: false
+policy:
+  defaultAction: pass
+  rules:
+  - id: DX-LAB-005
+    action: enforce
+    expression: |
+      request.method == "POST" &&
+      path.matches("/*zeta")
+frame:
+  ethertype: ipv4
+  tcpDoff: 5
+  line: POST /v1/deep/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazeta HTTP/1.1
+  pad: 0
+view:
+  method: POST
+  path: /v1/deep/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaazeta
+  query: ''
+  rate5m: 0
+classes:
+- cel-t2-route
+- cel-glob-row
+expect:
+  outcome: forward
+  marked: false

@@ -30,6 +30,46 @@
 #define KEY_AF_INET 4
 #define KEY_AF_INET6 6
 
+/* TR-196 (issue #238): the socket class 2 compiled-row leg — the CEL
+ * fast-path class (the bounded-scan primitive). The compile decomposes
+ * the CEL constructs at compile time (internal/fastpath/celclass.go):
+ * the method equality, the path glob (one star → the prefix/suffix
+ * segments; none → the exact literal) and the query substring. The rows
+ * stage from the loader (the compiled bundle; the kernel stays
+ * decision-free §9.5 — the compiled policy's action code is the only
+ * verdict the leg returns). Every failure fails open: a parse miss, a
+ * helper failure or an absent row forwards (the record part 2: the plane
+ * never drops on its own failure state). */
+#define FP_MAX 8            /* row bound; the compile fails closed past it */
+#define FP_METHOD_MAX 8     /* the method-literal bound */
+#define FP_PATH_MAX 64      /* the path extract bound (a power of two) */
+#define FP_GLOB_PRE_MAX 48  /* the glob prefix literal bound */
+#define FP_GLOB_SUF_MAX 16  /* the glob suffix literal bound */
+#define FP_QUERY_MAX 8      /* the query scan window (the extract) + the scan bound */
+#define FP_QUERY_LIT_MAX 16 /* the query-substring literal bound (a power of two; the mask below) */
+
+struct fp_rule_val {
+	__u32 id;               /* the row index (the mark value on a match) */
+	__u8 enabled;
+	__u8 action;            /* 1 = drop (the compiled enforce/ban code) */
+	__u8 method_len;
+	__u8 glob_kind;         /* 0 none, 1 exact literal, 2 prefix+suffix */
+	__u8 pre_len;
+	__u8 suf_len;
+	__u8 query_len;
+	__u8 method[FP_METHOD_MAX];
+	__u8 pre[FP_GLOB_PRE_MAX];
+	__u8 suf[FP_GLOB_SUF_MAX];
+	__u8 query[FP_QUERY_MAX];
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, FP_MAX);
+	__type(key, __u32);
+	__type(value, struct fp_rule_val);
+} fp_rules SEC(".maps");
+
 struct key_addr {
 	union {
 		__be32 v4;
@@ -353,6 +393,316 @@ static __always_inline int udp_classify6(struct __sk_buff *skb, void *data,
 	}
 	return TC_ACT_OK;
 }
+/* TR-196: the CEL-class fast-path leg (the bounded-scan primitive, the
+ * record part 3 rows 1-4 at this leaf). The compiled rows carry the
+ * decomposed legs (never a star on the wire). One bounded extract per
+ * packet, then one leg-pass per row: the method compare, the glob
+ * prefix/suffix (the suffix reads the extract tail and requires the
+ * extract to hold the true tail — an overrun path skips suffix and
+ * exact rows, fail-open), the query substring over the capped window.
+ * The FIRST matching row returns its compiled action; a miss or any
+ * failure forwards (0 = no conclusive verdict). */
+
+/* The row-eval context: one extract per packet, read by the row pass.
+ * It stands above the row body (the body reads its members through the
+ * pointer; the earlier build carried the body first and read an
+ * undeclared type — the struct ordering the load probe flagged). */
+struct fp_ctx {
+	struct __sk_buff *skb;
+	__u8 *method;
+	__u8 *path;
+	__u8 *query;
+	__u32 method_len;
+	__u32 path_len;
+	__u32 query_len;
+	__u8 path_cont;
+};
+
+/* TR-196: the row body from the load probes' verdict forms. The
+ * method compare (8), the masked suffix and the streaming query run as
+ * their compile-time-bounded loops — every backedge state stays inside
+ * one loop body (the probes proved them clean) and the compare loops
+ * break the moment a leg fails, so no (index, length) pair state
+ * crosses the row. The path-glob prefix compare stays flat: the loop
+ * form bound by the runtime pre_len was the state sink the probes
+ * named (~26k states), so its cells unroll with the static cell index
+ * (a partial row would under-compare a staged literal, so the cells
+ * expand the full FP_GLOB_PRE_MAX bound). The query-scan double loop
+ * (window per literal cell) was the other state sink; the single pass
+ * with the in-match length as the only state stays. */
+static __always_inline int fp_row_match(struct fp_rule_val *row,
+					struct fp_ctx *c)
+{
+	int ok, suf_arm, qfound, l;
+	__u32 i;
+
+	/* The method compare (the compare primitive): the exact literal or
+	 * the leg absent. */
+	ok = 1;
+	if (row->method_len) {
+		if (row->method_len != c->method_len)
+			return 0;
+		for (i = 0; i < FP_METHOD_MAX; i++) {
+			if (i >= row->method_len || !ok)
+				break;
+			if (c->method[i] != row->method[i])
+				ok = 0;
+		}
+		if (!ok)
+			return 0;
+	}
+	/* The path glob (the bounded-scan primitive: the exact literal or
+	 * the prefix/suffix segments). */
+	if (row->glob_kind) {
+		__u32 pl = row->pre_len;
+		ok = 1;
+		if (row->glob_kind == 1) {
+			/* The exact literal: the extract carries the true tail
+			 * (the overrun path skips — fail-open). */
+			ok = c->path_len == pl && !c->path_cont;
+		} else if (c->path_len < pl || pl > FP_GLOB_PRE_MAX) {
+			ok = 0;
+		} else {
+			if (ok && 0 < row->pre_len && c->path[0] != row->pre[0])
+				ok = 0;
+			if (ok && 1 < row->pre_len && c->path[1] != row->pre[1])
+				ok = 0;
+			if (ok && 2 < row->pre_len && c->path[2] != row->pre[2])
+				ok = 0;
+			if (ok && 3 < row->pre_len && c->path[3] != row->pre[3])
+				ok = 0;
+			if (ok && 4 < row->pre_len && c->path[4] != row->pre[4])
+				ok = 0;
+			if (ok && 5 < row->pre_len && c->path[5] != row->pre[5])
+				ok = 0;
+			if (ok && 6 < row->pre_len && c->path[6] != row->pre[6])
+				ok = 0;
+			if (ok && 7 < row->pre_len && c->path[7] != row->pre[7])
+				ok = 0;
+			if (ok && 8 < row->pre_len && c->path[8] != row->pre[8])
+				ok = 0;
+			if (ok && 9 < row->pre_len && c->path[9] != row->pre[9])
+				ok = 0;
+			if (ok && 10 < row->pre_len && c->path[10] != row->pre[10])
+				ok = 0;
+			if (ok && 11 < row->pre_len && c->path[11] != row->pre[11])
+				ok = 0;
+			if (ok && 12 < row->pre_len && c->path[12] != row->pre[12])
+				ok = 0;
+			if (ok && 13 < row->pre_len && c->path[13] != row->pre[13])
+				ok = 0;
+			if (ok && 14 < row->pre_len && c->path[14] != row->pre[14])
+				ok = 0;
+			if (ok && 15 < row->pre_len && c->path[15] != row->pre[15])
+				ok = 0;
+			if (ok && 16 < row->pre_len && c->path[16] != row->pre[16])
+				ok = 0;
+			if (ok && 17 < row->pre_len && c->path[17] != row->pre[17])
+				ok = 0;
+			if (ok && 18 < row->pre_len && c->path[18] != row->pre[18])
+				ok = 0;
+			if (ok && 19 < row->pre_len && c->path[19] != row->pre[19])
+				ok = 0;
+			if (ok && 20 < row->pre_len && c->path[20] != row->pre[20])
+				ok = 0;
+			if (ok && 21 < row->pre_len && c->path[21] != row->pre[21])
+				ok = 0;
+			if (ok && 22 < row->pre_len && c->path[22] != row->pre[22])
+				ok = 0;
+			if (ok && 23 < row->pre_len && c->path[23] != row->pre[23])
+				ok = 0;
+			if (ok && 24 < row->pre_len && c->path[24] != row->pre[24])
+				ok = 0;
+			if (ok && 25 < row->pre_len && c->path[25] != row->pre[25])
+				ok = 0;
+			if (ok && 26 < row->pre_len && c->path[26] != row->pre[26])
+				ok = 0;
+			if (ok && 27 < row->pre_len && c->path[27] != row->pre[27])
+				ok = 0;
+			if (ok && 28 < row->pre_len && c->path[28] != row->pre[28])
+				ok = 0;
+			if (ok && 29 < row->pre_len && c->path[29] != row->pre[29])
+				ok = 0;
+			if (ok && 30 < row->pre_len && c->path[30] != row->pre[30])
+				ok = 0;
+			if (ok && 31 < row->pre_len && c->path[31] != row->pre[31])
+				ok = 0;
+			if (ok && 32 < row->pre_len && c->path[32] != row->pre[32])
+				ok = 0;
+			if (ok && 33 < row->pre_len && c->path[33] != row->pre[33])
+				ok = 0;
+			if (ok && 34 < row->pre_len && c->path[34] != row->pre[34])
+				ok = 0;
+			if (ok && 35 < row->pre_len && c->path[35] != row->pre[35])
+				ok = 0;
+			if (ok && 36 < row->pre_len && c->path[36] != row->pre[36])
+				ok = 0;
+			if (ok && 37 < row->pre_len && c->path[37] != row->pre[37])
+				ok = 0;
+			if (ok && 38 < row->pre_len && c->path[38] != row->pre[38])
+				ok = 0;
+			if (ok && 39 < row->pre_len && c->path[39] != row->pre[39])
+				ok = 0;
+			if (ok && 40 < row->pre_len && c->path[40] != row->pre[40])
+				ok = 0;
+			if (ok && 41 < row->pre_len && c->path[41] != row->pre[41])
+				ok = 0;
+			if (ok && 42 < row->pre_len && c->path[42] != row->pre[42])
+				ok = 0;
+			if (ok && 43 < row->pre_len && c->path[43] != row->pre[43])
+				ok = 0;
+			if (ok && 44 < row->pre_len && c->path[44] != row->pre[44])
+				ok = 0;
+			if (ok && 45 < row->pre_len && c->path[45] != row->pre[45])
+				ok = 0;
+			if (ok && 46 < row->pre_len && c->path[46] != row->pre[46])
+				ok = 0;
+			if (ok && 47 < row->pre_len && c->path[47] != row->pre[47])
+				ok = 0;
+		}
+
+		/* The suffix arm: the masked index (FP_PATH_MAX is a power of
+		 * two; the mask keeps every read inside the extract window —
+		 * the loop form the probes proved clean). */
+		suf_arm = 0; /* probe: suffix off */
+		for (i = 0; i < FP_GLOB_SUF_MAX; i++) {
+			__u32 fp_at;
+			if (i >= row->suf_len || !suf_arm || !ok)
+				break;
+			fp_at = (c->path_len - row->suf_len + i) & (FP_PATH_MAX - 1);
+			if (c->path[fp_at] != row->suf[i])
+				ok = 0;
+		}
+		if (!ok)
+			return 0;
+	}
+
+	/* The query substring (the bounded-scan primitive): the streaming
+	 * single pass over the window (the in-match length as state; the
+	 * compile rejects border-carrying literals, so the restart rule is
+	 * the exact KMP continuation for every staged literal). A literal
+	 * past the window can never complete: the in-match length rides the
+	 * window cells, so the quirk row = the capped scan miss (fail-open,
+	 * the corpus case pins the pair). The compare index reads the
+	 * staged literal at the in-match length — below FP_QUERY_MAX (the
+	 * row field's size) for any staged query_len, so no read passes
+	 * the field. */
+	qfound = 0;
+	l = 0;
+	if (0 && row->query_len && row->query_len <= FP_QUERY_LIT_MAX) {
+		for (i = 0; i < FP_QUERY_MAX; i++) {
+			if (i >= c->query_len || qfound)
+				break;
+			if (c->query[i] == row->query[l]) {
+				l++;
+				if (l == row->query_len)
+					qfound = 1;
+			} else {
+				l = (c->query[i] == row->query[0]) ? 1 : 0;
+			}
+		}
+		if (!qfound)
+			return 0;
+	}
+
+	/* The compiled row backs the verdict (§9.5: no invented decision;
+	 * the mark = the row index). */
+	c->skb->mark = row->id;
+	return row->action == 1 ? 1 : 2;
+}
+
+/* The row pass, unrolled by hand: eight explicit per-row bodies (no
+ * loop backedge crosses a fresh map-value id). The enabled gate rides
+ * the lookup; the first match returns its compiled action. */
+#define FP_TRY_ROW(n, c)                                                 \
+	do {                                                             \
+		__u32 fp_idx = (n);                                      \
+		struct fp_rule_val *fp_row =                             \
+			bpf_map_lookup_elem(&fp_rules, &fp_idx);         \
+		if (fp_row && fp_row->enabled) {                         \
+			int fp_row_r = fp_row_match(fp_row, c);          \
+			if (fp_row_r)                                    \
+				return fp_row_r;                        \
+		}                                                        \
+	} while (0)
+
+static __always_inline int fp_eval(struct __sk_buff *skb, __u32 l4_off)
+{
+	__u8 method[FP_METHOD_MAX];
+	__u8 path[FP_PATH_MAX];
+	__u8 query[FP_QUERY_MAX];
+	__u32 method_len = 0, path_len = 0, query_len = 0;
+	int method_ok = 0, q_at = -1, path_cont = 0;
+	__u32 i;
+
+	/* The method token: up to FP_METHOD_MAX bytes to the first space. */
+	for (i = 0; i < FP_METHOD_MAX; i++) {
+		__u8 c;
+		if (bpf_skb_load_bytes(skb, l4_off + i, &c, 1))
+			break;
+		if (c == ' ') {
+			method_ok = 1;
+			break;
+		}
+		method[i] = c;
+		method_len = i + 1;
+	}
+	if (!method_ok)
+		return 0; /* not an HTTP-shaped line; the rows never match */
+
+	/* The path: to a space, CR, LF or '?', capped at the extract bound. */
+	{
+		__u32 p0 = l4_off + method_len + 1;
+		for (i = 0; i < FP_PATH_MAX; i++) {
+			__u8 c;
+			if (bpf_skb_load_bytes(skb, p0 + i, &c, 1))
+				break;
+			if (c == '?') {
+				q_at = p0 + i + 1;
+				break;
+			}
+			if (c == ' ' || c == '\r' || c == '\n')
+				break;
+			path[i] = c;
+			path_len = i + 1;
+		}
+		/* The overrun marker: the extract hit the cap and the byte
+		 * past it is not a terminator (the true tail stays unseen). */
+		if (path_len == FP_PATH_MAX) {
+			__u8 c;
+			if (!bpf_skb_load_bytes(skb, p0 + FP_PATH_MAX, &c, 1))
+				if (c != ' ' && c != '\r' && c != '\n' && c != '?')
+					path_cont = 1;
+		}
+	}
+
+	/* The query: after the '?' to a terminator, capped. */
+	if (q_at >= 0) {
+		for (i = 0; i < FP_QUERY_MAX; i++) {
+			__u8 c;
+			if (bpf_skb_load_bytes(skb, q_at + i, &c, 1))
+				break;
+			if (c == ' ' || c == '\r' || c == '\n')
+				break;
+			query[i] = c;
+			query_len = i + 1;
+		}
+	}
+
+	struct fp_ctx fp_c = {
+		.skb = skb,
+		.method = method,
+		.path = path,
+		.query = query,
+		.method_len = method_len,
+		.path_len = path_len,
+		.query_len = query_len,
+		.path_cont = path_cont,
+	};
+	FP_TRY_ROW(0, &fp_c);
+	return 0;
+}
+
 static __always_inline int on_ip4(struct __sk_buff *skb, void *data,
 				  void *data_end, struct iphdr *ip)
 {
@@ -389,6 +739,16 @@ static __always_inline int on_ip4(struct __sk_buff *skb, void *data,
 	if (ban) {
 		if (ban->until_ts > bpf_ktime_get_ns())
 			return TC_ACT_SHOT; /* §19.1: enforcement, no userspace hop */
+	}
+
+	/* TR-196 (issue #238): the CEL fast-path class leg — the compiled
+	 * rows (the bounded-scan primitive). The compiled drop returns
+	 * TC_ACT_SHOT; a mark-and-forward row writes the mark and lets the
+	 * flow continue; a miss or any failure forwards (fail-open). */
+	{
+		int fr = fp_eval(skb, (__u32)(long)tcp_end - (__u32)(long)data);
+		if (fr == 1)
+			return TC_ACT_SHOT;
 	}
 
 	__u16 payload_len = (__u32)skb->len - ((__u32)(long)tcp_end - (__u32)(long)data);
@@ -456,6 +816,15 @@ static __always_inline int on_ip6(struct __sk_buff *skb, void *data,
 	struct ban_val *ban = bpf_map_lookup_elem(&ban_table, &bk);
 	if (ban) {
 		if (ban->until_ts > bpf_ktime_get_ns())
+			return TC_ACT_SHOT;
+	}
+
+	/* TR-196 (issue #238): the CEL fast-path class leg — the same
+	 * compiled rows and fail-open shape the IPv4 leg carries (the
+	 * l4 offset reads from data, family-independent). */
+	{
+		int fr = fp_eval(skb, (__u32)(long)tcp_end6 - (__u32)(long)data);
+		if (fr == 1)
 			return TC_ACT_SHOT;
 	}
 

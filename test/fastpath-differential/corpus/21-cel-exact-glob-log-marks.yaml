@@ -1,0 +1,26 @@
+name: 21-cel-exact-glob-log-marks
+surface: a zero-star path glob compiles to the exact leg; the log rule marks the row and forwards
+skipped: false
+policy:
+  defaultAction: pass
+  rules:
+  - id: DX-LAB-002
+    action: log
+    expression: path.matches("/v1/chat")
+frame:
+  ethertype: ipv4
+  tcpDoff: 5
+  line: GET /v1/chat HTTP/1.1
+  pad: 0
+view:
+  method: GET
+  path: /v1/chat
+  query: ''
+  rate5m: 0
+classes:
+- forward-row
+- cel-glob-row
+expect:
+  outcome: forward
+  marked: true
+  rowid: 0

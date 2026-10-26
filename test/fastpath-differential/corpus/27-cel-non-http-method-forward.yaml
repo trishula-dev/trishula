@@ -1,0 +1,27 @@
+name: 27-cel-non-http-method-forward
+surface: the frame line carries a method the compiled compare rejects; no row matches and the packet forwards
+skipped: false
+policy:
+  defaultAction: pass
+  rules:
+  - id: DX-LAB-006
+    action: enforce
+    expression: |
+      request.method == "POST" &&
+      path.matches("/v1/chat/*")
+frame:
+  ethertype: ipv4
+  tcpDoff: 5
+  line: JUNK /x HTTP/1.1
+  pad: 0
+view:
+  method: JUNK
+  path: /x
+  query: ''
+  rate5m: 0
+classes:
+- malformed-frame
+- cel-compare-row
+expect:
+  outcome: forward
+  marked: false

@@ -64,3 +64,54 @@ func AssertEnvelope(spec *ebpf.CollectionSpec) error {
 	}
 	return nil
 }
+
+// FlowEnvelopeInstructions is the flow-program envelope constant (the
+// census record's template contract, the flow-object row): the
+// instruction budget per program is a compile-time constant. The
+// committed object measures 3920 instructions at the shipped build
+// (tc_ingress_waf, one program, the glob+method family; xlated 31360B on
+// the VM load receipt); the envelope pins 4096 (the round contract
+// figure, measured headroom stated in the record). The object-contract
+// test pins the committed program under it and AssertFlowEnvelope
+// rejects any spec past it.
+const FlowEnvelopeInstructions = 4096
+
+// AssertFlowEnvelope asserts the contract over the flow object's spec,
+// kernel-free: one program (tc_ingress_waf), the instruction count inside
+// the flow envelope constant, and no tail call. A violation fails with
+// the offending cell named, the same shape AssertEnvelope reads.
+func AssertFlowEnvelope(spec *ebpf.CollectionSpec) error {
+	if spec == nil {
+		return errors.New("fastpath: flow envelope assert: nil spec")
+	}
+	if len(spec.Programs) != 1 {
+		names := make([]string, 0, len(spec.Programs))
+		for name := range spec.Programs {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		joined := strings.Join(names, ", ")
+		if joined == "" {
+			joined = "none"
+		}
+		return fmt.Errorf("fastpath: the flow object carries %d programs (%s); the contract is one program", len(spec.Programs), joined)
+	}
+	var name string
+	var prog *ebpf.ProgramSpec
+	for key, p := range spec.Programs {
+		name, prog = key, p
+	}
+	if prog == nil {
+		return fmt.Errorf("fastpath: flow envelope assert: program %q carries no spec", name)
+	}
+	if got := len(prog.Instructions); got > FlowEnvelopeInstructions {
+		return fmt.Errorf("fastpath: flow program %q carries %d instructions past the %d-instruction envelope", name, got, FlowEnvelopeInstructions)
+	}
+	for i := range prog.Instructions {
+		ins := &prog.Instructions[i]
+		if ins.IsBuiltinCall() && asm.BuiltinFunc(ins.Constant) == asm.FnTailCall {
+			return fmt.Errorf("fastpath: flow program %q carries a tail call at instruction %d; the contract carries none", name, i)
+		}
+	}
+	return nil
+}

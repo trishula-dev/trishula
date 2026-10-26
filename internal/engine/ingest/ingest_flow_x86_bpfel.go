@@ -70,6 +70,23 @@ type ingest_flowFlowStat struct {
 	SegCount   uint32
 }
 
+type ingest_flowFpRuleVal struct {
+	_         structs.HostLayout
+	Id        uint32
+	Enabled   uint8
+	Action    uint8
+	MethodLen uint8
+	GlobKind  uint8
+	PreLen    uint8
+	SufLen    uint8
+	QueryLen  uint8
+	Method    [8]uint8
+	Pre       [48]uint8
+	Suf       [16]uint8
+	Query     [8]uint8
+	_         [1]byte
+}
+
 // Names of all BPF objects in the ELF.
 //
 // Used for safe lookups in a Collection or CollectionSpec.
@@ -77,6 +94,7 @@ const (
 	ingest_flowMapBanTable      = "ban_table"
 	ingest_flowMapEvents        = "events"
 	ingest_flowMapFlowStats     = "flow_stats"
+	ingest_flowMapFpRules       = "fp_rules"
 	ingest_flowMapLostEvents    = "lost_events"
 	ingest_flowMapProbeStats    = "probe_stats"
 	ingest_flowProgTcIngressWaf = "tc_ingress_waf"
@@ -134,6 +152,7 @@ type ingest_flowMapSpecs struct {
 	BanTable   *ebpf.MapSpec `ebpf:"ban_table"`
 	Events     *ebpf.MapSpec `ebpf:"events"`
 	FlowStats  *ebpf.MapSpec `ebpf:"flow_stats"`
+	FpRules    *ebpf.MapSpec `ebpf:"fp_rules"`
 	LostEvents *ebpf.MapSpec `ebpf:"lost_events"`
 	ProbeStats *ebpf.MapSpec `ebpf:"probe_stats"`
 }
@@ -167,6 +186,7 @@ type ingest_flowMaps struct {
 	BanTable   *ebpf.Map `ebpf:"ban_table"`
 	Events     *ebpf.Map `ebpf:"events"`
 	FlowStats  *ebpf.Map `ebpf:"flow_stats"`
+	FpRules    *ebpf.Map `ebpf:"fp_rules"`
 	LostEvents *ebpf.Map `ebpf:"lost_events"`
 	ProbeStats *ebpf.Map `ebpf:"probe_stats"`
 }
@@ -176,6 +196,7 @@ func (m *ingest_flowMaps) Close() error {
 		m.BanTable,
 		m.Events,
 		m.FlowStats,
+		m.FpRules,
 		m.LostEvents,
 		m.ProbeStats,
 	)
