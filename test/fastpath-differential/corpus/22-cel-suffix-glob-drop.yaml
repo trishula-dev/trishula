@@ -1,5 +1,5 @@
 name: 22-cel-suffix-glob-drop
-surface: a leading-star path glob compiles to the suffix leg; the frame carries the suffix at the target end
+surface: 'the leading-star glob''s suffix leg composites over the walk''s 1M verifier envelope; the compile routes the rule T2 (the engine tier) and stages no row'
 skipped: false
 policy:
   defaultAction: pass
@@ -20,9 +20,8 @@ view:
   query: q=1
   rate5m: 0
 classes:
-- drop-row
+- cel-t2-route
 - cel-glob-row
 expect:
-  outcome: drop
-  marked: true
-  rowid: 0
+  outcome: forward
+  marked: false

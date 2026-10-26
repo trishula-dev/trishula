@@ -113,3 +113,16 @@ the tree does not carry: the PRE sweep needs the §4.4 scenario harness, and the
 POST sweep needs the programs attached (§4.1). The kernel leg runs the test-run
 surface only (section 10.6), so it renders no wall. Every later figure enters with
 its run citation. No estimate and no borrowed figure rides either row.
+
+## The TR-196 composition gate (2026-10-25)
+
+The CEL class rows stage per the one-program envelope: the walk carries the
+glob + method family (the verified 31360B xlated form, 3920 instructions inside
+the 4096-row envelope). A rule whose segments carry a suffix or whose
+expression carries the query substring routes T2 with the reason row verbatim -
+the compile gate in `internal/fastpath/celclass.go`, the 46-run load receipt
+and the verdict table in [the census record, section 12](https://github.com/trishula-dev/trishula/blob/main/docs/design/socket-plane/4-compiler-census.md).
+
+Shaped corpus updates ride the same commit: cases 19, 22, 23, 24 and 25 read
+the T2 route (the bundle stages no row; the engine keeps the rule). The
+plane-split budget re-pins with the recorded kernel-leg run.

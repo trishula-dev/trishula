@@ -27,7 +27,7 @@ const (
 	// mirrors them so a template-bound change names itself here.
 	celMethodExtractMax = 8  // the method-token scan window
 	celScanPathMax      = 64 // the bounded path extract
-	celScanQueryMax     = 32 // the bounded query extract
+	celScanQueryMax     = 8  // the bounded query extract + the scan window
 	// The TC verdicts the program returns (the uABI constants the C
 	// inlines; TC_ACT_OK and TC_ACT_SHOT are frozen since forever).
 	tcActOK   uint32 = 0
@@ -294,7 +294,8 @@ func CELRulesDecision(rows []fastpath.FastPathCELRule, frame []byte) Decision {
 	pathContinue := false
 	if len(path) == celScanPathMax && !terminated && pathStart+celScanPathMax < len(body) {
 		next := body[pathStart+celScanPathMax]
-		if next != ' ' && next != '\r' && next != '\n' {
+		// '?' terminates the path: the extract holds the true tail.
+		if next != ' ' && next != '\r' && next != '\n' && next != '?' {
 			pathContinue = true
 		}
 	}

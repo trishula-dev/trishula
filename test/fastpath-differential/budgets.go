@@ -63,13 +63,14 @@ func MismatchBudgets() []MismatchBudget {
 		{
 			Class:      "plane-split",
 			Definition: "a compiled drop beside a non-decisive engine verdict, or a forward beside a decisive one (the class split; the census reports it, the engine stays the detection authority)",
-			// Recorded from the gate census over the tracked corpus:
-			// 4 drop-vs-nondecisive cases and 1 forward-vs-decisive
-			// case. The ceiling holds until a maintainer re-pins with a
-			// fresh recorded run.
+			// Re-pinned 2026-10-26 from the fresh kernel-leg recorded run
+			// (the TR-196 envelope gate: the T2-routed rows read the
+			// engine tier, so the forward-vs-decisive split grows 5 -> 11:
+			// 4 drop-vs-nondecisive and 7 forward-vs-decisive). The ceiling
+			// holds until a maintainer re-pins with a fresh recorded run.
 			Recorded: true,
-			Count:    5,
-			Budget:   5,
+			Count:    11,
+			Budget:   11,
 		},
 	}
 }

@@ -1,5 +1,5 @@
 name: 28-cel-two-rows-second-matches
-surface: two compiled rule rows stage in order; the frame matches the second row (rowid 1)
+surface: 'the second rule sits past the envelope seat, so the compile routes it T2; the staged row does not match the frame and the engine keeps the rule'
 skipped: false
 policy:
   defaultAction: pass
@@ -25,9 +25,8 @@ view:
   query: q=1
   rate5m: 0
 classes:
-- drop-row
+- cel-t2-route
 - cel-glob-row
 expect:
-  outcome: drop
-  marked: true
-  rowid: 1
+  outcome: forward
+  marked: false
