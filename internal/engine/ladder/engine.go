@@ -2,6 +2,7 @@ package ladder
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/trishula-dev/trishula/internal/engine/ingest"
 )
@@ -44,18 +45,40 @@ func (e *Engine) Use(st Stage, ev Evaluator) error {
 }
 
 // EvaluateTx walks S0→S7 in fixed order, folding every stage fragment
-// through Resolve; the first decisive fragment stops the walk.
+// through Resolve; the first decisive fragment stops the walk. Each run
+// stage records one verdict-record row (TR-194: walk order, the §3.4
+// token, matched rules, the stage's µs wall — unwired or short-circuited
+// stages leave no row).
 func (e *Engine) EvaluateTx(tx *ingest.TxContext) *Verdict {
 	acc := &Verdict{Action: ActionAllow, Phase: PhaseRequestHeaders}
-	for _, ev := range e.slots {
+	for st, ev := range e.slots {
 		if ev == nil {
 			continue
 		}
-		if Resolve(acc, ev.Evaluate(tx)) {
+		// TR-194 (issue #236): the stage's row — measured over this
+		// stage's own Evaluate leg; 0 µs = the sub-µs floor.
+		start := time.Now()
+		frag := ev.Evaluate(tx)
+		wall := time.Since(start).Microseconds()
+		acc.Rows = append(acc.Rows, Row{
+			Stage:   Stage(st),
+			Matched: fragmentRules(frag),
+			US:      wall,
+		})
+		if Resolve(acc, frag) {
 			break
 		}
 	}
 	return acc
+}
+
+// fragmentRules returns the fragment's contributed rule ids (nil-safe;
+// the row shares the walk's read-only view of the fragment).
+func fragmentRules(frag *Verdict) []RuleID {
+	if frag == nil {
+		return nil
+	}
+	return frag.Rules
 }
 
 // Resolve folds one stage fragment into the walk accumulator per the

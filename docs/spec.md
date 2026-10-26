@@ -332,7 +332,7 @@ flowchart LR
 
 ### 6.3 Non-goals (the standing boundary)
 
-- **Not a TLS-terminating edge LB** for the whole estate. The gateway owns termination in the reference deployment. Trishula inspects post-termination plaintext. Re-encrypting engine termination is a secondary, feature-gated mode.
+- **Not a TLS-terminating edge LB** for the whole estate. The gateway owns termination in the reference deployment. Trishula inspects post-termination plaintext. Re-encrypting engine termination is a secondary, feature-gated mode. TR-203 L3 carries the mode one opt-in leg: the `--h3-listen` flag opens the inline QUIC/HTTP-3 listener (`cmd/engine/h3.go`; [ADR-0006](adr/0006-inline-h3-listener.md)). The TLS listener's responses advertise the h3 alternative (Alt-Svc). The engine's own ladder serves the h3 requests. The flag off binds no UDP socket; the gateway-terminated path stays the default.
 - **Not a Service Mesh:** east-west policy stays with Cilium/network policy. Trishula is the north-south + steering-path control.
 - **Not a secrets/token vault:** Trishula references JWT claims. It stores nothing and tokenizes nothing.
 - **Not an endpoint-picker:** model-pool selection stays with EPP/the gateway. Trishula proxies transparently and preserves the downstream selection.
@@ -581,6 +581,7 @@ It cannot: walk all headers, parse bodies or evaluate regex. Every fast-path cla
 | Traffic shape | Shield sees | Engine sees |
 |---------------|-------------|-------------|
 | Gateway-terminated (reference) | ciphertext + flow metadata | full plaintext |
+| Engine-terminated client QUIC (the opt-in h3 listener, TR-203 L3) | UDP ciphertext + flow metadata | full plaintext (the engine's own h3 view; the ladder serves the request) |
 | Plaintext north-south HTTP | full plaintext (fast path §9.6) | full plaintext |
 | Re-encrypted engine→pool (secondary mode) | ciphertext | full plaintext (engine terminates the steering hop) |
 | kTLS/app-internal TLS (no proxy hop) | ciphertext + metadata | nothing — documented gap; optional uprobes restore visibility per workload |
@@ -1138,12 +1139,14 @@ eBPF contributes cheap counters (§9.5); the parser contributes payload features
   "schema": "trishula.verdict.v1",
   "trace_id": "…", "span_id": "…",
   "route": {"host": "api.example.com", "path": "/v1/chat", "policy": "chat-completions"},
+  "shield": {"stages": 127},
   "client": {"ip": "…", "ja4": "…", "asn": 0, "reputation": 0.42, "rate_windows": {"5m": 41}},
   "ladder": [
+    {"stage": "kernel", "matched": [], "us": 1},
     {"stage": "matcher", "matched": ["920480"], "us": 12},
     {"stage": "crs", "matched": ["942100"], "score_delta": 5, "us": 210},
-    {"stage": "bot", "detectors": {"header_order": 0.8}, "consensus": false},
-    {"stage": "rate", "windows": {"5m": {"requests": 41, "limit": 30}}, "breach": true}
+    {"stage": "bots", "detectors": {"header_order": 0.8}, "consensus": false},
+    {"stage": "rate_ban", "windows": {"5m": {"requests": 41, "limit": 30}}, "breach": true}
   ],
   "verdict": {"action": "ban", "tier": "scored-window",
               "reason": "rate breach + CRS critical within findtime",
@@ -1156,6 +1159,25 @@ eBPF contributes cheap counters (§9.5); the parser contributes payload features
 `doc_ref` is the teach-the-web hook (§7.2): every machine verdict points at the human explanation of the mechanism that fired it.
 
 The stage-stamp vocabulary follows the verdict record at [docs/design/stage-stamps-verdict.md](design/stage-stamps-verdict.md).
+
+**The stage-stamp record surface (TR-194, 2026-10-25).** The record evolves
+additively; the schema stays `trishula.verdict.v1`:
+
+- `ladder` rows run in walk order, one row per run stage. The row shape
+  stays `{stage, matched, us}`. The `stage` tokens use the canonical
+  name set: `kernel`, `matcher`, `crs`, `cel`, `schema`, `bots`,
+  `rate_ban`, `ml`. The design record holds the taxonomy (the link
+  above). A skipped stage carries no row. A row never claims a skipped
+  stage.
+- The optional root object `shield` carries the kernel-plane consult
+  bitmap as one integer: `"shield": {"stages": 127}`. Bits 0–6 name the
+  kernel-plane consults (the record's XDP and TC bit tables). A request
+  with no correlated shield event carries no `shield` field. A zero
+  bitmap reads 0 on a present event.
+- The verdict span carries one link per correlated shield event. The
+  link attributes carry the event fields (timestamps, family, ports,
+  TCP flags, payload length, path hint, the stages integer). A link
+  carries a context + attributes, never a span.
 
 ### 15.3 Kernel-plane counters (shield)
 
@@ -1672,7 +1694,7 @@ spec:
 1. **Coraza-embedded vs from-scratch evaluator** — the recommendation stands: embed Coraza as the reference evaluator (CRS fidelity + WASM extension). Build the compiled fast path + CEL natively. Composition, not fork.
 2. **Vectorscan as the matcher** (Intel Hyperscan closed-source since 5.5[173][189]; Vectorscan OSS, Suricata-backed[172]) — the direction is confirmed. The rc1 cut validated the ARM64 + Go bindings.
 3. **Kernel verdict/ban authority** — userspace decides; the kernel enforces. The recommendation keeps the kernel decision-free permanently. In-kernel rule evaluation fails the auditability test (§13.3) even where the verifier would permit it.
-4. **Re-encryption toward pools** — the default keeps east-west plaintext in-cluster (mesh mTLS is a non-goal). The gateway handles the north edge. The secondary engine-TLS mode stays feature-gated for passthrough estates.
+4. **Re-encryption toward pools** — the default keeps east-west plaintext in-cluster (mesh mTLS is a non-goal). The gateway handles the north edge. The secondary engine-TLS mode stays feature-gated for passthrough estates. The mode's inline HTTP/3 listener (TR-203 L3) runs under the same opt-in gate. It adds no upstream re-encryption.
 5. **Tokenization boundaries** — Trishula sees post-tokenized payloads where an AI gateway sits in path; no token-vault responsibility. Where no AI gateway exists, Trishula's redaction pipeline (§15.4) is the payload-hygiene layer.
 6. **Ban policy defaults per vertical** — the §13.3 constants are sane general defaults. Per-vertical presets (API-first SaaS vs auth-heavy B2C) ship as documented `BanPolicy` recipes in Phase 1+. The presets feed real tuning data back into the defaults.
 7. **Composition re-evaluation (Appendix E watch-list):** the eBPF-native cousins (Synapse, Moat, MicroWAF — E.2) evolve quickly. When a cousin reaches that shape before the post-GA trains, re-run the borrow-vs-build analysis for that layer. No overlapping code ships meanwhile. The differential suite and the CRD compiler are the pieces worth keeping regardless.
@@ -1702,7 +1724,8 @@ A developer-first spec measures **adoption**, not just detection:
 
 ## Appendix A: Roadmap Notes
 
-- **HTTP/3:** the QUIC ingress posture is a tracked evaluation, not a runtime claim. QUIC's UDP transport moves the kernel-side story (XDP sees UDP floods the same way; QUIC packet framing needs userspace analysis). The academy module teaches the why before the product carries the claim.
+- **HTTP/3:** the QUIC ingress posture is a tracked evaluation, not a runtime claim. QUIC's UDP transport moves the kernel-side story (XDP sees UDP floods the same way; QUIC packet framing needs userspace analysis). The academy module teaches the why before the product carries the claim. TR-203 L3 files the evaluation's first live leg at the engine (the dated entry below); this bullet's kernel-side posture stays.
+- **TR-203 L3 — the engine inline H3 listener (opt-in):** the TR-34 TLS mode's responses advertise the h3 alternative and the mode answers h3 requests through its own ladder ([TR-203 #264](https://github.com/trishula-dev/trishula/issues/264), leaf 3). The `--h3-listen` flag opens the QUIC leg (`cmd/engine/h3.go`; [ADR-0006](adr/0006-inline-h3-listener.md)). The leg carries the same TLS cert pair. The QUIC handshake carries the unchanged L4 key-exchange profile. The h1/h2 responses carry the alt-svc advertisement. The flag off = no UDP surface; the default stays gateway-terminated. The 0-RTT posture reads reject: the transport accepts no early data. The listener pins no session-resumption material ([the posture record's dated read](design/h3-ingress-posture.md)).
 - **Post-quantum:** termination at the gateway keeps Trishula cipher-agnostic. The PQ handshake (when negotiated) is the gateway's, on the client↔gateway leg; nothing in the shield or engine changes shape. The curriculum documents hybrid X25519+ML-KEM reality and its fingerprinting effects (client PQ preferences are themselves signal). The product carries no PQ data-plane claims.
 
   **Post-quantum readiness notes (TR-30).** PQ posture is a documentation concern with four concrete, product-side statements:
@@ -1714,6 +1737,8 @@ A developer-first spec measures **adoption**, not just detection:
 - **Socket-plane L7 fast path:** a tracked design study (specification §9.9). The mechanism: kernel enforcement of header-class policies at the socket layer via `strparser`/kTLS, with synthesized per-policy programs. No body inspection and no HTTP/3. The kernel-module dependency and the verifier envelope are decided before any implementation claim.
 
 - **TR-203 L5 — the JA4/PQC corpus and the QUIC Initial read:** the botdef's JA4 corpus gains the PQC vectors ([TR-203 #264](https://github.com/trishula-dev/trishula/issues/264), leaf L5). The corpus pins a captured Go offer twice: the X25519MLKEM768 default and the GODEBUG `tlsmlkem=0` baseline. The KEX offer uses extension data: the RFC 10024 group list 4588 (0x11EC), 4587 (0x11EB), 4589 (0x11ED); the client share carries 1,216 bytes against 32 for bare X25519. ja3's group list carries the shift. The JA4 token stays stable across the same stack's KEX flip. The token shifts only with a changed cipher, extension or signature set. The QUIC Initial-packet fingerprint read is the designed probe: [the design note](https://github.com/trishula-dev/trishula/blob/main/docs/design/quic-initial-fingerprint-read.md) files the RFC 9001 boundary. The header plane reads at eBPF. The ClientHello shadow decrypts in userspace. The kernel counts and drops ([§9.2](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#92-hook-inventory)). Probe P2b stays PENDING until a recorded run lands.
+
+- **TR-203 L2 — the QUIC-ingress lab topology:** the kind/OrbStack lab carries the h3 listener leg ([TR-203 #264](https://github.com/trishula-dev/trishula/issues/264), leaf L2). The record: [the HTTP/3 ingress posture record](https://github.com/trishula-dev/trishula/blob/main/docs/design/h3-ingress-posture.md) files the plan. This leg = the plan's step 2. The lab terminator pod terminates the QUIC client leg (UDP :443) plus the TLS leg (TCP :443). It speaks h1 upstream to the engine Service (the record's F2 legs). The terminator image = the lab's NGF 2.7.2 dataplane build. Its nginx carries `--with-http_v3_module`. NGF itself carries no h3 listener row. The record's N8 holds: the operator owns the topology; the lab terminator answers for the h3 leg. Three probes file recorded runs; the receipts sit on [the leaf issue](https://github.com/trishula-dev/trishula/issues/264). Probe P4 = the advisory [h3spec](https://github.com/kazu-yamamoto/h3spec) pass against the listener. The tool output joins no verdict (the record's N5). [The verdict-integration section](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#122-verdict-integration) reads the UDP/QUIC ban path. Probe P7 = the ban identity on the L1 kernel leg. A live `ban_table` row SHOTs the keyed source's QUIC-class flow. The re-addressed stream passes while the row stays live. One source per key; no connection-id bind ([the ban algorithm](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#133-the-ban-algorithm-scoredwindowban-v1-specified) keys the source). The h3 hop of P8 = one real HTTP/3 request runs the whole path: terminator → h1 upstream → engine → echo. The response reads the same view head with the engine's `X-Trishula-Hop` marker. The probes stay advisory lab material: [the topology gate](https://github.com/trishula-dev/trishula/blob/main/lab/dx1/h3-ingress-read.sh) carries the stage runners. No h3spec run enters CI.
 
 - **Named-algorithm stability:** `ScoredWindowBan` is version-pinned by this document (v1). Any change ships as a new version + a conformance test — never a silent rewrite. CRS applies the same discipline to rule semantics.
 

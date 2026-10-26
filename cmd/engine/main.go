@@ -533,6 +533,7 @@ func main() {
 	tlsCert := flag.String("tls-cert", "", "cert PEM to terminate TLS on the engine listener (TR-34 secondary mode, feature-gated; requires -tls-key; off = the default gateway-owned termination)")
 	banEvidence := flag.String("ban-evidence", "", "JSONL path the manual ban-rule would-bans append to (TR-195 leaf 1; empty = the evidence stays in the engine log)")
 	tlsKey := flag.String("tls-key", "", "key PEM for -tls-cert (TR-34 secondary mode)")
+	h3Listen := flag.String("h3-listen", "", "UDP listen address for the inline QUIC/HTTP-3 listener (TR-203 L3 opt-in; requires -tls-cert/-tls-key; empty = off = the default gateway-terminated path)")
 	noOtel := flag.Bool("no-otel", false, "disable the verdict pipeline (the consult signals; TR-195 leaf 4)")
 	challengeKey := flag.String("challenge-key", "", "hex key the challenge tokens sign (TR-197; 32+ hex chars; empty = the challenge verdicts refuse)")
 	flag.Parse()
@@ -568,6 +569,23 @@ func main() {
 		bundleBoxOut.challenge = chanVerifier
 	} else {
 		handler = newEngineHandler(*upstream, *hop)
+	}
+	var http3srv *h3Server
+	if *h3Listen != "" {
+		h3cfg, h3err := h3ListenSpec(*tlsCert, *tlsKey, *h3Listen)
+		if h3err != nil {
+			log.Fatal(h3err)
+		}
+		var startErr error
+		http3srv, startErr = startH3Listener(h3cfg, handler)
+		if startErr != nil {
+			log.Fatal(startErr)
+		}
+		// the TCP TLS responses carry the advertisement; the h3 leg
+		// itself serves the raw handler (the listener = its own origin
+		// alternative, no self-reference).
+		handler = altSvcHandler(handler, http3srv.AltSvc())
+		log.Printf("engine: inline HTTP/3 (QUIC) listener on %s/udp (TR-203 L3, opt-in; Alt-Svc %s)", http3srv.Addr(), http3srv.AltSvc())
 	}
 	addr := *listen
 	ln, err := engineListener(addr, *tlsCert, *tlsKey)
