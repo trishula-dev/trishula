@@ -109,9 +109,13 @@ func shapePolicies() map[string]shapeSpec {
 			{ID: "DX-LAB-001", Action: cel.ActionEnforce,
 				Expression: "request.method == \"POST\" && path.matches(\"/v1/chat/*\") && request.query.contains(\"UNION\")"},
 		}},
+		"cel_class_gm.json": {policy: celGlob, rules: []cel.Rule{
+			{ID: "DX-LAB-020", Action: cel.ActionEnforce,
+				Expression: "request.method == \"POST\" && path.matches(\"/v1/chat/*\")"},
+		}},
 		"cel_class_2row.json": {policy: cel2row, rules: []cel.Rule{
 			dxGlob("DX-LAB-010", "/v1/chat/*"),
-			dxGlob("DX-LAB-011", "/*-admin"),
+			dxGlob("DX-LAB-011", "/v1/auth"),
 		}},
 		"cel_class_t2pack.json": {policy: celT2, rules: []cel.Rule{
 			{ID: "DX-LAB-101", Action: cel.ActionEnforce,

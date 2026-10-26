@@ -42,7 +42,9 @@ func dxRule(id string) cel.Rule {
 // carries its row.
 func TestCompileFastPathCELRowsFromPacks(t *testing.T) {
 	seed := seedPackForTest(t)
-	dx := cel.RulePack{Rules: []cel.Rule{dxRule("DX-LAB-001")}}
+	dx := cel.RulePack{Rules: []cel.Rule{
+		{ID: "DX-LAB-020", Action: cel.ActionEnforce, Expression: `request.method == "POST" && path.matches("/v1/chat/*")`},
+	}}
 	b := Bundle{RulePacks: []cel.RulePack{seed, dx}}
 	if err := CompileFastPathCELRows(&b); err != nil {
 		t.Fatalf("CompileFastPathCELRows: %v", err)
@@ -50,8 +52,8 @@ func TestCompileFastPathCELRowsFromPacks(t *testing.T) {
 	if len(b.FastPath.CELRules) != 1 {
 		t.Fatalf("%d cel rows, want 1 (the seed rule routes T2)", len(b.FastPath.CELRules))
 	}
-	if got := b.FastPath.CELRules[0].ID; got != "DX-LAB-001" {
-		t.Fatalf("row id %q, want DX-LAB-001", got)
+	if got := b.FastPath.CELRules[0].ID; got != "DX-LAB-020" {
+		t.Fatalf("row id %q, want DX-LAB-020", got)
 	}
 	// The digests recompute over the spliced packs (two packs, two digests).
 	if len(b.RulePackDigests) != 2 {
@@ -160,11 +162,14 @@ func TestCompilePolicyWithCELFastPathLeg(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	b.RulePacks = append(b.RulePacks, cel.RulePack{Rules: []cel.Rule{dxRule("DX-LAB-001")}})
+	b.RulePacks = append(b.RulePacks, cel.RulePack{Rules: []cel.Rule{
+		dxRule("DX-LAB-001"), // the query leg rides the engine tier (the envelope gate)
+		cel.Rule{ID: "DX-LAB-020", Action: cel.ActionEnforce, Expression: `request.method == "POST" && path.matches("/v1/chat/*")`},
+	}})
 	if err := CompileFastPathCELRows(&b); err != nil {
 		t.Fatalf("CompileFastPathCELRows: %v", err)
 	}
-	if len(b.FastPath.CELRules) != 1 || b.FastPath.CELRules[0].ID != "DX-LAB-001" {
-		t.Fatalf("leg = %+v", b.FastPath.CELRules)
+	if len(b.FastPath.CELRules) != 1 || b.FastPath.CELRules[0].ID != "DX-LAB-020" {
+		t.Fatalf("leg = %+v, want the prefix row only (the query rule routes T2)", b.FastPath.CELRules)
 	}
 }

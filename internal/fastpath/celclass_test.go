@@ -9,6 +9,7 @@ package fastpath
 // the slow path, no kernel row, never a kernel claim).
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -118,28 +119,104 @@ func TestCompileCELFastPathRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompileCELFastPathRows: %v", err)
 	}
-	if skipCount := len(skips); skipCount != 1 || skips[0].RuleID != "TR02-001" {
-		t.Fatalf("skips = %+v, want the rate rule routed T2", skips)
+	// The walk ships the glob+method family at ONE staged row (the load
+	// receipt). The query-substring rule rides the engine tier: the glob
+	// and the query passes composite over the walk's 1M verifier
+	// envelope at any row count. The rate rule routes T2 twice over: the
+	// census verdict, then the row-bound envelope seat.
+	if skipCount := len(skips); skipCount != 2 || skips[0].RuleID != "DX-LAB-001" || skips[1].RuleID != "TR02-001" {
+		t.Fatalf("skips = %+v, want both rules routed T2 in order", skips)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("%d rows, want none (both rules carry a routed leg)", len(rows))
+	}
+}
+
+// TestCompileCELFastPathRowsComposeRow proves the shipped family: the
+// method equality + the prefix glob ride one compiled row. The suffix
+// and the query legs route T2.
+func TestCompileCELFastPathRowsComposeRow(t *testing.T) {
+	pack := []cel.Rule{
+		ruleOf("DX-LAB-020", "enforce", `request.method == "POST" && path.matches("/v1/chat/*")`),
+	}
+	rows, skips, err := CompileCELFastPathRows(pack)
+	if err != nil {
+		t.Fatalf("CompileCELFastPathRows: %v", err)
+	}
+	if len(skips) != 0 {
+		t.Fatalf("skips = %+v, want none (the globe+method family compiles)", skips)
 	}
 	if len(rows) != 1 {
 		t.Fatalf("%d rows, want 1 compiled row", len(rows))
 	}
 	r := rows[0]
-	if r.ID != "DX-LAB-001" || r.Action != RouteTemplateActionDrop ||
-		r.Method != "POST" || r.PathGlobPrefix != "/v1/chat/" || r.QuerySubstring != "UNION" {
+	if r.ID != "DX-LAB-020" || r.Method != "POST" ||
+		r.PathGlobPrefix != "/v1/chat/" || r.PathGlobSuffix != "" || r.QuerySubstring != "" {
 		t.Fatalf("row = %+v", r)
 	}
 }
 
-// TestCompileCELFastPathRowsBound fails the compile closed at the row
-// bound: the ninth in-class rule names the offending cell.
+// TestCompileCELFastPathRowsSuffixRoutesSlowPath proves the suffix leg's
+// skip row: the leading-star glob rides the engine tier (the verifier
+// envelope: the third body composites the pair receipts over 1M).
+func TestCompileCELFastPathRowsSuffixRoutesSlowPath(t *testing.T) {
+	pack := []cel.Rule{
+		ruleOf("DX-LAB-003", "enforce", `request.method == "POST" && path.matches("/*-admin")`),
+	}
+	rows, skips, err := CompileCELFastPathRows(pack)
+	if err != nil {
+		t.Fatalf("CompileCELFastPathRows: %v", err)
+	}
+	if len(rows) != 0 || len(skips) != 1 || skips[0].RuleID != "DX-LAB-003" {
+		t.Fatalf("rows %+v skips %+v, want the suffix rule routed T2", rows, skips)
+	}
+	if skips[0].Reason == "" {
+		t.Fatal("skip reason empty, want the envelope reason row")
+	}
+}
+
+// TestCompileCELFastPathRowsQueryRoutesSlowPath proves the query leg's
+// skip row at any row count (the load receipt: two rows still composite
+// the passes over the envelope).
+func TestCompileCELFastPathRowsQueryRoutesSlowPath(t *testing.T) {
+	pack := []cel.Rule{
+		ruleOf("DX-LAB-101", "enforce", `request.query.contains("UNION")`),
+	}
+	rows, skips, err := CompileCELFastPathRows(pack)
+	if err != nil {
+		t.Fatalf("CompileCELFastPathRows: %v", err)
+	}
+	if len(rows) != 0 || len(skips) != 1 || skips[0].RuleID != "DX-LAB-101" {
+		t.Fatalf("rows %+v skips %+v, want the query rule routed T2", rows, skips)
+	}
+	if skips[0].Reason == "" {
+		t.Fatal("skip reason empty, want the envelope reason row")
+	}
+}
+
+// TestCompileCELFastPathRowsBound reads the bound shape: the first
+// in-class rule fills the envelope seat; every later rule routes T2 with
+// the seat reason. The wire row bound stays a hard failure behind the
+// envelope gate.
 func TestCompileCELFastPathRowsBound(t *testing.T) {
 	pack := make([]cel.Rule, 0, FastPathCELMaxRules+1)
 	for i := 0; i <= FastPathCELMaxRules; i++ {
-		pack = append(pack, ruleOf(strings.Repeat("R", 3), "enforce", `request.method == "POST" && path.matches("/v1/chat/*")`))
+		pack = append(pack, ruleOf(fmt.Sprintf("R%02d", i), "enforce", `request.method == "POST" && path.matches("/v1/chat/*")`))
 	}
-	if _, _, err := CompileCELFastPathRows(pack); err == nil {
-		t.Fatal("CompileCELFastPathRows: err nil, want the row-bound failure")
+	rows, skips, err := CompileCELFastPathRows(pack)
+	if err != nil {
+		t.Fatalf("CompileCELFastPathRows: %v", err)
+	}
+	if len(rows) != FastPathCELEnvelopeRows {
+		t.Fatalf("%d rows, want the envelope seat count %d", len(rows), FastPathCELEnvelopeRows)
+	}
+	if len(skips) != FastPathCELMaxRules+1-FastPathCELEnvelopeRows {
+		t.Fatalf("%d skips, want the over-seat rules routed T2", len(skips))
+	}
+	for _, sk := range skips {
+		if sk.Reason == "" {
+			t.Fatalf("skip %+v carries no reason", sk)
+		}
 	}
 }
 

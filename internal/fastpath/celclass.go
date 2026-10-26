@@ -43,6 +43,11 @@ import (
 // re-checks every bound). Each bound names the class-set boundary: a
 // rule whose literal passes it routes the slow path.
 const (
+	// FastPathCELEnvelopeRows is the staged-row bound the shipped walk
+	// proves (the load receipt: the one-row walk loads; the second row
+	// composites the passes over the 1M verifier envelope). A rule past
+	// this bound rides the engine tier (the envelope gate).
+	FastPathCELEnvelopeRows = 1
 	// FastPathCELMaxRules is the compiled-row bound per bundle. A policy
 	// whose in-class rules pass it fails the compile closed (the route
 	// class's template-bound posture).
@@ -53,8 +58,11 @@ const (
 	FastPathCELGlobPrefixMaxBytes = 48
 	// FastPathCELGlobSuffixMaxBytes is the glob-suffix bound.
 	FastPathCELGlobSuffixMaxBytes = 16
-	// FastPathCELQueryMaxBytes is the query-substring bound.
-	FastPathCELQueryMaxBytes = 32
+	// FastPathCELQueryMaxBytes is the query-substring literal bound (the
+	// C carries the same figure: bpf/flow_tc.c's fp_rule_val.query =
+	// FP_QUERY_MAX 8; the extract window and the row literal share the
+	// field, and a literal past the window never completes the compare).
+	FastPathCELQueryMaxBytes = 8
 )
 
 // Construct is one census construct class of the record's CEL vocabulary.
@@ -393,23 +401,38 @@ func CompileCELFastPathRows(rules []cel.Rule) ([]FastPathCELRule, []CELSkip, err
 				skips = append(skips, CELSkip{RuleID: r.ID, Reason: fmt.Sprintf("the glob segments carry %d+%d bytes; the row bounds are %d+%d", len(legs.pre), len(legs.suf), FastPathCELGlobPrefixMaxBytes, FastPathCELGlobSuffixMaxBytes)})
 				continue
 			}
+			if legs.suf != "" {
+				// The envelope gate (the load receipt; the record's
+				// section 12): the suffix pass composites with the glob
+				// pass and the third body pushes the walk over the
+				// 1M-verifier bound. The rule routes the engine tier.
+				skips = append(skips, CELSkip{RuleID: r.ID, Reason: "the glob-suffix leg composites over the walk's 1M verifier envelope; the rule routes the engine tier"})
+				continue
+			}
 			row.PathGlobPrefix = legs.pre
 			row.PathGlobSuffix = legs.suf
 			row.PathExact = legs.exact
 		}
 		if legs.query != "" {
-			if !printable(legs.query) {
-				skips = append(skips, CELSkip{RuleID: r.ID, Reason: "the query literal carries a non-printable byte"})
-				continue
-			}
-			if len(legs.query) > FastPathCELQueryMaxBytes {
-				skips = append(skips, CELSkip{RuleID: r.ID, Reason: fmt.Sprintf("the query literal carries %d bytes; the row bound is %d", len(legs.query), FastPathCELQueryMaxBytes)})
-				continue
-			}
-			row.QuerySubstring = legs.query
+			// The envelope gate (the load receipt; the record's
+			// section 12): the query pass composites with a second pass
+			// (the glob body; the method+suffix compose) and busts the
+			// 1M-verifier bound at any row count. The rule routes the
+			// engine tier.
+			skips = append(skips, CELSkip{RuleID: r.ID, Reason: "the query-substring leg composites with any second pass over the walk's 1M verifier envelope; the rule routes the engine tier"})
+			continue
 		}
+
 		if row.Method == "" && row.PathGlobPrefix == "" && row.PathGlobSuffix == "" && row.QuerySubstring == "" {
 			return nil, nil, fmt.Errorf("compile: rule %s carries no non-vacuous leg; the compiled row would match every request", r.ID)
+		}
+		if len(rows) >= FastPathCELEnvelopeRows {
+			// The envelope gate (the load receipt; the record's
+			// section 12): the walk proves one staged row; a second
+			// row composites the passes over the 1M-verifier bound.
+			// The rule routes the engine tier.
+			skips = append(skips, CELSkip{RuleID: r.ID, Reason: "the staged-row count sits past the walk's verified envelope; the rule routes the engine tier"})
+			continue
 		}
 		if len(rows) >= FastPathCELMaxRules {
 			return nil, nil, fmt.Errorf("compile: %d in-class rules; the row bound is %d (offending rule %s)", len(rows)+1, FastPathCELMaxRules, r.ID)
