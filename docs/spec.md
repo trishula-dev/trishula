@@ -16,7 +16,7 @@ stream = "IETF"
 status = "informational"
 
 [[author]]
-fullname = "Shain Singh"
+fullname = "Shaineel Singh"
 initials = "S."
 surname = "Singh"
 organization = "trishula-dev project"
