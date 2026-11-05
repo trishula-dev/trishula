@@ -241,6 +241,8 @@ The user-requested corpus question — should a `rules` repo exist for crowd-sou
 
 The product repo stays Apache-2.0 code-only (clean provenance for packagers and adopters); contributions require the CI gates plus maintainer review, commits are signed, and no commit lands directly on a main branch. The supply-chain posture carries from the threat model: rule bundles digest-pinned and operator-signed; MLModel refs digest-pinned; CRS bundles from pinned upstream tags with recorded hashes; kernel maps restricted to the shield's UID with foreign-map-writer alerts. Trust boundaries are documented: what Trishula trusts (the gateway's TLS termination and steering marks, the BPF verifier, the node kernel, OCI registry integrity, CRD RBAC below the operator) and the residual risks — documented, not hidden.
 
+**Authorship.** Shain Singh is the sole author and maintainer of this paper (contact: shain.singh@owasp.org).
+
 <div class="pagebreak"></div>
 
 # 7. Performance: Targets, Stated as Targets
