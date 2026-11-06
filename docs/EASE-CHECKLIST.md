@@ -48,7 +48,7 @@ same rules in a newer form.
 
 ## Ethics statement - the template
 
-*Authorship —* Shain Singh is the sole author and maintainer of this paper
+*Authorship —* Shaineel Singh is the sole author and maintainer of this paper
 (contact: shain.singh@owasp.org).
 
 *Funding —* the author states the funding position of the work.
