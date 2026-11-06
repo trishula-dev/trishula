@@ -1,4 +1,30 @@
-<div class="cover" markdown="1">
+%%%
+title = "Trishula — Developer-First, eBPF-Native Web Application &amp; API Security for Kubernetes"
+abbrev = "Trishula"
+ipr = "trust200902"
+docName = "trishula-spec-00"
+category = "info"
+area = "Security"
+workgroup = "Independent Submission"
+keyword = ["eBPF", "Kubernetes", "Gateway API", "web application security", "OWASP CRS", "WAF"]
+date = 2026-11-05
+
+[seriesInfo]
+name = "Internet-Draft"
+value = "trishula-spec-00"
+stream = "IETF"
+status = "informational"
+
+[[author]]
+fullname = "Shaineel Singh"
+initials = "S."
+surname = "Singh"
+organization = "trishula-dev project"
+  [author.address]
+  email = "shain.singh@owasp.org"
+%%%
+
+{mainmatter}
 
 # Trishula
 
@@ -8,17 +34,13 @@
 
 *Trishula: the trident — **kernel shield**, **userspace engine**, **control plane**.*
 
-<div class="meta">Revision v4 · October 2026 · github.com/trishula-dev · trishula.dev</div>
-
-</div>
-
-<div class="pagebreak"></div>
+*Revision v4 · October 2026 · github.com/trishula-dev · trishula.dev*
 
 ## Table of Contents
 
 0. [Front Page — What is Trishula?](#0-front-page--what-is-trishula)
 1. [Executive Summary](#1-executive-summary)
-2. [Positioning & Non-Negotiable Design Decisions](#2-positioning--non-negotiable-design-decisions)
+2. [§2](#2-positioning--non-negotiable-design-decisions) Positioning & Non-Negotiable Design Decisions
 3. [Problem Statement](#3-problem-statement)
 4. [Related Work — What We Borrow, Where We Sit](#4-related-work--what-we-borrow-where-we-sit)
 5. [Developer Experience Charter](#5-developer-experience-charter)
@@ -27,30 +49,26 @@
 8. [Architecture](#8-architecture)
 9. [eBPF Packet Path](#9-ebpf-packet-path)
 10. [Gateway API Integration — NGF Reference Deployment](#10-gateway-api-integration--ngf-reference-deployment)
-11. [Rule Engine & Detection](#11-rule-engine--detection)
-12. [Bot Defense & Anti-Automation](#12-bot-defense--anti-automation)
-13. [Rate Limiting, DoS Response & Temporary Bans](#13-rate-limiting-dos-response--temporary-bans)
-14. [ML & Adaptive Detection](#14-ml--adaptive-detection)
+11. [§11](#11-rule-engine--detection) Rule Engine & Detection
+12. [§12](#12-bot-defense--anti-automation) Bot Defense & Anti-Automation
+13. [§13](#13-rate-limiting-dos-response--temporary-bans) Rate Limiting, DoS Response & Temporary Bans
+14. [§14](#14-ml--adaptive-detection) ML & Adaptive Detection
 15. [OpenTelemetry Observability](#15-opentelemetry-observability)
-16. [Kubernetes Deployment Model & Operations](#16-kubernetes-deployment-model--operations)
-17. [Performance Targets & Benchmark Plan](#17-performance-targets--benchmark-plan)
+16. [§16](#16-kubernetes-deployment-model--operations) Kubernetes Deployment Model & Operations
+17. [§17](#17-performance-targets--benchmark-plan) Performance Targets & Benchmark Plan
 18. [Threat Model of Trishula Itself](#18-threat-model-of-trishula-itself)
 19. [Reference Implementation](#19-reference-implementation)
-20. [Risks, Mitigations & Phasing](#20-risks-mitigations--phasing)
-21. [Success Metrics & Adoption Gates](#21-success-metrics--adoption-gates)
+20. [§20](#20-risks-mitigations--phasing) Risks, Mitigations & Phasing
+21. [§21](#21-success-metrics--adoption-gates) Success Metrics & Adoption Gates
 - [Appendix A: Roadmap Notes](#appendix-a-roadmap-notes)
 - [Appendix B: Glossary](#appendix-b-glossary)
 - [Appendix C: Sources](#appendix-c-sources)
 - [Appendix D: Research Dossiers](#appendix-d-research-dossiers)
 - [Appendix E: Similar Projects — and Why We Did Not Build On Them](#appendix-e-similar-projects--and-why-we-did-not-build-on-them)
 
-<div class="pagebreak"></div>
-
 ## 0. Front Page — What is Trishula?
 
 > **Trishula is an open-source, eBPF-accelerated web application and API security layer for Kubernetes.** Ordinary application developers — not WAF specialists — understand it, configure it and trust it. A per-node eBPF shield stops floods and repeat offenders in the kernel. A userspace engine carries deep HTTP inspection: positive security, bot detection and rate-based temporary bans. A Kubernetes operator turns policy into compiled, signed bundles. The design is **Kubernetes-native by construction**: policy is YAML in Git. Enforcement is Gateway API + eBPF. Every verdict is an OpenTelemetry record.
-
-<div class="frontcard" markdown="1">
 
 | | |
 |---|---|
@@ -60,8 +78,6 @@
 | **What developers write** | CEL expressions over a structured request view, OpenAPI specs, plain YAML CRDs — `kubectl apply` is the whole deployment story |
 | **What it teaches** | HTTP/1.1, HTTP/2, HTTP/3, TLS, QUIC, post-quantum readiness — via the docs, labs, and a curriculum (§7), SPIFFE/SPIRE-style: the product is a teacher |
 | **License** | MIT · full OSS dependency chain · no data-plane exit to third parties |
-
-</div>
 
 ```mermaid
 flowchart LR
@@ -79,8 +95,6 @@ flowchart LR
 
 **The thesis in one line:** security wins when developers adopt it. mTLS, OAuth/OIDC, vaults and ACLs reached ubiquity through developer-friendly tooling. **The WAF is the last major security control without developer adoption.** Trishula's purpose brings it into developer practice.
 
-<div class="pagebreak"></div>
-
 ## 1. Executive Summary
 
 **The one-liner.** Trishula is an open-source, eBPF-accelerated web application firewall and API-protection system for Kubernetes. The product pairs a per-node eBPF shield with a userspace deep-inspection engine. CRDs govern both. The engine sits *inline* between a Gateway-API data plane and the application/model pools behind it. **NGINX Gateway Fabric (NGF) is the reference deployment** — open source end to end (Apache-2.0, NGINX core). Every integration claim is validated against NGF before any other gateway carries a claim.
@@ -90,7 +104,9 @@ flowchart LR
 **What it is.** Three independently deployable planes:
 
 - **eBPF data plane (`trishula-shield`, DaemonSet).** XDP sits at the NIC: L3/L4 ACLs, SYN/UDP flood tarpits, verdict-cache and **ban-table** enforcement. TC runs on node/pod veths: flow classification, plaintext fast-path probes, ring-buffer events. A repeat-offender drop in the kernel costs ~1 µs, not a userspace round-trip.
+
 - **Userspace policy engine (`trishula-engine`, Deployment).** The engine reconstructs HTTP/1.1, HTTP/2 and gRPC, and inspects deeply. The stack: OWASP CRS evaluation via an embedded Coraza-compatible evaluator (SecLang import). A compiled Vectorscan matcher covers the hot regex subset. A **CEL-based DSL** evaluates a structured request view. OpenAPI 3.1 carries **positive-security** validation. **Bot detection** reads TLS, header and behavior fingerprints. **Per-route rate limiting** and **score-based temporary bans** complete the ladder. An in-band ML scorer carries an async escalation path.
+
 - **Control plane (`trishula-operator`).** The operator compiles the CRDs (`WAFPolicy` / `APISpec` / `RuleSet` / `BanPolicy`) into signed bundles. The bundle carries evaluator chains, matcher DBs, kernel map values and ban thresholds. Hot reload stays within 5 s. Canary rollout, shadow mode for every change and OTel-native telemetry complete the plane. A CRS differential parity gate runs in CI.
 
 **The reference deployment.** NGF terminates TLS at a Gateway API `Gateway`. The AI/app routes steer to Trishula as a plain `backendRef` Service. Any conformant implementation (Envoy Gateway, kgateway, Istio, Traefik) supports the same shape. Trishula is deliberately gateway-agnostic. NGF is where the contract is *proved*, not where it ends. A v2 ext_proc mode (§10.4) removes the proxy hop entirely on ext_proc-capable gateways.
@@ -106,8 +122,6 @@ flowchart LR
 7. OTel on every surface.
 8. A teach-the-web curriculum as a product feature.
 
-<div class="pagebreak"></div>
-
 ## 2. Positioning & Non-Negotiable Design Decisions
 
 These are **design decisions, not preferences**. The decisions keep the project from the failure shape of every prior OSS WAF: a second nginx with rules.
@@ -122,6 +136,7 @@ These are **design decisions, not preferences**. The decisions keep the project 
 
 - Trishula participates in traffic **as a Gateway API citizen**: a Deployment-backed Service behind `HTTPRoute` `backendRefs`. The Service is readiness-gated, health-checked, weight-steerable and canary-able. The gateway owns traffic strategy. The WAF never selects endpoints.
 - **Reference deployment = NGINX Gateway Fabric.** Why NGF: NGINX-org maintenance and the Apache-2.0 licence. The NGINX data plane (h2c upstreams, TLS termination, BackendTLSPolicy) is production-hardened. NGF 2.x is Gateway-API-conformant and integrates the Gateway API Inference Extension (EPP) for model-pool steering. Its security-stage documentation patterns (WAF policy attachment, guardrails processing) are the reference shapes for a Gateway. Trishula requires *nothing beyond conformant Gateway API* for its core contract. NGF is where it is proven first, with reproducible lab manifests.
+
 - Portability is insurance, not marketing. §10.5 records the honest delta per gateway class. No commercial component sits anywhere in the reference path.
 
 ### 2.3 D3 — Detection depth: more than negative signatures
@@ -146,8 +161,11 @@ flowchart TB
 *Figure 1. Seven families; every compile artifact comes from one `RuleSet`/`WAFPolicy` source.*
 
 - **Positive security (S4):** `APISpec` CRs wrap OpenAPI 3.1 docs per (host, route-prefix). Enforce mode blocks unmatched paths, methods and param shapes. Learn mode builds specs from live traffic and emits drift diffs. Commercial WAFs sell this as their top-tier feature; OSS rarely ships it.
+
 - **Bot detection (S5):** JA4/JA4S TLS fingerprints (terminated-hop observed), header order/entropy fingerprinting and per-source behavioral windows. The evidence feeds per-request verdicts and the ban engine's score.
+
 - **Rate + temporary bans (S6, §13):** the fail2ban-for-HTTP algorithm of §13: specified, auditable, kernel-enforced for repeat offenders.
+
 - **ML (S7):** local ONNX scorers run inline; heavier judges run async. Verdicts go to cache and backfill to the kernel maps (§14).
 
 ### 2.4 D4 — Developer-first: the adoptability thesis
@@ -168,13 +186,13 @@ Every change (rule, schema, ML model, ban threshold) ships **shadow-first**. Pro
 
 ### 2.6 D6 — One project, several repos: `trishula-dev` + `trishula.dev`
 
-- **Footprint, registered 2026-10:** GitHub org [`trishula-dev`](https://github.com/trishula-dev) and the domain [`trishula.dev`](https://trishula.dev) (apex parked at the registrar; the site comes later). The upstream handle `trishula` is a dormant 2013 user account and stays unavailable. `trishula-dev` is the permanent org name. No aliasing layer is planned around it.
+- **Footprint, registered 2026-10:** GitHub org [trishula-dev](https://github.com/trishula-dev) and the domain [trishula.dev](https://trishula.dev) (apex parked at the registrar; the site comes later). The upstream handle `trishula` is a dormant 2013 user account and stays unavailable. `trishula-dev` is the permanent org name. No aliasing layer is planned around it.
+
 - **Repo split:** one product repo (`trishula-dev/trishula` — code, charts, operator, engine, shield), one site repo (`trishula-dev/website` — trishula.dev itself, static). The rules live with the code, not on a fork: `rules/cel/` and `rules/exclusions/` ship inside the product repo. Every shipped rule is parity-tested and versioned with the engine that runs it. Curated community sets move into a separate `trishula-dev/rules` repo once external contributions justify the review surface (Phase 1+ decision).
+
 - **Domain usage stays plain:** `trishula.dev` = docs/site + project links. No domain dependencies exist in the enforcement path. The API group is `trishula.security` (CRDs). Images publish from `ghcr.io/trishula-dev/*`.
 The label/annotation prefixes are `trishula.shield/*` and `trishula.security/*`. Those strings are contractual for downstream consumers and stay unrenamed, whatever the org handle reads.
 - **The split is the governance boundary:** the product repo stays Apache-2.0 code-only (clean provenance for packagers and adopters). `website` and `rules` evolve as separate review surfaces on their own cadence.
-
-<div class="pagebreak"></div>
 
 ## 3. Problem Statement
 
@@ -183,7 +201,9 @@ The label/annotation prefixes are `trishula.shield/*` and `trishula.security/*`.
 The estate is a Kubernetes cluster in front of a Gateway-API data plane. The reference deployment runs NGINX Gateway Fabric:
 
 - **Gateway tier:** TLS termination, Gateway/HTTPRoute routing and L4 edge protections: conformant Gateway API, h2c backends, weighted steering. AI estates add the Inference Extension (EPP) for model pools.
+
 - **Application/model pools:** Deployments on HTTP/1.1, HTTP/2 or gRPC. The rising share: AI inference — long bodies, SSE streaming and token-metered endpoints.
+
 - **A WAF, somewhere, awkwardly:** an external proxy hop with its own config language, or — in the majority of dev-run clusters — *nothing*. Adoption cost is the reason.
 
 ### 3.2 The problems, enumerated
@@ -202,18 +222,22 @@ The estate is a Kubernetes cluster in front of a Gateway-API data plane. The ref
 ### 3.3 Why not: the alternatives, honestly
 
 - **Keep an nginx WAF tier (ModSecurity/NGINX-App-Protect-class):** the choice keeps every problem P1–P8. The shape *is* P1/P2/P3/P7. ModSecurity is EOL on nginx[316], and libModSecurity is maintenance-mode[318]. The OSS community's CRS work now lives on Coraza[310].
+
 - **Cilium + Envoy:** excellent network policy and L7 authorization, yet not a WAF. The gaps: no CRS evaluation, no body-inspection depth, no security rule lifecycle, no bot defense. Its *architecture* (eBPF fast path + userspace L7 proxy) is the validated pattern this design borrows deliberately[85][87].
+
 - **Commercial cloud WAAP:** it contradicts the open-source, self-hosted requirement and sends payloads to third-party inspection. Model payloads and regulated estates rule it out.
+
 - **open-appsec / SafeLine (OSS ML WAFs):** the closest prior art in detection depth. open-appsec couples a learning engine to enforcement with CRDs; the coupling runs through a central management plane[192][239]. SafeLine is container-nginx-shaped with a semantic pipeline[196][205]. Neither carries an eBPF data plane. Neither speaks the Gateway-API steering contract. Neither treats developer comprehensibility as a design target.
+
 - **fail2ban / CrowdSec style remediation:** the right *idea* (score behavior, ban temporarily, unban on evidence) at the wrong altitude. The wrong parts: log parsing after the fact; filesystem state; no HTTP-native view; no per-route policy. Trishula moves the idea onto the wire, into the kernel and into the CRD (§13)[145][147].
 
 ### 3.4 Target users
 
 - **Application/ML platform developers (primary):** declare `APISpec` and `RateLimit/BanPolicy` for their own endpoints. They read verdict traces and write CEL rules. A WAF dialect never enters their learning path.
-- **Security engineering:** curates `RuleSet` CRs and CRS bundles. They tune in shadow mode and own detection quality telemetry.
-- **Platform/SRE:** steer routes via Gateway API. They scale Trishula like any Deployment/DaemonSet and own the SLO dashboards.
 
-<div class="pagebreak"></div>
+- **Security engineering:** curates `RuleSet` CRs and CRS bundles. They tune in shadow mode and own detection quality telemetry.
+
+- **Platform/SRE:** steer routes via Gateway API. They scale Trishula like any Deployment/DaemonSet and own the SLO dashboards.
 
 ## 4. Related Work — What We Borrow, Where We Sit
 
@@ -234,10 +258,15 @@ The estate is a Kubernetes cluster in front of a Gateway-API data plane. The ref
 ### 4.2 What Trishula borrows (with credit)
 
 - **Coraza as embedded reference evaluator** — composition, not fork: CRS/SecLang parity, WASM extension surface[134][154][312].
+
 - **open-appsec's learning→enforcement lifecycle** — minus the central-plane coupling[239][237][241].
+
 - **SafeLine's staged semantic pipeline** — cheap deterministic stages precede the heavier semantic analysis[205][206].
+
 - **CrowdSec's community telemetry idea** — crowd blocklists as one ban-engine input; optional and CRD-gated[145][170].
+
 - **fail2ban's temporal ban UX** — score thresholds, temporary bans with expiry, an evidence-driven release. The re-spec for HTTP runs at wire speed (§13)[147].
+
 - **Cilium's two-plane architecture** — eBPF fast path + userspace L7 proxy, the proven decomposition for exactly this problem[85][87].
 
 ### 4.3 Where Trishula sits — the gap no project occupies today
@@ -258,13 +287,16 @@ quadrantChart
 *Figure 2. Trishula's target quadrant: a full detection stack, Kubernetes-native, with kernel altitude — and authored by developers.*
 
 - **One rule surface compiles across altitudes** (kernel maps + matcher DB + evaluator chain). No OSS WAF in the survey compiles this way.
-- **eBPF shield as a first-class component** (shield-only mode hardens paths that keep their existing gateway).
-- **Gateway-API-native steering posture** proved on NGF.
-- **CRS differential parity as a product feature** (§11.8) — more than a test add-on.
-- **Specified temporary-ban algorithm with kernel enforcement** (§13) — absent from every project in the table above.
-- **A teach-the-web curriculum as a deliverable** (§7) — SPIFFE/SPIRE treat docs as the product. No WAF carries the same choice.
 
-<div class="pagebreak"></div>
+- **eBPF shield as a first-class component** (shield-only mode hardens paths that keep their existing gateway).
+
+- **Gateway-API-native steering posture** proved on NGF.
+
+- **CRS differential parity as a product feature** (§11.8) — more than a test add-on.
+
+- **Specified temporary-ban algorithm with kernel enforcement** (§13) — absent from every project in the table above.
+
+- **A teach-the-web curriculum as a deliverable** (§7) — SPIFFE/SPIRE treat docs as the product. No WAF carries the same choice.
 
 ## 5. Developer Experience Charter
 
@@ -300,8 +332,6 @@ flowchart LR
 
 *Figure 3. The adopter lifecycle the deliverables must support. No step requires a step away from Kubernetes or Git.*
 
-<div class="pagebreak"></div>
-
 ## 6. Vision, Goals, Non-Goals
 
 ### 6.1 Vision statement
@@ -333,10 +363,15 @@ flowchart LR
 ### 6.3 Non-goals (the standing boundary)
 
 - **Not a TLS-terminating edge LB** for the whole estate. The gateway owns termination in the reference deployment. Trishula inspects post-termination plaintext. Re-encrypting engine termination is a secondary, feature-gated mode. TR-203 L3 carries the mode one opt-in leg: the `--h3-listen` flag opens the inline QUIC/HTTP-3 listener (`cmd/engine/h3.go`; [ADR-0006](adr/0006-inline-h3-listener.md)). The TLS listener's responses advertise the h3 alternative (Alt-Svc). The engine's own ladder serves the h3 requests. The flag off binds no UDP socket; the gateway-terminated path stays the default.
+
 - **Not a Service Mesh:** east-west policy stays with Cilium/network policy. Trishula is the north-south + steering-path control.
+
 - **Not a secrets/token vault:** Trishula references JWT claims. It stores nothing and tokenizes nothing.
+
 - **Not an endpoint-picker:** model-pool selection stays with EPP/the gateway. Trishula proxies transparently and preserves the downstream selection.
+
 - **No Windows or other-kernel ports**: Linux (XDP/TC) only.
+
 - **No vendor console:** there is no Trishula web UI. The CRDs, kubectl and the team's OTel backend are the console. (A read-only dashboard preset ships as Grafana JSON, not an app.)
 
 ### 6.4 Success metrics
@@ -353,8 +388,6 @@ flowchart LR
 | Time-to-enforce a `RuleSet` CR (apply → all replicas) | ≤ 5 s |
 | DX1 lab time (clone → first enforced rule) | ≤ 15 min |
 | Docs examples CI-executed | 100% |
-
-<div class="pagebreak"></div>
 
 ## 7. Teach-the-Web Curriculum
 
@@ -387,8 +420,11 @@ flowchart TB
 ### 7.2 The pedagogy rules
 
 - **Every rule example cites its wire anatomy.** A CEL rule on `request.headers` links to the header explainers (Module 1). The JA4 bot rule links to Module 2's fingerprint lesson. §13's ladder links to the rate-algorithm lesson (token bucket vs sliding window vs EWMA, with interactive fixtures).
+
 - **Labs are runnable clusters,** not diagrams: `lab/` scenarios replay recorded adversarial traffic against live kind clusters. Module 1's smuggling corpus is exactly the differential corpus of §11.8.
+
 - **The product is the textbook:** when a rule fires, the verdict's trace metadata carries the module link (DX5). Developers read at incident time.
+
 - **PQC is in scope from the first docs cut** (not the data plane). Hybrid key exchange is the curriculum core: X25519+ML-KEM, the IETF-standardized hybrid group [324]. Hybrid groups are default in mainstream TLS stacks and browsers since 2024–2025 [325][326]. The curriculum locates the PQ effects on Trishula's path. The gateway terminates TLS. PQ therefore affects the gateway↔client handshake and the gateway↔pool mTLS choices. Appendix A carries the 4 product-side notes. It covers the ClientHello size effect and the JA4 fingerprint effect [327][328]. It states what a WAF must not assume about payload visibility under future TLS revisions.
 
 ### 7.3 Deliverables
@@ -399,8 +435,6 @@ flowchart TB
 | Kind-lab scenarios + fixtures | `lab/` | modules 1, 3, 4 at rc3; modules 2, 5 shipped at the rc3 cut |
 | "Why did this block?" verdict-doc generator | engine | ties verdict → rule → module (§15 OTel schema) |
 | Adversarial corpora as teaching sets | `test/corpora/` | shared with §11.8 differential suite |
-
-<div class="pagebreak"></div>
 
 ## 8. Architecture
 
@@ -444,7 +478,9 @@ flowchart TB
 The stack is deliberately three deployables:
 
 - **`trishula-shield` (DaemonSet, privileged).** The loader attaches XDP at the NIC and TC at node/pod interfaces (cilium/ebpf Go loader, CO-RE objects). It owns the XDP shield, the flow classification and the kernel ban-table enforcement. It exports the ring buffer and the pinned maps. Host-network pod; no service port.
+
 - **`trishula-engine` (Deployment + Service).** The userspace WAF terminates the steering hop (plaintext from the gateway, or TLS it re-terminates itself in secondary mode). It runs the full ladder (§2.3) and forwards upstream. The engine scales horizontally. Each replica drains the co-located shield's ring buffer (verdicts are content-keyed, so per-flow affinity is unnecessary).
+
 - **`trishula-operator` (Deployment).** The operator watches CRDs. It compiles bundles (userspace + matcher DB + map values + ban thresholds) and rolls them via a signed bundle API. It manages the shadow lifecycle, exposes status Conditions and records FP-feedback telemetry.
 
 ### 8.3 Request lifecycle
@@ -493,8 +529,11 @@ sequenceDiagram
 ### 8.4 Operating modes
 
 - **Shield-only:** DaemonSet alone. XDP/TC drops obvious L3/L4 abuse, enforces ban tables and (on plaintext legs) trivial L7 patterns. Zero proxy hop; drop-in hardening of any existing path.
+
 - **Inline (the default for protected routes):** full engine as the steered backend.
+
 - **Shadow-parallel:** the engine evaluates but forwards regardless. The mode serves CRS-import confidence, rule canary, ML learning and migration diffs.
+
 - **Schema-learn:** APISpec discovery reads live traffic and emits OpenAPI diffs for review.
 
 ### 8.5 Deployment topologies
@@ -514,8 +553,6 @@ flowchart LR
 
 Two placements are supported. **(a) A dedicated engine tier:** a Deployment sized for throughput; the shipped shape (2026.01) — the simplest scaling story. **(b) A fused sidecar:** the engine container sits beside the gateway container on a shared loopback. That shape carries the lowest latency; the coupling is higher — a later option. The shield DaemonSet stays mandatory in both.
 
-<div class="pagebreak"></div>
-
 ## 9. eBPF Packet Path
 
 ### 9.1 The two-plane principle
@@ -523,6 +560,7 @@ Two placements are supported. **(a) A dedicated engine tier:** a Deployment size
 Trishula splits inspection by altitude:
 
 - **Kernel plane (shield):** bounded, allocation-free, verdict-cheap. The duties: L3/L4 ACLs, flood defense, ban-table enforcement and flow classification. The kernel classifies most packets and counts them — O(1) work per packet.[60][61]
+
 - **Userspace plane (engine):** unbounded parsing freedom (loops, allocs, regex, ML) in a language with an ecosystem (Go). Full HTTP reconstruction happens exactly once per request, here.
 
 The kernel deliberately does **not** do: full header walks, body parsing, regex evaluation or TLS. Two hard reasons stand. One is verifier boundedness. Loops and instruction budgets make real L7 parsing a tail-call-bound project, with poor maintenance economics[96][106][105]. The other is ciphertext: at the NIC, HTTP(S) payloads are TLS records[79]; decisive L7 analysis requires post-termination plaintext. The kernel plane still gets a *bounded* plaintext fast path (§9.6) on legs where the gateway already terminated TLS. It never depends on that path.
@@ -593,8 +631,6 @@ It cannot: walk all headers, parse bodies or evaluate regex. Every fast-path cla
 - cilium/ebpf carries loading, pinning and map I/O. bpf2go produces the compile-in-CI objects. `testenv` serves the verifier tests.[94][126]
 - The ring reader uses a per-CPU batching channel → transaction assembler. The reader is zero-copy where the API allows. The hot path targets one allocation per request.
 
-<div class="pagebreak"></div>
-
 ### 9.9 Socket-plane L7 fast path (a tracked evaluation; no runtime commitment)
 
 The §9.1 principle keeps the kernel decision-free. A complementary option sits one altitude up, at the socket layer. The stack already provides TCP reassembly and TLS record processing there. This subsection specifies the tracked evaluation: what could be offloaded, under which constraints, and what it must not claim.
@@ -616,8 +652,6 @@ The altitude fails open: a parse error or match miss forwards. The fast path nev
 
 **Recorded constraints:** HTTP/2 requires the header cache disabled on workloads (Huffman coding stays supported). Stream-wise routing falls to the control plane for frames with ambiguous destinations (push promise, connection-wide flow control). Non-event-driven policies (health checking) and body (de)compression classes route to the slow path. HTTP/3/QUIC is out of scope with the rest of the kernel-side HTTP/3 posture (Appendix A).
 - All kernel numbers (Mpps-class XDP figures, ring latency) trace to Appendix C sources[60][75][72]. Internal budgets are targets pending PoC validation (§17).
-
-<div class="pagebreak"></div>
 
 ## 10. Gateway API Integration — NGF Reference Deployment
 
@@ -718,6 +752,7 @@ The lab proves, in CI:
 
 - - **ext_proc stage (a later stage, feature-gated).** Envoy-family data planes (Envoy Gateway, kgateway, Istio/agentgateway) can call out to an `ExternalProcessor`. Trishula's engine ships this server from the rc1 cut (one binary, two transports). Ext_proc-capable estates get a **no-proxy-hop** WAF. Headers and body chunks arrive as gRPC frames. The engine returns verdicts, mutations and dynamic metadata. The wire contract is fixed in §19.1. NGF is the reference for Variant A today; ext_proc estates activate the stage with the same engine.
 - **Inference Extension ordering.** On EPP-enabled routes (NGF + GIE integration[39]), EPP runs as its own ext_proc stage alongside the gateway. Filter ordering (WAF before/after EPP) is per-gateway configuration, not standardized upstream. The operator emits the ordering snippet per estate. WAF-before-EPP spares EPP/queue capacity on block. EPP-before-WAF lets verdicts use the selected-endpoint class as policy input. Either order leaves `x-gateway-destination-endpoint` metadata untouched: the WAF writes its own metadata namespace, never EPP's (§19 ext_proc contract).
+
 - **What this does not change:** steering stays gateway-owned in every variant. Trishula never selects endpoints.
 
 ### 10.5 Portability honest-delta
@@ -735,8 +770,6 @@ The lab proves, in CI:
 | Shield (eBPF) | ✅ gateway-independent | ✅ gateway-independent | none — the shield does not care who fronts the cluster |
 
 The shield carries the portability guarantee. Even where a gateway feature is missing, the kernel-level protections (ACL, floods and bans) hold. Portability is insurance, not parity. NGF is the recommended primary.
-
-<div class="pagebreak"></div>
 
 ## 11. Rule Engine & Detection
 
@@ -768,6 +801,7 @@ flowchart TB
 
 - CRS 4.x imports as first-class `RuleSet.source` (bundle + paranoia level + per-rule exclusions)[139][141][178]. SecLang is parsed by the embedded Coraza-compatible evaluator[134][133]. CRS parity is a CI gate (§11.8), not an aspiration.
 - **Why borrow CRS:** community-maintained coverage for OWASP Top-10 classes, PL1–PL4 tuning vocabulary and the exclusion ecosystem[142][171][132]. A new corpus costs years of FP tuning.[322]
+
 - **Why CRS alone is not enough:** regex-chain cost at scale; no positive-security model; no bot/rate/ban semantics; no AI-class detection.[161][162][159] CRS gives coverage; Trishula adds speed (§11.4) and altitude (§2.3).
 
 ### 11.3 CEL as the developer-facing DSL
@@ -827,7 +861,9 @@ The hot subset of CRS + CEL patterns compiles to a Vectorscan DB (open-source Hy
 
 - `APISpec` CRs wrap OpenAPI 3.1 docs per (host, route-prefix): paths, methods, params, content types, field types, lengths, required and patterns → compiled validators.
 - **Enforce mode:** unmatched path/method → block. Param type/length/pattern violations → block, with per-field telemetry. This is the tier-1 commercial feature the OSS field rarely ships (§4).
+
 - **Learn mode:** discovery builds the spec from live traffic (endpoint extraction, JSON-schema inference with cardinality tracking) and emits CR diffs. Drift telemetry reads the live-vs-reviewed divergence.
+
 - Response-side schema (exfiltration guard): a later slice (§20.2).
 
 ### 11.6 Bot detection & anti-automation (detail in §12)
@@ -889,8 +925,6 @@ Rules of the gate: parity is **verdict-level** (block/log/pass + matched-rule ID
 
 The corpus carries a third class on top: the **illegal-request rows**. The h1 framing-ambiguity rows ([TR-44](https://github.com/trishula-dev/trishula/blob/main/docs/design/protocol-conformance-verdict.md), TR-199) pin the parse-path reject cells. The cell: the `block` verdict with the parse-layer rule id. A CRS-only walk on the same shapes matches no attack rule. The gate README records the measured delta.
 
-<div class="pagebreak"></div>
-
 ## 12. Bot Defense & Anti-Automation
 
 Bots are the workload most HTTP security products still treat as a signature problem. Trishula treats bot detection as **evidence accumulation**. Three independent detector families contribute to one per-source bot score. The score feeds both inline decisions and the ban engine (§13).
@@ -923,16 +957,17 @@ flowchart LR
 *Figure 12. Bot evidence flows two ways: inline per-request, and into the temporal score that causes bans.*
 
 - **Known-good bots** are an allowlist CR (`BotPolicy.knownGood`): documented crawlers, gateway health checkers and monitoring agents. Reverse-DNS validation runs on the termination-hop identity. A misclassified-good bot is a tuning case, not a detection failure.
+
 - **Challenges:** the `challenge` verdict action carries the evidence-of-work mechanism. The mechanism: evidence-of-work via a signed redirect token. No third-party CAPTCHA sits in the default path. A pluggable interface serves estates that run one. TR-197 ships the token: the engine answers a challenge verdict with `429` + `Location: /__trishula/challenge?token=...` (HMAC-SHA256, 10-minute TTL, one-shot replay window; `-challenge-key` configures the key). Without a key the verdict refuses deterministically (`403`, no redirect). The redirect hop issues the evidence-of-work probe: a signed problem (a salt, a 16-bit difficulty), and the solve consumes both tokens once and mints the pass grant (a short-lived cookie bound to the original path). The pass-granted request forwards; the missing or failed proof bounces (`403`) and the bot stays on the wall.
+
 - **Credential-stuffing posture:** auth-endpoint failure ratios + JA4 heterogeneity + velocity → high ban scores. The posture pairs with per-identity (not just per-IP) rate keys where JWT identity exists (§13.2).
+
 - **UDP/QUIC ban path (TR-203 L1, issues #242/#264):** one live ban row drops the UDP flows at [both kernel hooks](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#92-hook-inventory). The row stays live while its `until_ts` runs ahead of the kernel clock. Expiry re-opens the walk ([the ban algorithm](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#133-the-ban-algorithm-scoredwindowban-v1-specified)). The stale row waits for the LRU's lazy eviction. The counters count and drop; they never issue a ban ([the rate accounting](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#95-kernel-side-rate-accounting-feed-13)).
 
 ### 12.3 Honest limits
 
 - TLS fingerprints are forgeable by a sufficiently motivated attacker (JA4 is a *cost raiser*, not identity);[F-ja4] header fingerprints are similar. The design assumes adversaries adapt. Behavioral windows (§13) are the harder-to-forge altitude: the kernel observes them, not the client.
 - Fingerprint DBs decay (library versions change). The known-tooling matching set ships as a digest-pinned feed CR on the §16.6 upgrade cadence, with nothing hardcoded.
-
-<div class="pagebreak"></div>
 
 ## 13. Rate Limiting, DoS Response & Temporary Bans
 
@@ -993,7 +1028,9 @@ Prefix escalation (opt-in, default off — collateral risk gate):
 ```
 
 - **Shadow-first:** `BanPolicy.mode: shadow` computes and emits ban verdicts (metrics + logs) *without* enforcement. Promotion requires the same evidence gate as rules (§11.7). A new route reaches its thresholds by evidence this way — no folklore tuning.
+
 - **Kernel enforcement:** the engine writes ACTIVE_BAN keys into the `ban_table` map (§9.3) with expiry. XDP/TC drops (or tarpits) without consulting userspace. Ban writes use the always-sampled high-priority ring class (§9.4).
+
 - **What the kernel never does:** compute scores. The kernel is decision-free (verifier-bounded, audit-simple). It applies the verdicts it is given (§9.5).
 
 ### 13.4 Enforcement actions by tier
@@ -1042,14 +1079,18 @@ flowchart TB
 *Figure 13. Division of labor: kernel counts and drops; the engine scores and decides; bans feed back kernel-ward.*
 
 - **L3/L4 floods:** shield XDP tarpits/drops (§9.2), independent of any policy. This layer is fail-open by default (a shield bug must never take the path down; R7 discipline).
-- **Slowloris / connection starvation:** kernel `flow_stats` (§9.3) feed the engine's behavioral detector; the response is L2/L3 bans. A per-request WAF cannot win this fight; a flow-keyed kernel counter can. The shield runner (`cmd/shield`, TR-195) runs the loop automatically: it reads the pinned `flow_stats` map, forms the detector cues with the measured signature (`segs`, `bytes/seg`, `span`), ingests them into the scored ban path, and the enforcer publishes the kernel row. The evidence record carries the signature verbatim (`osig`): the map read, the evidence row and the kernel drop state the same measured facts. The verdict pipeline emits each would-ban as a `trishula.ban` record, and the `verdict.dos.sig` attribute carries the signature when the verdict holds one. The engine host emits one verdict signal set per consult decision; a ban decision carries `verdict.dos.sig` with class `manual-rule` and the request path.
-- **Manual bans:** operators can ban directly with a CEL rule (`action: ban` in a rule pack); the engine emits the would-ban record on the same enforcer path (TR-195, issue #237).
-- **h2 rapid-reset shape:** the engine parser reads stream-reset ratios per connection; it flags `tx.flags.rapid_reset_suspect`, scores and (on confirmation) bans.
-- **Application-layer request floods:** §13.2 algorithms + ban ladder.
-- **Oversized/malformed:** parser admission caps (§17.2 R-DoS) — 413/400 fast, with no resource asymmetry.
-- **What Trishula does not do:** BGP-grade volumetric defense belongs to the upstream network. Trishula makes the *first node in the cluster* a bad target, not the last hop on the public internet.
 
-<div class="pagebreak"></div>
+- **Slowloris / connection starvation:** kernel `flow_stats` (§9.3) feed the engine's behavioral detector; the response is L2/L3 bans. A per-request WAF cannot win this fight; a flow-keyed kernel counter can. The shield runner (`cmd/shield`, TR-195) runs the loop automatically: it reads the pinned `flow_stats` map, forms the detector cues with the measured signature (`segs`, `bytes/seg`, `span`), ingests them into the scored ban path, and the enforcer publishes the kernel row. The evidence record carries the signature verbatim (`osig`): the map read, the evidence row and the kernel drop state the same measured facts. The verdict pipeline emits each would-ban as a `trishula.ban` record, and the `verdict.dos.sig` attribute carries the signature when the verdict holds one. The engine host emits one verdict signal set per consult decision; a ban decision carries `verdict.dos.sig` with class `manual-rule` and the request path.
+
+- **Manual bans:** operators can ban directly with a CEL rule (`action: ban` in a rule pack); the engine emits the would-ban record on the same enforcer path (TR-195, issue #237).
+
+- **h2 rapid-reset shape:** the engine parser reads stream-reset ratios per connection; it flags `tx.flags.rapid_reset_suspect`, scores and (on confirmation) bans.
+
+- **Application-layer request floods:** §13.2 algorithms + ban ladder.
+
+- **Oversized/malformed:** parser admission caps (§17.2 R-DoS) — 413/400 fast, with no resource asymmetry.
+
+- **What Trishula does not do:** BGP-grade volumetric defense belongs to the upstream network. Trishula makes the *first node in the cluster* a bad target, not the last hop on the public internet.
 
 ## 14. ML & Adaptive Detection
 
@@ -1117,8 +1158,6 @@ eBPF contributes cheap counters (§9.5); the parser contributes payload features
   - verdict-cache TTLs bound probe reuse
   - every ML verdict carries an explanation for the analyst loop
 - Honest limit: no ML WAF is evasion-proof. The goal is a higher attacker cost, not purity.[211]
-
-<div class="pagebreak"></div>
 
 ## 15. OpenTelemetry Observability
 
@@ -1191,9 +1230,8 @@ The shield exports this counter set:
 
 - Grafana pack ships in-repo per route class: verdict mix, altitude hit-rates (kernel/matcher/evaluator/ML), FP-rate deltas, ring health, ban ledger trends, ML latencies.
 - **Redaction is structural:** the pipeline drops header values carrying `authorization`/`cookie`/token-shaped strings at emission. Body bytes never leave the pod unless `debugBodies: true` is set per policy *and* a purpose annotation is present. OTel exporters get the same treatment as logs (§18.3).
-- Every record's schema is versioned (`trishula.verdict.v1`). Backends pin and migrate explicitly; scraping and guessing are out.
 
-<div class="pagebreak"></div>
+- Every record's schema is versioned (`trishula.verdict.v1`). Backends pin and migrate explicitly; scraping and guessing are out.
 
 ## 16. Kubernetes Deployment Model & Operations
 
@@ -1210,16 +1248,23 @@ The shield exports this counter set:
 ### 16.2 CRD set (v1alpha1)
 
 - **`WAFPolicy`** (namespaced): binds rule bundles + modes + failure semantics to route classes (HTTPRoute annotation or `routeSelectors`).
+
 - **`APISpec`** (namespaced): OpenAPI 3.1 positive-security doc + learn/enforce/report mode.
+
 - **`RuleSet`** (namespaced): CRS bundle refs (version, paranoia, exclusions), CEL custom rules, compiled-pattern subsets.
+
 - **`BanPolicy`** (namespaced): §13 constants (findtime/threshold/bantime/k/max_bantime), weight table, rate-algorithm selection per route class, mode (shadow/enforce), prefix-escalation gate.
+
 - **`MLModel`** (namespaced): digest-pinned model refs, tier, mode, thresholds.
+
 - Status model mirrors Gateway API conventions: `Accepted` / `Programmed` / `ResolvedRefs` Conditions per CR.
 
 ### 16.3 Scheduling and resource shapes
 
 - **Shield:** one pinned core per NIC RX queue in flood-heavy deployments. The measured envelopes: XDP drop ≈10.1 Mpps/core (Cloudflare). The FAST'18 paper records 24 Mpps/core and 41.6 ns/packet. AF_XDP zero-copy reaches 21.5 Mpps on i40e[60][75][72]. CPU-manager static policy applies. No hugepages required. Memory ≈ 256Mi base + 16Mi ring.
+
 - **Engine:** 4 vCPU / 4Gi baseline replica (§17 targets). The HPA signal is p99 inspect-latency + ring depth. Topology-spread is required. nodeAffinity sits on `trishula.shield/ready=true`, plus a BPFFS hostPath for pinned-map access (§9.3).
+
 - **Multitenancy:** per-namespace CRDs and per-tenant compiled bundles. Tenants demanding isolation get route-class-partitioned replicas (R8).
 
 ### 16.4 Lifecycle of Trishula in a cluster
@@ -1235,14 +1280,19 @@ The shield exports this counter set:
 ### 16.5 Versioning, upgrades, rollback
 
 - **Independent semver lines:** operator, shield, engine, bundles. Skew tolerance: N and N−1. Bundles stay forward-compatible for one engine minor; beyond that, the `BundleIncompatible` Condition fires.
+
 - **Kernel compatibility is a shield-release property:** CI verifies the kernel range declared per release. Out-of-range nodes take generic-XDP/TC degraded mode plus a loud Condition.
+
 - **Upgrade order:** the operator goes first (no-ops on old CRs). The shield rolls via an atomic per-hook
   swap; a verifier failure keeps the old shield enforcing and marks the node degraded. The engine bundle
   double-buffers (drain→swap→rejoin — ordinary backend churn from the gateway's view). The reference
   topology turns NGF's endpoint tracking into canary infrastructure at no extra cost.
 - **Rollback = a CRD-recorded re-pin of the previous bundle hash, with no hand edits.**
+
 - **CRD evolution:** conversion webhooks; two-minor deprecation windows; CRD diff in release notes.
+
 - **CRS baseline:** the engine pins the CRS 4.25.x LTS baseline. `RuleSet` CRs override it. Baseline bumps travel the same shadow gate as any rule change.
+
 - **Release names follow the calendar rc ladder:** each planned cut of the train carries a staged rc name — 2026.01-rc1, then 2026.01-rc2, then 2026.01-rc3. The bare 2026.01 name is the GA name. A material re-cut adds a third number (2026.01.N). Labels and board vocabulary carry the same names. Scheme record: [docs/adr/0003-release-naming.md](adr/0003-release-naming.md).
 
 ### 16.6 Signature and intel feed upgrades
@@ -1251,7 +1301,9 @@ The shield exports this counter set:
   `RuleSet` (CRS + CEL); `ThreatIntel` (IP reputation/JA4 lists feeding `src_rep`);
   bot-fingerprint DBs (§12.3); `MLModel` artifacts. The operator resolves → compiles → stages via the same shadow ladder.
 - **Cadence:** CRS upstream LTS quarterly point-releases → auto-PR into the fleet's RuleSet repo (the PR *is* the review). CEL customs are human PR-gated. Intel feeds take daily/weekly digest bumps without a shadow gate (additive map entries, reversible by map replace).
+
 - **Emergency out-of-band:** a critical CVE drop uses the same CR path, with the evidence gate bypassed by `emergency: true`. The run is audited, time-boxed at 72 h, and auto-reverts absent analyst sign-off. The `PolicyEmergencyActive` alert fires.
+
 - **FP hygiene:** verdict telemetry → exclusion workflow. Exclusion CRs are shadow-tested too.
 
 ### 16.7 Day-2 runbook
@@ -1273,8 +1325,6 @@ The shield exports this counter set:
 **Capacity:** engines scale with request rate × body depth. The shield is NIC-class. The `trishulactl capacity-plan --traffic-profile` dry-run ships in-repo.
 
 **Backup/DR:** policies, rules and specs live in etcd + GitOps. Reapply rebuilds. Engines and shields stay stateless beyond the pinned maps. Cluster-loss recovery is a GitOps redeploy in the §16.4 order. CI ships a "rebuild-from-CRs" test: the last-enforced state is reachable from the CRs alone.
-
-<div class="pagebreak"></div>
 
 ## 17. Performance Targets & Benchmark Plan
 
@@ -1309,8 +1359,6 @@ The harness lives in-repo (`bench/`). wrk2 (closed-loop) covers latency distribu
 
 CI gates: a p99 regression over 10% fails CI. The CRS differential suite (§11.8) runs on every bpf/engine commit. Flood scenarios run nightly on bare-metal runners.
 
-<div class="pagebreak"></div>
-
 ## 18. Threat Model of Trishula Itself
 
 This is security infrastructure; its own compromise is an escalation path. The model is STRIDE-flavored and focused on what is specific to this design.
@@ -1318,6 +1366,7 @@ This is security infrastructure; its own compromise is an escalation path. The m
 ### 18.1 Assets and trust boundaries
 
 - **Assets:** rule bundles, kernel map contents (verdict/ban/reputation caches), ring-buffer stream, ML models (FeatureView, weights, judge prompts), CRD state, body samples in debug logs, **ban ledger evidence**.
+
 - **Boundaries:** kernel↔userspace (ringbuf, pinned maps — any pod with BPFFS hostPath), network front (gateway→engine hop), upstream (engine→pools), control plane (CRD apply → operator → bundles), ML supply chain.
 
 ### 18.2 Threats and treatments
@@ -1349,8 +1398,6 @@ The trusted set:
 - the node kernel
 - OCI registry integrity
 - CRD RBAC below the operator This trust is what keeps Trishula small. Residual risks are documented, not hidden.
-
-<div class="pagebreak"></div>
 
 ## 19. Reference Implementation
 
@@ -1655,8 +1702,6 @@ spec:
 
 **ext_proc wire contract (the activation stage).** The transport is gRPC bidirectional streaming (`envoy.service.ext_proc.v3.ExternalProcessor`). Stages are honored per gateway `mode` (request headers, body BUFFERED/STREAMED, response headers/body). The `ProcessingResponse` immediate-response serves block/ban (local 403/429 + `Retry-After`). Gateway dynamic metadata is read only for policy lookup (never trusted as payload fact). The server writes verdicts, matched-rule IDs, anomaly and ban flags to its own metadata namespace. It never mutates EPP's `x-gateway-destination-endpoint` keys[43]. Per-gateway filter ordering (WAF↔EPP) is operator-emitted configuration. Failure semantics follow the gateway's ext_proc fail-open and fail-close config. The same `failureMode` CRD field carries the expression; operators keep one vocabulary.
 
-<div class="pagebreak"></div>
-
 ## 20. Risks, Mitigations & Phasing
 
 ### 20.1 Risk register
@@ -1699,8 +1744,6 @@ spec:
 6. **Ban policy defaults per vertical** — the §13.3 constants are sane general defaults. Per-vertical presets (API-first SaaS vs auth-heavy B2C) ship as documented `BanPolicy` recipes in Phase 1+. The presets feed real tuning data back into the defaults.
 7. **Composition re-evaluation (Appendix E watch-list):** the eBPF-native cousins (Synapse, Moat, MicroWAF — E.2) evolve quickly. When a cousin reaches that shape before the post-GA trains, re-run the borrow-vs-build analysis for that layer. No overlapping code ships meanwhile. The differential suite and the CRD compiler are the pieces worth keeping regardless.
 
-<div class="pagebreak"></div>
-
 ## 21. Success Metrics & Adoption Gates
 
 A developer-first spec measures **adoption**, not just detection:
@@ -1720,12 +1763,12 @@ A developer-first spec measures **adoption**, not just detection:
 
 **Adoption is the real success metric** (§2.4): clusters where developers — not a security team — maintain most `RuleSet`/`BanPolicy` CRs. Contribution telemetry measures it; the project publishes quarterly (opt-in, aggregate).
 
-<div class="pagebreak"></div>
-
 ## Appendix A: Roadmap Notes
 
 - **HTTP/3:** the QUIC ingress posture is a tracked evaluation, not a runtime claim. QUIC's UDP transport moves the kernel-side story (XDP sees UDP floods the same way; QUIC packet framing needs userspace analysis). The academy module teaches the why before the product carries the claim. TR-203 L3 files the evaluation's first live leg at the engine (the dated entry below); this bullet's kernel-side posture stays.
+
 - **TR-203 L3 — the engine inline H3 listener (opt-in):** the TR-34 TLS mode's responses advertise the h3 alternative and the mode answers h3 requests through its own ladder ([TR-203 #264](https://github.com/trishula-dev/trishula/issues/264), leaf 3). The `--h3-listen` flag opens the QUIC leg (`cmd/engine/h3.go`; [ADR-0006](adr/0006-inline-h3-listener.md)). The leg carries the same TLS cert pair. The QUIC handshake carries the unchanged L4 key-exchange profile. The h1/h2 responses carry the alt-svc advertisement. The flag off = no UDP surface; the default stays gateway-terminated. The 0-RTT posture reads reject: the transport accepts no early data. The listener pins no session-resumption material ([the posture record's dated read](design/h3-ingress-posture.md)).
+
 - **Post-quantum:** termination at the gateway keeps Trishula cipher-agnostic. The PQ handshake (when negotiated) is the gateway's, on the client↔gateway leg; nothing in the shield or engine changes shape. The curriculum documents hybrid X25519+ML-KEM reality and its fingerprinting effects (client PQ preferences are themselves signal). The product carries no PQ data-plane claims.
 
   **Post-quantum readiness notes (TR-30).** PQ posture is a documentation concern with four concrete, product-side statements:
@@ -1741,8 +1784,6 @@ A developer-first spec measures **adoption**, not just detection:
 - **TR-203 L2 — the QUIC-ingress lab topology:** the kind/OrbStack lab carries the h3 listener leg ([TR-203 #264](https://github.com/trishula-dev/trishula/issues/264), leaf L2). The record: [the HTTP/3 ingress posture record](https://github.com/trishula-dev/trishula/blob/main/docs/design/h3-ingress-posture.md) files the plan. This leg = the plan's step 2. The lab terminator pod terminates the QUIC client leg (UDP :443) plus the TLS leg (TCP :443). It speaks h1 upstream to the engine Service (the record's F2 legs). The terminator image = the lab's NGF 2.7.2 dataplane build. Its nginx carries `--with-http_v3_module`. NGF itself carries no h3 listener row. The record's N8 holds: the operator owns the topology; the lab terminator answers for the h3 leg. Three probes file recorded runs; the receipts sit on [the leaf issue](https://github.com/trishula-dev/trishula/issues/264). Probe P4 = the advisory [h3spec](https://github.com/kazu-yamamoto/h3spec) pass against the listener. The tool output joins no verdict (the record's N5). [The verdict-integration section](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#122-verdict-integration) reads the UDP/QUIC ban path. Probe P7 = the ban identity on the L1 kernel leg. A live `ban_table` row SHOTs the keyed source's QUIC-class flow. The re-addressed stream passes while the row stays live. One source per key; no connection-id bind ([the ban algorithm](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#133-the-ban-algorithm-scoredwindowban-v1-specified) keys the source). The h3 hop of P8 = one real HTTP/3 request runs the whole path: terminator → h1 upstream → engine → echo. The response reads the same view head with the engine's `X-Trishula-Hop` marker. The probes stay advisory lab material: [the topology gate](https://github.com/trishula-dev/trishula/blob/main/lab/dx1/h3-ingress-read.sh) carries the stage runners. No h3spec run enters CI.
 
 - **Named-algorithm stability:** `ScoredWindowBan` is version-pinned by this document (v1). Any change ships as a new version + a conformance test — never a silent rewrite. CRS applies the same discipline to rule semantics.
-
-<div class="pagebreak"></div>
 
 ## Appendix B: Glossary
 
@@ -1768,120 +1809,220 @@ A developer-first spec measures **adoption**, not just detection:
 Consolidated source list; inline numeric citations `[n]` resolve here. Carried from the research dossiers (Appendix D) with additions:
 
 - **[39]** NGF + GIE inference extension how-to — <https://docs.nginx.com/nginx-gateway-fabric/how-to/gateway-api-inference-extension/>
-- **[41]** GIE v1 API reference — <https://gateway-api-inference-extension.sigs.k8s.io/reference/spec/>
-- **[43]** EPP protocol proposal 004 (v1.4.0 tag) — <https://github.com/kubernetes-sigs/gateway-api-inference-extension/blob/v1.4.0/docs/proposals/004-endpoint-picker-protocol/README.md>
-- **[60]** <https://blog.cloudflare.com/how-to-drop-10-million-packets>
-- **[61]** <https://blog.cloudflare.com/l4drop-xdp-ebpf-based-ddos-mitigations>
-- **[66]** <https://blog.cloudflare.com/xdpcap>
-- **[72]** <https://lwn.net/Articles/754659>
-- **[75]** <https://dl.acm.org/doi/10.1145/3281411.3281443>
-- **[76]** <https://github.com/facebookincubator/katran>
-- **[79]** <https://blog.px.dev/ebpf-openssl-tracing>
-- **[85]** <https://docs.cilium.io/en/latest/security/network/proxy/envoy>
-- **[87]** <https://docs.cilium.io/en/stable/reference-guides/bpf/architecture>
-- **[94]** <https://github.com/cilium/ebpf>
-- **[95]** <https://nakryiko.com/posts/bpf-portability-and-co-re>
-- **[96]** <https://docs.ebpf.io/linux/concepts/verifier>
-- **[105]** <https://bpfconf.ebpf.io/bpfconf2025/bpfconf2025_material/Beyond%201M%20instructions.pdf>
-- **[106]** <https://docs.ebpf.io/linux/concepts/tail-calls>
-- **[126]** <https://ebpf-go.dev/guides/getting-started>
-- **[128]** Vectorscan releases — <https://github.com/VectorCamp/vectorscan/releases>
-- **[129]** Suricata Hyperscan docs — <https://github.com/OISF/suricata/blob/master/doc/userguide/performance/hyperscan.rst>
-- **[132]** CRS migration pt6 FP tuning — <https://coreruleset.org/20260504/migrating-crs-3-to-4-part-6-tuning>
-- **[133]** Coraza site — <https://coraza.io>
-- **[134]** Coraza GitHub — <https://github.com/corazawaf/coraza>
-- **[136]** Intel Hyperscan GitHub — <https://github.com/intel/hyperscan>
-- **[137]** CEL spec GitHub — <https://github.com/google/cel-spec>
-- **[139]** CRS v4.25.0 LTS announcement — <https://coreruleset.org/20260321/announcing-crs-v4-25-lts>
-- **[141]** CRS README (license) — <https://raw.githubusercontent.com/coreruleset/coreruleset/main/README.md>
-- **[142]** CRS migration pt1 overview — <https://coreruleset.org/20260330/migrating-crs-3-to-4-part-1-overview>
-- **[145]** CrowdSec AppSec intro — <https://docs.crowdsec.net/docs/next/appsec/intro>
-- **[146]** K8s CEL docs — <https://kubernetes.io/docs/reference/using-api/cel>
-- **[147]** Vectorscan CHANGELOG raw — <https://raw.githubusercontent.com/vectorcamp/vectorscan/develop/CHANGELOG.md>
-- **[149]** Envoy local rate limit proto — <https://raw.githubusercontent.com/envoyproxy/envoy/main/api/envoy/extensions/filters/http/local_ratelimit/v3/local_rate_limit.proto>
-- **[154]** Coraza CHANGELOG (WASM/TinyGo, CRS4) — <https://github.com/corazawaf/coraza/blob/main/CHANGELOG.md>
-- **[157]** Envoy Matching API (CEL matcher) — <https://envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/matching/matching_api>
-- **[159]** Coraza 100x perf article — <https://medium.com/@jptosso/how-owasp-coraza-improved-performance-by-100x-38d982371ea9>
-- **[161]** CRS regexp-assemble blog — <https://coreruleset.org/20190826/optimizing-regular-expressions>
-- **[162]** CRS ReDoS blog — <https://coreruleset.org/20190425/regular-expression-dos-weaknesses-in-crs>
-- **[165]** CRS crs-toolchain docs — <https://coreruleset.org/docs/6-development/6-2-crs-toolchain>
-- **[167]** Trustwave transfers ModSecurity to OWASP — <https://owasp.org/blog/2024/01/09/ModSecurity.html>
-- **[170]** CrowdSec bot detection docs — <https://docs.crowdsec.net/docs/next/appsec/bot_detection/intro>
-- **[171]** CRS plugin registry — <https://github.com/coreruleset/plugin-registry>
-- **[172]** Suricata/OISF Vectorscan support blog — <https://suricata.io/2026/09/29/why-vectorscan-matters-to-suricata-and-why-were-supporting-it>
-- **[173]** Vectorscan README (license change, portability) — <https://raw.githubusercontent.com/VectorCamp/vectorscan/develop/README.md>
-- **[177]** go-ftw CRS regression testing — <https://github.com/coreruleset/go-ftw>
-- **[178]** OWASP CRS GitHub repo — <https://github.com/coreruleset/coreruleset>
-- **[189]** Intel Hyperscan releases (v5.4.2 last OSS) — <https://github.com/intel/hyperscan/releases>
-- **[192]** <https://github.com/openappsec/openappsec>
-- **[196]** <https://github.com/chaitin/SafeLine>
-- **[197]** <https://docs.wallarm.com/api-abuse-prevention/overview>
-- **[201]** <https://openappsec.io/post/open-appsec-waf-docker-compose-deployment-new-capabilities>
-- **[202]** <https://github.com/chaitin/SafeLine/releases>
-- **[205]** <https://www.secrss.com/articles/74483>
-- **[206]** <https://bbs.chaitin.cn/topic/9412>
-- **[209]** <https://help.waf-ce.chaitin.cn>
-- **[211]** <https://arxiv.org/html/2306.05494v5>
-- **[215]** <https://arxiv.org/html/2512.23610v2>
-- **[216]** <https://ar5iv.labs.arxiv.org/html/2312.13041>
-- **[217]** <https://arxiv.org/abs/2603.25176>
-- **[218]** <https://arxiv.org/html/2603.29403v2>
-- **[219]** <https://arxiv.org/abs/2503.00596>
-- **[222]** <https://link.springer.com/article/10.1007/s44443-026-01098-3>
-- **[224]** <https://stribog.com/blog/nvidia-gpu-operator-mig-time-slicing-kubernetes-sharing>
-- **[225]** <https://nops.io/blog/gpu-sharing-in-kubernetes>
-- **[228]** <https://tildalice.io/gpu-vs-cpu-inference-cost-latency-benchmark>
-- **[230]** <https://openreview.net/pdf?id=m5AntlhJ7Z5>
-- **[234]** <https://arxiv.org/html/2506.09443v2>
-- **[237]** <https://docs.openappsec.io/llms-full.txt>
-- **[239]** <https://docs.openappsec.io/how-to/configuration-and-learning/track-learning-and-move-from-learn-detect-to-prevent>
-- **[241]** <https://docs.openappsec.io/additional-security-engines/api-schema-enforcement>
-- **[242]** <https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/user_guide/model_repository.html>
-- **[243]** <https://youngju.dev/blog/ai-platform/2026-03-06-ai-platform-ml-model-monitoring-drift-detection-evidently-mlflow.en>
-- **[244]** <https://github.com/triton-inference-server/server/blob/main/docs/user_guide/model_management.md>
-- **[249]** F5 WAF for NGINX overview (headline features, deployment options, NGINX One packaging) — <https://docs.nginx.com/waf/fundamentals/overview/>
-- **[254]** NGF WAFPolicy + compiled bundles — <https://docs.nginx.com/nginx-gateway-fabric/waf-integration/overview>
-- **[301]** NGF securityLogs destinations, logSource options, polling, fail-open — <https://docs.nginx.com/nginx-gateway-fabric/waf-integration/configuration>
-- **[310]** CRS docs: engines (Coraza 100% CRS v4), anomaly scoring, PLs, staging via PL, commercial-integration caveats — <https://coreruleset.org/docs/index.print>
-- **[312]** "fully compatible with OWASP CRS, except by DDOS and anti-bot protection"; roadmap (WASM, integrated DoS/bot) — <https://github.com/corazawaf/coraza/blob/master/README.md>
-- **[316]** (canon: https://www.f5.com/company/blog/nginx/f5-nginx-modsecurity-waf-transitioning-to-eol/) — NGINX ModSecurity WAF EoL Mar 31 2024; CRS pivoting to Coraza — <https://www.nginx.com/blog/f5-nginx-modsecurity-waf-transitioning-to-eol/>
-- **[318]** Trustwave EOS Aug 2021 / EOL Jul 1 2024 stewardship transfer; release timeline — <https://en.wikipedia.org/wiki/ModSecurity>
-- **[322]** CRS tuning burden (4–8h, per-endpoint exclusions) — <https://www.systemshardening.com/articles/network/waf-rule-tuning/>
-- **[324]** RFC 10024 — PQ/T hybrid key agreement for TLS 1.3: X25519MLKEM768 / SecP256r1MLKEM768 / SecP384r1MLKEM1024, group registry (0x11EC), client share 1,216 B vs 32 B for X25519; pre-standard Kyber768 entries obsoleted — <https://www.rfc-editor.org/rfc/rfc10024>
-- **[325]** Chromium — hybrid PQ key exchange default in Chrome 124; X25519MLKEM768 (FIPS 203) from Chrome 131 — <https://blog.chromium.org/2024/05/advancing-our-amazing-bet-on-asymmetric.html> · <https://security.googleblog.com/2024/09/a-new-path-for-kyber-on-web.html>
-- **[326]** Go 1.24 release notes — `crypto/tls` enables X25519MLKEM768 by default (`tlsmlkem` GODEBUG revert) — <https://go.dev/doc/go1.24>
-- **[327]** Cloudflare — PQ keyshares to origins: ClientHello size effects, middlebox failures (~0.34% of scanned origins), HelloRetryRequest flow — <https://blog.cloudflare.com/post-quantum-to-origins/>
-- **[328]** Cloudflare Radar — post-quantum TLS adoption telemetry — <https://radar.cloudflare.com/post-quantum>
-- **[329]** JA4+ TLS client fingerprinting specification — <https://github.com/FoxIO-LLC/ja4>
-- **[330]** Cloudflare — post-quantum authentication to origins: ML-DSA certificates, the encryption-vs-authentication deployment asymmetry — <https://blog.cloudflare.com/post-quantum-authentication-to-origins/>
-- **[F-apisix]** Apache APISIX: open-source API/AI gateway — <https://apisix.apache.org/>
-- **[F-bunkerweb]** BunkerWeb: open-source WAF / reverse proxy (AGPLv3) — <https://github.com/bunkerity/bunkerweb>
-- **[F-higress]** Higress: AI-native API gateway (Envoy/Istio, Wasm plugins, GIE-conformant) — <https://github.com/higress-group/higress>
-- **[F-ja4]** JA4/JA4S TLS fingerprint specification (FoxIO) — <https://github.com/FoxIO-LLC/ja4>
-- **[F-janusec]** Janusec Application Gateway — <https://janusec.github.io/>
-- **[F-microwaf]** MicroWAF: host-side WAF with XDP drop rates and CEL rules engine — <https://github.com/dcc-bigfred/microwaf>
-- **[F-moat]** Moat (sitedata): eBPF-powered TCP/HTTP proxy agent with JA4+ and XDP filtering — <https://github.com/sitedata/moat>
-- **[F-naxsi]** NAXSI (maintained fork) — <https://github.com/wargio/naxsi>
-- **[F-ngf27]** NGINX Gateway Fabric 2.7 release announcement (Gateway API 1.6 conformance, external auth, TLS Terminate) — <https://blog.nginx.org/blog/nginx-gateway-fabric-2-7-gateway-api-1-6-conformance-external-authentication-and-fewer-snippets>
-- **[F-ngxrl]** NGINX ngx_http_limit_req_module (rate limiting semantics) — <https://nginx.org/en/docs/http/ngx_http_limit_req_module.html>
-- **[F-rfc9110]** RFC 9110: HTTP Semantics (429 + Retry-After) — <https://www.rfc-editor.org/rfc/rfc9110>
-- **[F-spliff]** Spliff: correlating XDP and TLS via eBPF (L7 sniffer / EDR foundation) — <https://news.ycombinator.com/item?id=46663319>
-- **[F-synapse]** Synapse (gen0sec/FoxIO): active NDR with eBPF/XDP enforcement, JA4+ blocking, proxy mode — <https://github.com/FoxIO-LLC/synapse>
-- **[F-tempest]** TEMPEST-BREAKER: zero-allocation eBPF/XDP tarpit in Rust (AF_XDP, Count-Min sketch bans) — <https://medium.com/@okywoww/defeating-volumetric-ddos-at-the-network-edge-building-a-zero-allocation-ebpf-xdp-tarpit-in-rust-e44ed3d089a0>
 
-<div class="pagebreak"></div>
+- **[41]** GIE v1 API reference — <https://gateway-api-inference-extension.sigs.k8s.io/reference/spec/>
+
+- **[43]** EPP protocol proposal 004 (v1.4.0 tag) — <https://github.com/kubernetes-sigs/gateway-api-inference-extension/blob/v1.4.0/docs/proposals/004-endpoint-picker-protocol/README.md>
+
+- **[60]** <https://blog.cloudflare.com/how-to-drop-10-million-packets>
+
+- **[61]** <https://blog.cloudflare.com/l4drop-xdp-ebpf-based-ddos-mitigations>
+
+- **[66]** <https://blog.cloudflare.com/xdpcap>
+
+- **[72]** <https://lwn.net/Articles/754659>
+
+- **[75]** <https://dl.acm.org/doi/10.1145/3281411.3281443>
+
+- **[76]** <https://github.com/facebookincubator/katran>
+
+- **[79]** <https://blog.px.dev/ebpf-openssl-tracing>
+
+- **[85]** <https://docs.cilium.io/en/latest/security/network/proxy/envoy>
+
+- **[87]** <https://docs.cilium.io/en/stable/reference-guides/bpf/architecture>
+
+- **[94]** <https://github.com/cilium/ebpf>
+
+- **[95]** <https://nakryiko.com/posts/bpf-portability-and-co-re>
+
+- **[96]** <https://docs.ebpf.io/linux/concepts/verifier>
+
+- **[105]** <https://bpfconf.ebpf.io/bpfconf2025/bpfconf2025_material/Beyond%201M%20instructions.pdf>
+
+- **[106]** <https://docs.ebpf.io/linux/concepts/tail-calls>
+
+- **[126]** <https://ebpf-go.dev/guides/getting-started>
+
+- **[128]** Vectorscan releases — <https://github.com/VectorCamp/vectorscan/releases>
+
+- **[129]** Suricata Hyperscan docs — <https://github.com/OISF/suricata/blob/master/doc/userguide/performance/hyperscan.rst>
+
+- **[132]** CRS migration pt6 FP tuning — <https://coreruleset.org/20260504/migrating-crs-3-to-4-part-6-tuning>
+
+- **[133]** Coraza site — <https://coraza.io>
+
+- **[134]** Coraza GitHub — <https://github.com/corazawaf/coraza>
+
+- **[136]** Intel Hyperscan GitHub — <https://github.com/intel/hyperscan>
+
+- **[137]** CEL spec GitHub — <https://github.com/google/cel-spec>
+
+- **[139]** CRS v4.25.0 LTS announcement — <https://coreruleset.org/20260321/announcing-crs-v4-25-lts>
+
+- **[141]** CRS README (license) — <https://raw.githubusercontent.com/coreruleset/coreruleset/main/README.md>
+
+- **[142]** CRS migration pt1 overview — <https://coreruleset.org/20260330/migrating-crs-3-to-4-part-1-overview>
+
+- **[145]** CrowdSec AppSec intro — <https://docs.crowdsec.net/docs/next/appsec/intro>
+
+- **[146]** K8s CEL docs — <https://kubernetes.io/docs/reference/using-api/cel>
+
+- **[147]** Vectorscan CHANGELOG raw — <https://raw.githubusercontent.com/vectorcamp/vectorscan/develop/CHANGELOG.md>
+
+- **[149]** Envoy local rate limit proto — <https://raw.githubusercontent.com/envoyproxy/envoy/main/api/envoy/extensions/filters/http/local_ratelimit/v3/local_rate_limit.proto>
+
+- **[154]** Coraza CHANGELOG (WASM/TinyGo, CRS4) — <https://github.com/corazawaf/coraza/blob/main/CHANGELOG.md>
+
+- **[157]** Envoy Matching API (CEL matcher) — <https://envoyproxy.io/docs/envoy/latest/intro/arch_overview/advanced/matching/matching_api>
+
+- **[159]** Coraza 100x perf article — <https://medium.com/@jptosso/how-owasp-coraza-improved-performance-by-100x-38d982371ea9>
+
+- **[161]** CRS regexp-assemble blog — <https://coreruleset.org/20190826/optimizing-regular-expressions>
+
+- **[162]** CRS ReDoS blog — <https://coreruleset.org/20190425/regular-expression-dos-weaknesses-in-crs>
+
+- **[165]** CRS crs-toolchain docs — <https://coreruleset.org/docs/6-development/6-2-crs-toolchain>
+
+- **[167]** Trustwave transfers ModSecurity to OWASP — <https://owasp.org/blog/2024/01/09/ModSecurity.html>
+
+- **[170]** CrowdSec bot detection docs — <https://docs.crowdsec.net/docs/next/appsec/bot_detection/intro>
+
+- **[171]** CRS plugin registry — <https://github.com/coreruleset/plugin-registry>
+
+- **[172]** Suricata/OISF Vectorscan support blog — <https://suricata.io/2026/09/29/why-vectorscan-matters-to-suricata-and-why-were-supporting-it>
+
+- **[173]** Vectorscan README (license change, portability) — <https://raw.githubusercontent.com/VectorCamp/vectorscan/develop/README.md>
+
+- **[177]** go-ftw CRS regression testing — <https://github.com/coreruleset/go-ftw>
+
+- **[178]** OWASP CRS GitHub repo — <https://github.com/coreruleset/coreruleset>
+
+- **[189]** Intel Hyperscan releases (v5.4.2 last OSS) — <https://github.com/intel/hyperscan/releases>
+
+- **[192]** <https://github.com/openappsec/openappsec>
+
+- **[196]** <https://github.com/chaitin/SafeLine>
+
+- **[197]** <https://docs.wallarm.com/api-abuse-prevention/overview>
+
+- **[201]** <https://openappsec.io/post/open-appsec-waf-docker-compose-deployment-new-capabilities>
+
+- **[202]** <https://github.com/chaitin/SafeLine/releases>
+
+- **[205]** <https://www.secrss.com/articles/74483>
+
+- **[206]** <https://bbs.chaitin.cn/topic/9412>
+
+- **[209]** <https://help.waf-ce.chaitin.cn>
+
+- **[211]** <https://arxiv.org/html/2306.05494v5>
+
+- **[215]** <https://arxiv.org/html/2512.23610v2>
+
+- **[216]** <https://ar5iv.labs.arxiv.org/html/2312.13041>
+
+- **[217]** <https://arxiv.org/abs/2603.25176>
+
+- **[218]** <https://arxiv.org/html/2603.29403v2>
+
+- **[219]** <https://arxiv.org/abs/2503.00596>
+
+- **[222]** <https://link.springer.com/article/10.1007/s44443-026-01098-3>
+
+- **[224]** <https://stribog.com/blog/nvidia-gpu-operator-mig-time-slicing-kubernetes-sharing>
+
+- **[225]** <https://nops.io/blog/gpu-sharing-in-kubernetes>
+
+- **[228]** <https://tildalice.io/gpu-vs-cpu-inference-cost-latency-benchmark>
+
+- **[230]** <https://openreview.net/pdf?id=m5AntlhJ7Z5>
+
+- **[234]** <https://arxiv.org/html/2506.09443v2>
+
+- **[237]** <https://docs.openappsec.io/llms-full.txt>
+
+- **[239]** <https://docs.openappsec.io/how-to/configuration-and-learning/track-learning-and-move-from-learn-detect-to-prevent>
+
+- **[241]** <https://docs.openappsec.io/additional-security-engines/api-schema-enforcement>
+
+- **[242]** <https://docs.nvidia.com/deeplearning/triton-inference-server/user-guide/docs/user_guide/model_repository.html>
+
+- **[243]** <https://youngju.dev/blog/ai-platform/2026-03-06-ai-platform-ml-model-monitoring-drift-detection-evidently-mlflow.en>
+
+- **[244]** <https://github.com/triton-inference-server/server/blob/main/docs/user_guide/model_management.md>
+
+- **[249]** F5 WAF for NGINX overview (headline features, deployment options, NGINX One packaging) — <https://docs.nginx.com/waf/fundamentals/overview/>
+
+- **[254]** NGF WAFPolicy + compiled bundles — <https://docs.nginx.com/nginx-gateway-fabric/waf-integration/overview>
+
+- **[301]** NGF securityLogs destinations, logSource options, polling, fail-open — <https://docs.nginx.com/nginx-gateway-fabric/waf-integration/configuration>
+
+- **[310]** CRS docs: engines (Coraza 100% CRS v4), anomaly scoring, PLs, staging via PL, commercial-integration caveats — <https://coreruleset.org/docs/index.print>
+
+- **[312]** "fully compatible with OWASP CRS, except by DDOS and anti-bot protection"; roadmap (WASM, integrated DoS/bot) — <https://github.com/corazawaf/coraza/blob/master/README.md>
+
+- **[316]** (canon: https://www.f5.com/company/blog/nginx/f5-nginx-modsecurity-waf-transitioning-to-eol/) — NGINX ModSecurity WAF EoL Mar 31 2024; CRS pivoting to Coraza — <https://www.nginx.com/blog/f5-nginx-modsecurity-waf-transitioning-to-eol/>
+
+- **[318]** Trustwave EOS Aug 2021 / EOL Jul 1 2024 stewardship transfer; release timeline — <https://en.wikipedia.org/wiki/ModSecurity>
+
+- **[322]** CRS tuning burden (4–8h, per-endpoint exclusions) — <https://www.systemshardening.com/articles/network/waf-rule-tuning/>
+
+- **[324]** RFC 10024 — PQ/T hybrid key agreement for TLS 1.3: X25519MLKEM768 / SecP256r1MLKEM768 / SecP384r1MLKEM1024, group registry (0x11EC), client share 1,216 B vs 32 B for X25519; pre-standard Kyber768 entries obsoleted — <https://www.rfc-editor.org/rfc/rfc10024>
+
+- **[325]** Chromium — hybrid PQ key exchange default in Chrome 124; X25519MLKEM768 (FIPS 203) from Chrome 131 — <https://blog.chromium.org/2024/05/advancing-our-amazing-bet-on-asymmetric.html> · <https://security.googleblog.com/2024/09/a-new-path-for-kyber-on-web.html>
+
+- **[326]** Go 1.24 release notes — `crypto/tls` enables X25519MLKEM768 by default (`tlsmlkem` GODEBUG revert) — <https://go.dev/doc/go1.24>
+
+- **[327]** Cloudflare — PQ keyshares to origins: ClientHello size effects, middlebox failures (~0.34% of scanned origins), HelloRetryRequest flow — <https://blog.cloudflare.com/post-quantum-to-origins/>
+
+- **[328]** Cloudflare Radar — post-quantum TLS adoption telemetry — <https://radar.cloudflare.com/post-quantum>
+
+- **[329]** JA4+ TLS client fingerprinting specification — <https://github.com/FoxIO-LLC/ja4>
+
+- **[330]** Cloudflare — post-quantum authentication to origins: ML-DSA certificates, the encryption-vs-authentication deployment asymmetry — <https://blog.cloudflare.com/post-quantum-authentication-to-origins/>
+
+- **[F-apisix]** Apache APISIX: open-source API/AI gateway — <https://apisix.apache.org/>
+
+- **[F-bunkerweb]** BunkerWeb: open-source WAF / reverse proxy (AGPLv3) — <https://github.com/bunkerity/bunkerweb>
+
+- **[F-higress]** Higress: AI-native API gateway (Envoy/Istio, Wasm plugins, GIE-conformant) — <https://github.com/higress-group/higress>
+
+- **[F-ja4]** JA4/JA4S TLS fingerprint specification (FoxIO) — <https://github.com/FoxIO-LLC/ja4>
+
+- **[F-janusec]** Janusec Application Gateway — <https://janusec.github.io/>
+
+- **[F-microwaf]** MicroWAF: host-side WAF with XDP drop rates and CEL rules engine — <https://github.com/dcc-bigfred/microwaf>
+
+- **[F-moat]** Moat (sitedata): eBPF-powered TCP/HTTP proxy agent with JA4+ and XDP filtering — <https://github.com/sitedata/moat>
+
+- **[F-naxsi]** NAXSI (maintained fork) — <https://github.com/wargio/naxsi>
+
+- **[F-ngf27]** NGINX Gateway Fabric 2.7 release announcement (Gateway API 1.6 conformance, external auth, TLS Terminate) — <https://blog.nginx.org/blog/nginx-gateway-fabric-2-7-gateway-api-1-6-conformance-external-authentication-and-fewer-snippets>
+
+- **[F-ngxrl]** NGINX ngx_http_limit_req_module (rate limiting semantics) — <https://nginx.org/en/docs/http/ngx_http_limit_req_module.html>
+
+- **[F-rfc9110]** RFC 9110: HTTP Semantics (429 + Retry-After) — <https://www.rfc-editor.org/rfc/rfc9110>
+
+- **[F-spliff]** Spliff: correlating XDP and TLS via eBPF (L7 sniffer / EDR foundation) — <https://news.ycombinator.com/item?id=46663319>
+
+- **[F-synapse]** Synapse (gen0sec/FoxIO): active NDR with eBPF/XDP enforcement, JA4+ blocking, proxy mode — <https://github.com/FoxIO-LLC/synapse>
+
+- **[F-tempest]** TEMPEST-BREAKER: zero-allocation eBPF/XDP tarpit in Rust (AF_XDP, Count-Min sketch bans) — <https://medium.com/@okywoww/defeating-volumetric-ddos-at-the-network-edge-building-a-zero-allocation-ebpf-xdp-tarpit-in-rust-e44ed3d089a0>
 
 ## Appendix D: Research Dossiers
 
 The design synthesizes five research dossiers (per-claim citations resolved in Appendix C):
 
 - **R1 — Gateway-API steering, Inference Extension (EPP):** GIE/EPP ext_proc protocol and failure modes, NGF inference-extension integration, security-stage attachment patterns on Gateway-API data planes, the insertion variants (§10).
-- **R2 — eBPF packet processing and L7 visibility:** XDP/AF_XDP/TC performance envelopes, verifier limits, CO-RE/BTF/bpf2go portability, TLS ciphertext visibility limits, prior-art eBPF WAF/IDS, ringbuf userspace-engine architecture (§8–9).
-- **R3 — Rule engines and detection tech:** CRS 4.x coverage/FP/ReDoS history, Coraza performance and WASM status, Vectorscan vs Hyperscan closure, CEL/OPA DSL trade-offs, the OSS positive-security/bot/rate gap catalog (§11).
-- **R4 — ML-powered WAF scenarios:** open-appsec/SafeLine/Wallarm patterns, detection literature (cascades, LLM-as-judge, evasion research), ONNX/Triton latency envelopes, drift tooling (§14).
-- **R5 — Commercial WAF capability catalog:** F5 WAF for NGINX / AWAF / XC WAAP feature-by-feature (signatures + cadence, positive security, API discovery, bot defense, behavioral DoS, credential stuffing, telemetry) with the OSS gap analysis per capability — the "what good looks like" reference list (§3.2 P5, §4.3). *(Historical-research citations only — no F5 product dependency exists in the design.)*
 
-<div class="pagebreak"></div>
+- **R2 — eBPF packet processing and L7 visibility:** XDP/AF_XDP/TC performance envelopes, verifier limits, CO-RE/BTF/bpf2go portability, TLS ciphertext visibility limits, prior-art eBPF WAF/IDS, ringbuf userspace-engine architecture (§8–9).
+
+- **R3 — Rule engines and detection tech:** CRS 4.x coverage/FP/ReDoS history, Coraza performance and WASM status, Vectorscan vs Hyperscan closure, CEL/OPA DSL trade-offs, the OSS positive-security/bot/rate gap catalog (§11).
+
+- **R4 — ML-powered WAF scenarios:** open-appsec/SafeLine/Wallarm patterns, detection literature (cascades, LLM-as-judge, evasion research), ONNX/Triton latency envelopes, drift tooling (§14).
+
+- **R5 — Commercial WAF capability catalog:** F5 WAF for NGINX / AWAF / XC WAAP feature-by-feature (signatures + cadence, positive security, API discovery, bot defense, behavioral DoS, credential stuffing, telemetry) with the OSS gap analysis per capability — the "what good looks like" reference list (§3.2 P5, §4.3). *(Historical-research citations only — no F5 product dependency exists in the design.)*
 
 ## Appendix E: Similar Projects — and Why We Did Not Build On Them
 
@@ -1938,7 +2079,7 @@ flowchart TB
 
 | Project | What it genuinely is | What it does well | Why Trishula did not build on it (the irreducible gap) |
 |---------|---------------------|-------------------|--------------------------------------------------------|
-| **Synapse** (FoxIO/gen0sec)[F-synapse] | Active NDR: XDP kernel enforcement + optional inline proxy, JA4+ fingerprint suites, Wirefilter WAF, rate limiting, CAPTCHA, multi-backend firewall (XDP→nftables→iptables) | The closest eBPF cousin to Trishula's shield+proxy split; JA4+ as first-class blocking identity; kernel-speed enforcement with userspace fallback; Windows support | Host/edge-appliance-shaped (single binary, config files, SIEM event stream) — not a Kubernetes policy system: no CRDs, no GitOps rule lifecycle, no Gateway-API steering citizenship, no shadow-first promotion, no CRS corpus, no positive security, no per-tenant isolation. Trishula borrows its *altitudes* (kernel enforcement + inline deep inspection) and its JA4+ posture, and builds the missing CRD/gateway/parity machinery on top. A composition would still mean writing everything this spec specifies — with a config-file core to unwind. The `FoxIO-LLC/synapse` record is a fork of [`sitedata/moat`](https://github.com/sitedata/moat). The GitHub license endpoints read `NOASSERTION` (ELv2 badges on both records). `NOASSERTION` carries license risk for any future adoption |
+| **Synapse** (FoxIO/gen0sec)[F-synapse] | Active NDR: XDP kernel enforcement + optional inline proxy, JA4+ fingerprint suites, Wirefilter WAF, rate limiting, CAPTCHA, multi-backend firewall (XDP→nftables→iptables) | The closest eBPF cousin to Trishula's shield+proxy split; JA4+ as first-class blocking identity; kernel-speed enforcement with userspace fallback; Windows support | Host/edge-appliance-shaped (single binary, config files, SIEM event stream) — not a Kubernetes policy system: no CRDs, no GitOps rule lifecycle, no Gateway-API steering citizenship, no shadow-first promotion, no CRS corpus, no positive security, no per-tenant isolation. Trishula borrows its *altitudes* (kernel enforcement + inline deep inspection) and its JA4+ posture, and builds the missing CRD/gateway/parity machinery on top. A composition would still mean writing everything this spec specifies — with a config-file core to unwind. The `FoxIO-LLC/synapse` record is a fork of [sitedata/moat](https://github.com/sitedata/moat). The GitHub license endpoints read `NOASSERTION` (ELv2 badges on both records). `NOASSERTION` carries license risk for any future adoption |
 | **Moat** (sitedata)[F-moat] | Rust XDP reverse proxy + full JA4+ suite + threat-intel API + CAPTCHA + ClamAV content scan | Clean XDP packet filtering; complete JA4+ capture; ACME automation | Edge proxy appliance coupled to a commercial intel API (Arxignis) for rules and bot scoring — data-plane decisions keyed to a third-party service contradict the OSS/clean-egress design rule (§18.3); same non-K8s gaps as Synapse. Borrowed idea: fingerprint-identity blocking at kernel speed |
 | **MicroWAF** (dcc-bigfred)[F-microwaf] | Host-side WAF for Linux/RPi: XDP drop rates, CEL-based rules engine, Redis-backed windows, per-MAC/IP L7 counting | Independently validated the CEL-for-WAF choice; honest small-host scope; embeds eBPF objects in the binary | Per-host, per-MAC/IP state model — no cluster policy, no multi-tenant route classes, no gateway integration, Redis as ban state (network dependency in the enforcement path, which §13.3's kernel-table design deliberately avoids). Borrowed idea: CEL as the authoring surface |
 | **Spliff** (L7 EDR sniffer)[F-spliff] | XDP + sock_ops + uprobes correlating decrypted TLS buffers to TCP flows/PIDs; full HPACK HTTP/2 parsing; no-MITM visibility | The "golden thread" correlation pattern (packets ↔ decrypted bytes ↔ process) is the best-in-class answer to §9.7's kTLS visibility gap | A visibility engine, not enforcement: no rule lifecycle, no verdicts, no policy surface. Trishula's uprobes contract (§9.2) is where this pattern plugs in *if* app-internal-TLS visibility ships — as an integration, not a base |
@@ -1983,7 +2124,9 @@ These tools are *complementary deployments*, not competitors. A Trishula cluster
 ### E.6 The temporal-ban lineage (§13's ancestry)
 
 - **fail2ban**[147]: the UX archetype — findtime/maxretry/bantime vocabulary, expiry, recidive jails — adopted wholesale in §13.3's constants, moved from log-tap to wire, from filesystem state to kernel map + ledger, from grep patterns to weighted scores with OTel evidence. Not extensible to HTTP sessions; not distributed; not observable beyond file logs.
+
 - **CrowdSec remediation components** (crowdsec-blocklists, bouncers): the distributed/community evolution of the same idea — borrowed as an optional intel input (§4.2), not as the enforcement path.
+
 - **sshguard / ssh-blame-class tools**: single-protocol ancestors; nothing past vocabulary to borrow.
 
 ### E.7 The synthesis rule

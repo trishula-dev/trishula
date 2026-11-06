@@ -1,0 +1,71 @@
+# Renders docs/spec.md per commit. Publishes text, HTML and PDF artifacts.
+# The render pair follows the docs render gate: mmark, then xml2rfc.
+# The ietf-publisher action runs kramdown-rfc2629 and expects a repo-root
+# file. This spec uses the mmark dialect and lives under docs/. This
+# workflow therefore runs the same build steps with the mmark toolchain.
+# The mmark anchor step adds the letter prefix "spec-". xml2rfc rejects
+# IDs that start with a digit. The prefix rule mirrors the mmark
+# "section-" number prefix rule. The prefix change touches anchors only.
+# It changes no document text.
+name: spec-render
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the spec
+        uses: actions/checkout@v4
+
+      - name: Set up Go for mmark
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Set up Python for xml2rfc
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install the toolchain
+        run: |
+          go install github.com/mmarkdown/mmark/v2@v2.2.48
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          pip install xml2rfc
+          sudo apt-get update
+          sudo apt-get install -y enscript ghostscript
+
+      - name: Render text, HTML and PDF
+        run: |
+          mkdir -p render
+          mmark docs/spec.md > render/spec.xml
+          python3 - <<'EOF'
+          import re
+          p = "render/spec.xml"
+          s = open(p).read()
+          s = re.sub(
+              r'( anchor| pn| derivedAnchor)="(\d|table-|figure-|section-|iref-|u-)',
+              lambda m: f'{m.group(1)}="spec-{m.group(2)}',
+              s)
+          open(p, "w").write(s)
+          EOF
+          xml2rfc --text --out render/trishula-spec-00.txt render/spec.xml
+          xml2rfc --html --out render/trishula-spec-00.html render/spec.xml
+          enscript -B -o render/specrender.ps render/trishula-spec-00.txt
+          ps2pdf render/specrender.ps render/trishula-spec-00.pdf
+          rm -f render/specrender.ps
+
+      - name: Attach the rendered artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: spec-render
+          path: |
+            render/trishula-spec-00.txt
+            render/trishula-spec-00.html
+            render/trishula-spec-00.pdf
