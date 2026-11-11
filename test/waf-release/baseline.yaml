@@ -1,0 +1,41 @@
+# test/waf-release/baseline.yaml — TR-205 leaf (issue #293, contract 2).
+# This file pins the pass-rate baseline for the full goTestWAF corpus
+# run against the trishula engine.
+#
+# Key words. The key words MUST, MUST NOT, SHALL, and SHALL NOT in this
+# file read with the force of BCP 14. The sources: RFC 2119 and
+# RFC 8174. The force applies in all caps only.
+#
+# Pending-first-run semantics. The suite ships with pending_first_run:
+# true. The first rehearsal SHALL NOT gate on a comparison. The corpus
+# verdict step SHALL record the measured corpus rows into
+# baseline-recorded.json (a run artifact), and it MUST pass the corpus
+# leg. The operator then opens a corpus-row PR (the issue #291 change
+# path). That PR moves the recorded rows into the recorded: map below
+# and flips pending_first_run to false. From that landing on, every
+# corpus run MUST compare against the recorded: rows. It MUST fail
+# when either comparison rule below fires.
+#
+# What a regression reads as. Contract 2: a pass-rate regression marks
+# the run red. The comparison rules carry the exact shape.
+#   rule 1 (the per-case floor): for every recorded set/case row, the
+#     measured blocked count MUST NOT fall below the recorded blocked
+#     count. A drop of one in any case row fails the leg.
+#   rule 2 (the overall floor): the measured true-positive blocked
+#     ratio sits at blocked_tests over total_sent on the aggregate.
+#     It MUST NOT sit more than pass_rate_floor_pp percentage points
+#     under the recorded ratio.
+# Unresolved drift alone SHALL NOT fail the leg (an unresolved request
+# neither blocked nor bypassed). The per-case floor catches the blocked
+# loss it can hide, and the verdict report names every case that moved.
+---
+pending_first_run: true
+recorded: null      # null until the first rehearsal; the corpus-row PR fills the map
+
+comparison_rules:
+  per_case_blocked_floor: strict    # rule 1
+  pass_rate_floor_pp: 1.0           # rule 2: 1 percentage point of headroom, no more
+  unresolved_shift: ignored
+  failed_tests_max: 0               # a transport-failed request is a report defect; see corpus-full.yaml
+
+engine_bindings_recorded_at: null   # the record fills: gotestwaf digest, engine image digest, DOKS version, pack rev

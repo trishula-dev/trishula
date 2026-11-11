@@ -1,0 +1,36 @@
+# test/waf-release/corpus-rows.yaml — TR-205 leaf (issue #293, contract 8).
+# The committed corpus rows sit here. The six per-PR subset cases moved
+# here from test/waf-gate/gotestwaf-subset.yaml. The release stage owns
+# them since #293. The per-PR gate keeps the shadow record, the
+# enforcement pin and the bypass battery.
+#
+# The rows run inside the full-corpus scan (corpus-full.yaml). The
+# verdict step reads each row in the report. It fails when the row
+# shows bypassed over the committed ceiling. A bypass finding lands in
+# an engine fix PR. The same change carries the corpus-row edit. The
+# issue #291 change path applies here unchanged. The row moves UP with
+# the surface.
+#
+# Row schema: one row per case. The set names the goTestWAF test set.
+# The ceiling caps the bypassed bucket for the case over the whole
+# encoder-times-placeholder matrix.
+---
+rows:
+  - set: owasp
+    case: sql-injection
+    bypassed_tests_max: 0
+  - set: owasp
+    case: shell-injection
+    bypassed_tests_max: 0
+  - set: owasp
+    case: rce-urlparam
+    bypassed_tests_max: 0
+  - set: owasp
+    case: xss-scripting
+    bypassed_tests_max: 0
+  - set: owasp
+    case: path-traversal
+    bypassed_tests_max: 0
+  - set: owasp
+    case: sst-injection
+    bypassed_tests_max: 0

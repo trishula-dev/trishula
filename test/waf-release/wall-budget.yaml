@@ -1,0 +1,50 @@
+# test/waf-release/wall-budget.yaml — TR-205 leaf (issue #293, contract 6).
+# The wall-budget table for the release suite sits here. The recorded-run
+# form governs. The job summaries record the measured walls. The
+# stage-wall-times JSONL lines carry stage, ended and wall_seconds.
+# This file carries the budgets the steps enforce plus the estimates.
+# The first rehearsal replaces the estimates with measurements. An
+# estimate row marked pending-first-run cites no measured number yet.
+# The first rehearsal adds the measured wall to its receipt, and a
+# corpus-row PR may re-pin the row.
+---
+budgets:
+  - stage: provision
+    job_timeout_minutes: 60
+    components:
+      cluster_create_wall_s: 900
+      image_build_wall_estimate: pending-first-run
+    estimate: "8-15 min"
+  - stage: corpus
+    job_timeout_minutes: 330
+    scan_job_deadline_s: 16200
+    estimate: pending-first-run   # the six-case per-PR subset scanned minutes; the full corpus runs hours
+  - stage: differential
+    job_timeout_minutes: 330
+    scan_job_deadline_s: 16200
+    extra: open-appsec bring-up plus policy activation
+    estimate: pending-first-run
+  - stage: sqlmap
+    job_timeout_minutes: 45
+    scan_job_deadline_s: 1800
+    estimate: "15-35 min"         # two sqlmap runs share the Job (calibration direct, then through the engine)
+  - stage: diff
+    job_timeout_minutes: 20
+    estimate: "1-2 min"
+  - stage: assets
+    job_timeout_minutes: 30
+    estimate: "2-5 min"
+  - stage: teardown
+    job_timeout_minutes: 15
+    delete_wait_s: 300
+    estimate: "2-5 min"
+
+cluster_wall:
+  # The managed cluster exists only across the run (issue #293
+  # contract 1: temporary per run, destroyed after). The billable
+  # window reads approximately: provision + max(corpus, differential)
+  # + sqlmap + diff + assets + teardown, on the pins.yaml node pool.
+  parallel_legs: [corpus, differential]
+  cost_note: >-
+    2 nodes of s-4vcpu-8gb for the run window; no load balancer service
+    exists on any leg, so the bill reads nodes only.

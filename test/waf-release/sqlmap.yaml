@@ -1,0 +1,88 @@
+# test/waf-release/sqlmap.yaml — TR-205 leaf (issue #293, contract 3;
+# recalibrated in the #300 fix pass).
+#
+# Target. sqlmap attacks the sqlfix endpoint THROUGH the engine. The
+# sqlfix fixture (fixtures/waf-harness/sqlfix-app) runs its concatenated
+# SELECT against a seeded sqlite table and answers with the rows — an
+# injection the engine misses executes and answers, never an echo.
+# The engine instance waf-harness-engine-sqlfix
+# (fixtures/waf-harness/manifests/sqlfix.yaml) fronts the fixture and
+# enforces the same waf-harness-gate bundle; the gate phase below runs
+# through it and records 0 successful injections.
+#
+# Calibration. A 0 through a target that cannot prove any block is a
+# vacuous record. So the scan Job carries TWO phases. The calibration
+# phase runs sqlmap DIRECTLY against the sqlfix Service (engine-less
+# route, once per run) and MUST read at least one successful injection:
+# the pass proof that the target can carry the gate. A calibration that
+# reads 0 fails the leg with the message "the target cannot prove the
+# gate". The gate phase then runs the same scan through the engine and
+# MUST read 0. The wall budget bounds the whole Job, both phases
+# included.
+#
+# Bounded runtime. Three layers bound the wall. The Job
+# activeDeadlineSeconds forms the hard kill inside the cluster. The
+# runner step timeout caps the driver wait. The wall budget sits in
+# wall-budget.yaml. The verdict MUST read completed: true. A deadline
+# kill or a step timeout fails the leg — an unbounded scan is a
+# breach, not a pass.
+#
+# Verdict. The scan pod appends its report stream (the REPORT_B64_*
+# markers over the /out tree; the session logs plus the sqlmap stdout
+# both travel the pod log). The runner collects the stream with
+# kubectl logs — a log read works on a completed pod, a cp does not —
+# and unpacks it at sqlmap-pod-out. The parser attributes each session
+# tree by the host token (the calibration tree under the sqlfix host,
+# the gate tree under the engine host). The calibration count MUST read
+# at least the min below, the gate count MUST read at most the max, and
+# the gate clean marker MUST appear. The markers list pins what the
+# parser reads, and the parse MUST NOT run a loose pattern.
+---
+target:                     # the gate phase: through the engine
+  scheme: http
+  engine_service: waf-harness-engine-sqlfix.waf-harness.svc.cluster.local
+  engine_port: 8080
+  route: "/sql?q=1"
+  host_token: "waf-harness-engine-sqlfix."
+calibration:                # the pass proof: direct, engine-less, once per run
+  service: sqlfix.waf-harness.svc.cluster.local
+  service_port: 8080
+  scheme: http
+  route: "/sql?q=1"
+  host_token: "sqlfix."
+image:           # from pins.yaml: the runner_job_images.python entry
+  python_key: python
+  digest_pinned: true
+install:
+  pin_file: test/waf-release/pins.yaml    # the sqlmap key feeds --require-hashes
+  requirements_line: "sqlmap==1.10.11 --hash=sha256:223a0dda06eadb8eb8a06d2e9ef90281919fdc2203d9cf5979da3311d6af440a"
+flags:
+  batch: true
+  level: 3
+  risk: 2
+  timeout: 10        # sqlmap's per-request timeout, seconds
+  threads: 4
+  flush_session: true
+  disable_coloring: true
+  output_dir: /out
+bounds:
+  job_active_deadline_seconds: 1800
+  runner_step_timeout_minutes: 35
+  wall_budget_minutes: 30
+verdict:
+  completed_required: true
+  successful_injections_max: 0        # the gate phase: through the engine
+  calibration_injections_min: 1       # the pass proof: direct
+  calibration_fail_message: "the target cannot prove the gate"
+  injection_markers:
+    - "is '.*' injectable"
+    - "might be injectable"
+    - "identified the following injection point"
+  clean_marker: "all tested parameters do not appear to be injectable"
+  pre_scan_probe: WH-SQLI-001       # 403 plus X-Trishula-Rule, through waf-harness-engine (/search)
+enforcement_probe_sqlfix:
+  rule: WH-SQLI-002                 # the pack rule the /sql UNION probe trips
+  service: waf-harness-engine-sqlfix.waf-harness.svc.cluster.local
+  service_port: 8080
+  request: "/sql?q=1%27%20UNION%20SELECT%20password%20FROM%20users--"
+  expect_http: 403

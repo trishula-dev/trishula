@@ -1,0 +1,1919 @@
+# TR-205 (issue #293) — the release-stage WAF suite: the full goTestWAF
+# corpus, the sqlmap SQLi gate and the open-appsec differential, on one
+# temporary managed Kubernetes cluster that the run provisions and
+# destroys (contract 1).
+#
+# The contract map (issue #293, RFC numbered):
+#   1. Provision a temporary managed cluster per run and destroy it
+#      after: the cluster create step plus the always() teardown job
+#      (output, artifact and tag-sweep resolution paths; a delete
+#      failure or a surviving cluster fails the teardown). Per-run
+#      token only (the operator secret WAF_RELEASE_DO_TOKEN); no
+#      kubeconfig artifact crosses jobs — every job re-fetches its own
+#      from the API.
+#   2. The full goTestWAF corpus against a pinned baseline: the corpus
+#      job; test/waf-release/baseline.yaml carries the
+#      pending-first-run semantics.
+#   3. The sqlmap stage against the deliberately SQLi-vulnerable
+#      fixture with pinned flags and a bounded runtime; the gate
+#      records 0 successful injections: the sqlmap job over
+#      test/waf-release/sqlmap.yaml.
+#   4. The differential: the same corpus on the open-appsec engine and
+#      the trishula engine; the diff publishes: the differential job
+#      plus the diff job over
+#      test/waf-release/openappsec-differential.yaml.
+#   5. Reports as release-attachable assets with checksums: the assets
+#      job (a strict SHA256SUMS plus the tag attach path; the workflow
+#      never cuts a tag — contract 7 keeps the tag cut with the
+#      operator).
+#   6. The per-stage wall times record in the job summaries (the
+#      recorded-run form): every stage writes its wall to
+#      GITHUB_STEP_SUMMARY plus the wall-times JSONL artifacts.
+#   7. workflow_dispatch rehearsal; the nightly schedule keeps the pins
+#      warm. DO NOT gate merges: this workflow runs on dispatch and at
+#      release cuts only, and the engine deploys from the tag checkout
+#      (the tag input), never a PR sha.
+#   8. Bypass findings land as corpus rows in the same change: the
+#      corpus verdict writes bypass-findings.md naming every offending
+#      row; the change path in test/waf-release/README.md applies.
+#
+# Pins: test/waf-release/pins.yaml carries the tool pins; the goTestWAF
+# image pin lives in test/waf-gate/pins.yaml (the #291 corpus-row
+# change path owns it). Every job reads its committed manifest under
+# test/waf-release/.
+name: waf-release-suite
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: >-
+          Release tag whose checkout the suite builds and deploys
+          (empty = the dispatch ref). The suite never cuts a tag.
+        required: false
+        default: ""
+        type: string
+      attach_release:
+        description: >-
+          Attach the report set to the tag GitHub release. The release
+          object attaches at the tag when the tag exists; a missing
+          tag fails the attach step (the operator keeps the tag cut).
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: "45 16 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trishula-waf-release-suite
+  cancel-in-progress: false
+
+jobs:
+  provision:
+    name: "TR-205 (issue #293) provision: the temporary managed cluster + the engine from the suite checkout"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      cluster_id: ${{ steps.cluster.outputs.cluster_id }}
+      cluster_name: ${{ steps.cluster.outputs.cluster_name }}
+    env:
+      SUITE_REF: ${{ inputs.tag || github.ref }}
+      ARTIFACT_DIR: ${{ github.workspace }}/artifacts
+      GW: ${{ github.workspace }}
+    steps:
+      - name: Open the run record
+        run: |
+          set -euo pipefail
+          mkdir -p "${ARTIFACT_DIR}"
+          printf '%s\n' "waf-release-suite run (issue #293) — suite ref ${SUITE_REF}, attach=${{ inputs.attach_release }}" \
+            >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Check out the suite checkout (the tag input, else the dispatch ref)
+        id: co
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Stage the manifest-reader venv (PyYAML, version-pinned)
+        run: |
+          python3 -m venv "${GITHUB_WORKSPACE}/.waf-release-venv"
+          "${GITHUB_WORKSPACE}/.waf-release-venv/bin/pip" install --quiet \
+            pyyaml==6.0.2
+          "${GITHUB_WORKSPACE}/.waf-release-venv/bin/python" -c \
+            'import yaml; print("pyyaml 6.0.2 ready")'
+
+      - name: Install doctl and helm at the pinned digests
+        run: |
+          set -euo pipefail
+          W_START="${SECONDS}"
+          record_wall() {
+            echo "waf-release stage $1: wall $((SECONDS - W_START)) s ended $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              | tee -a "${ARTIFACT_DIR}/summary-lines.md" >> /dev/null
+            printf '{"stage":"%s","wall_seconds":%s,"ended":"%s"}\n' "$1" \
+              "$((SECONDS - W_START))" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/wall-times.jsonl"
+          }
+          PY="${GW}/.waf-release-venv/bin/python"
+          PINS="${GW}/test/waf-release/pins.yaml"
+          DOCTL_TAG="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["doctl"]["release_tag"], end="")' "${PINS}" )"
+          DOCTL_VER="${DOCTL_TAG#v}"
+          DOCTL_SHA="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["doctl"]["linux_amd64_sha256"], end="")' "${PINS}" )"
+          HELM_TAG="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["helm"]["release_tag"], end="")' "${PINS}" )"
+          HELM_SHA="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["helm"]["linux_amd64_sha256"], end="")' "${PINS}" )"
+          echo "pins: doctl ${DOCTL_TAG}, helm ${HELM_TAG}"
+          {
+            TMP="$(mktemp -d)"
+            cd "${TMP}"
+            curl -sSfL -o doctl.tar.gz \
+              "https://github.com/digitalocean/doctl/releases/download/${DOCTL_TAG}/doctl-${DOCTL_VER}-linux-amd64.tar.gz"
+            printf '%s  doctl.tar.gz\n' "${DOCTL_SHA}" | sha256sum -c -
+            tar -xzf doctl.tar.gz
+            sudo install -m 755 doctl /usr/local/bin/doctl
+            curl -sSfL -o helm.tar.gz \
+              "https://get.helm.sh/helm-${HELM_TAG}-linux-amd64.tar.gz"
+            printf '%s  helm.tar.gz\n' "${HELM_SHA}" | sha256sum -c -
+            tar xzf helm.tar.gz
+            sudo install -m 755 "linux-amd64/helm" /usr/local/bin/helm
+            doctl version
+            helm version
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-tools.log"
+          echo "waf-release stage tools: doctl ${DOCTL_TAG} + helm ${HELM_TAG} installed (sha256 verified)" \
+            >> "${ARTIFACT_DIR}/summary-lines.md"
+          record_wall "tools"
+
+      - name: Auth doctl (per-run token; no printed values)
+        env:
+          DO_TOKEN: ${{ secrets.WAF_RELEASE_DO_TOKEN }}
+        run: |
+          set -euo pipefail
+          if test -z "${DO_TOKEN:-}"; then
+            echo "the secret WAF_RELEASE_DO_TOKEN reads empty — set it per test/waf-release/README.md" \
+              | tee -a "${GITHUB_STEP_SUMMARY}"
+            exit 1
+          fi
+          if ! echo "${DO_TOKEN}" | doctl auth init --access-token-stdin; then
+            if test -d ~/.config/doctl; then rm -rf ~/.config/doctl; fi
+            echo "${DO_TOKEN}" | doctl auth init --access-token-stdin
+          fi
+          echo "waf-release stage doctl-auth: token set (scope documented in test/waf-release/README.md)" \
+            >> "${ARTIFACT_DIR}/summary-lines.md"
+
+      - name: Create the temporary managed cluster (destroyed by the teardown job)
+        id: cluster
+        env:
+          RUN_ID_TAG: wafrs-suite-${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          W_START="${SECONDS}"
+          record_wall() {
+            echo "waf-release stage $1: wall $((SECONDS - W_START)) s ended $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              | tee -a "${ARTIFACT_DIR}/summary-lines.md" >> /dev/null
+            printf '{"stage":"%s","wall_seconds":%s,"ended":"%s"}\n' "$1" \
+              "$((SECONDS - W_START))" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/wall-times.jsonl"
+          }
+          PY="${GW}/.waf-release-venv/bin/python"
+          PINS="${GW}/test/waf-release/pins.yaml"
+          K8S="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["cluster"]["kubernetes_version"], end="")' "${PINS}" )"
+          REGION="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["cluster"]["region"], end="")' "${PINS}" )"
+          NODE_SIZE="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["cluster"]["node_size"], end="")' "${PINS}" )"
+          NODE_COUNT="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["cluster"]["node_count"], end="")' "${PINS}" )"
+          CREATE_TIMEOUT="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["cluster"]["create_timeout_s"], end="")' "${PINS}" )"
+          CLUSTER_NAME="wafrs-${{ github.run_id }}-${{ github.run_attempt }}"
+          echo "waf-release stage cluster: name ${CLUSTER_NAME} (k8s ${K8S}, ${REGION}, ${NODE_SIZE} x${NODE_COUNT})"
+          {
+            timeout "${CREATE_TIMEOUT}" doctl kubernetes cluster create "${CLUSTER_NAME}" \
+              --version "${K8S}" \
+              --region "${REGION}" \
+              --size "${NODE_SIZE}" \
+              --count "${NODE_COUNT}" \
+              --tag "${RUN_ID_TAG}" \
+              --wait \
+              --output json > "${ARTIFACT_DIR}/cluster-create.json"
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-cluster.log"
+          CLUSTER_ID="$( "${PY}" -c 'import json,sys; print(json.load(open(sys.argv[1]))["id"], end="")' "${ARTIFACT_DIR}/cluster-create.json" )"
+          printf '%s\n' "${CLUSTER_ID}" > "${ARTIFACT_DIR}/cluster-id.txt"
+          printf 'cluster_id=%s\n' "${CLUSTER_ID}" >> "${GITHUB_OUTPUT}"
+          printf 'cluster_name=%s\n' "${CLUSTER_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "waf-release stage cluster: created ${CLUSTER_NAME} id ${CLUSTER_ID}" \
+            >> "${ARTIFACT_DIR}/summary-lines.md"
+          record_wall "cluster"
+
+      - name: Export the kubeconfig (job-local; never an artifact)
+        run: |
+          set -euo pipefail
+          KUBE_FILE="${RUNNER_TEMP}/wafrs-kubeconfig"
+          doctl kubernetes cluster kubeconfig show "${{ steps.cluster.outputs.cluster_id }}" \
+            > "${KUBE_FILE}"
+          {
+            echo "KUBECONFIG=${KUBE_FILE}"
+          } >> "${GITHUB_ENV}"
+          kubectl get nodes -o wide
+          echo "waf-release stage kubeconfig: exported for this job only (no artifact carries it)" \
+            >> "${ARTIFACT_DIR}/summary-lines.md"
+
+      - name: Go toolchain (the build step; go.mod pins the version)
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build and push the suite images from the suite checkout
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMG_TAG: wafrs-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          W_START="${SECONDS}"
+          record_wall() {
+            echo "waf-release stage $1: wall $((SECONDS - W_START)) s ended $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/summary-lines.md"
+            printf '{"stage":"%s","wall_seconds":%s,"ended":"%s"}\n' "$1" \
+              "$((SECONDS - W_START))" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/wall-times.jsonl"
+          }
+          {
+            REG="ghcr.io/trishula-dev"
+            printf '%s' "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+            TMP="$(mktemp -d)"
+            build_img() { # build_img <go-package> <image-name> <binary-name>
+              local pkg="$1" img="$2" name="$3" bin tag dg
+              tag="${REG}/${img}:${IMG_TAG}"
+              bin="${TMP}/${name}"
+              CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "${bin}" "${pkg}"
+              docker build -q \
+                --label "org.opencontainers.image.revision=${{ steps.co.outputs.commit }}" \
+                --build-arg "BIN=${name}" \
+                -t "${tag}" \
+                -f "${GW}/fixtures/waf-harness/Dockerfile" "${TMP}"
+              dg="$(docker push "${tag}" | grep -oE 'sha256:[0-9a-f]{64}' | tail -1)"
+              printf '%s %s %s\n' "${name}" "${tag}" "${dg}" \
+                | tee -a "${ARTIFACT_DIR}/engine-image-digests.txt"
+            }
+            build_img ./cmd/engine engine engine
+            build_img ./cmd/operator operator operator
+            build_img ./fixtures/waf-harness/vuln-app vuln-app vuln-app
+            build_img ./fixtures/waf-harness/benign-app benign-app benign-app
+            build_img ./fixtures/waf-harness/sqlfix-app sqlfix-app sqlfix-app
+            printf 'suite ref %s built at image tag %s (checkout %s)\n' \
+              "${SUITE_REF}" "${IMG_TAG}" "${{ steps.co.outputs.commit }}" \
+              >> "${ARTIFACT_DIR}/engine-image-digests.txt"
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-images.log"
+          echo "waf-release stage images: 5 images built from the suite checkout and pushed (per-run tag; the set adds the sqlfix fixtures app)" \
+            >> "${ARTIFACT_DIR}/summary-lines.md"
+          record_wall "images"
+
+      - name: Deploy the fixtures + the engine (namespace, apps, engine service)
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMG_TAG: wafrs-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          W_START="${SECONDS}"
+          record_wall() {
+            echo "waf-release stage $1: wall $((SECONDS - W_START)) s ended $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/summary-lines.md"
+            printf '{"stage":"%s","wall_seconds":%s,"ended":"%s"}\n' "$1" \
+              "$((SECONDS - W_START))" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/wall-times.jsonl"
+          }
+          {
+            REG="ghcr.io/trishula-dev"
+            M="${GW}/fixtures/waf-harness/manifests"
+            kubectl apply -f "${M}/namespace.yaml"
+            kubectl -n waf-harness create secret docker-registry ghcr-wafrs \
+              --docker-server=ghcr.io \
+              --docker-username="${GITHUB_ACTOR}" \
+              --docker-password="${GHCR_TOKEN}" \
+              --dry-run=client -o yaml | kubectl apply -f -
+            kubectl apply -f "${M}/benign-app.yaml"
+            kubectl apply -f "${M}/vuln-app.yaml"
+            kubectl apply -f "${M}/sqlfix.yaml"
+            kubectl apply -f "${M}/engine.yaml"
+            kubectl -n waf-harness set image deployment/waf-harness-engine engine="${REG}/engine:${IMG_TAG}"
+            kubectl -n waf-harness set image deployment/vuln-app vuln-app="${REG}/vuln-app:${IMG_TAG}"
+            kubectl -n waf-harness set image deployment/benign-app benign-app="${REG}/benign-app:${IMG_TAG}"
+            kubectl -n waf-harness set image deployment/sqlfix-app sqlfix-app="${REG}/sqlfix-app:${IMG_TAG}"
+            kubectl -n waf-harness set image deployment/waf-harness-engine-sqlfix engine="${REG}/engine:${IMG_TAG}"
+            for d in waf-harness-engine vuln-app benign-app sqlfix-app waf-harness-engine-sqlfix; do
+              kubectl -n waf-harness patch deployment "${d}" --type merge \
+                -p '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"ghcr-wafrs"}]}}}}'
+            done
+            kubectl -n waf-harness rollout status --timeout=8m deployment/benign-app
+            kubectl -n waf-harness rollout status --timeout=8m deployment/vuln-app
+            kubectl -n waf-harness rollout status --timeout=8m deployment/waf-harness-engine
+            kubectl -n waf-harness rollout status --timeout=8m deployment/sqlfix-app
+            kubectl -n waf-harness rollout status --timeout=8m deployment/waf-harness-engine-sqlfix
+            kubectl -n waf-harness get deploy,pods,svc -o wide
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-fixtures.log"
+          echo "waf-release stage fixtures: the SQLi fixture (vuln-app), the sqlite SQLi fixture (sqlfix-app), the benign app and both engine instances are Ready" \
+            >> "${ARTIFACT_DIR}/summary-lines.md"
+          record_wall "fixtures"
+
+      # The composite's baseline stage (issue #289), re-run here against
+      # DOKS: the pass-through state the policy activation lands on.
+      - name: Pin the pre-gate baseline (probes through the engine, no policy yet)
+        run: |
+          set -euo pipefail
+          PY="${GW}/.waf-release-venv/bin/python"
+          PINS="${GW}/test/waf-release/pins.yaml"
+          CURL_REP="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["runner_job_images"]["curl"]["repository"], end="")' "${PINS}" )"
+          CURL_TAG="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["runner_job_images"]["curl"]["tag"], end="")' "${PINS}" )"
+          CURL_D64="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["runner_job_images"]["curl"]["digest_amd64"], end="")' "${PINS}" )"
+          {
+            cd "$(mktemp -d)"
+            IMG="${CURL_REP}:${CURL_TAG}@${CURL_D64}"
+            BASE_OK=0
+            for TRY in 1 2 3 4; do
+              READY=""
+              for N in $(seq 1 30); do
+                READY=$(kubectl -n waf-harness run "wafrs-ready-${TRY}-${N}" \
+                  --image="${IMG}" --rm -i --quiet --restart=Never \
+                  -- -s -o /dev/null -w '%{http_code}' \
+                  http://waf-harness-engine:8080/ 2>/dev/null || echo 000)
+                if [ "${READY}" = "200" ]; then break; fi
+                sleep 1
+              done
+              echo "baseline attempt ${TRY}: ready=${READY}"
+              if [ "${READY}" != "200" ]; then continue; fi
+              kubectl -n waf-harness run "wafrs-base-home-${TRY}" \
+                --image="${IMG}" --rm -i --quiet --restart=Never \
+                -- -s -i --max-time 10 http://waf-harness-engine:8080/ \
+                > "${ARTIFACT_DIR}/baseline-home.txt" 2>/dev/null || true
+              kubectl -n waf-harness run "wafrs-base-query-${TRY}" \
+                --image="${IMG}" --rm -i --quiet --restart=Never \
+                -- -s -i --max-time 10 'http://waf-harness-engine:8080/search?q=steel' \
+                > "${ARTIFACT_DIR}/baseline-query.txt" 2>/dev/null || true
+              BH="$(awk 'NR==1{print $2}' "${ARTIFACT_DIR}/baseline-home.txt")"
+              BQ="$(awk 'NR==1{print $2}' "${ARTIFACT_DIR}/baseline-query.txt")"
+              echo "baseline attempt ${TRY}: probes read ${BH}/${BQ}"
+              if [ "${BH}" = "200" ] && [ "${BQ}" = "200" ]; then
+                BASE_OK=1
+                break
+              fi
+              sleep 1
+            done
+            if [ "${BASE_OK}" != "1" ]; then
+              echo "baseline FAILED after 4 attempts: the probe record sits in this log"
+              exit 1
+            fi
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-baseline.log"
+          echo "waf-release stage baseline: PINNED — pass-through probes read 200, no policy active yet" \
+            >> "${ARTIFACT_DIR}/summary-lines.md"
+
+      - name: Apply the operator stack + the fixture pack (bundle compile + consult active)
+        run: |
+          set -euo pipefail
+          W_START="${SECONDS}"
+          record_wall() {
+            echo "waf-release stage $1: wall $((SECONDS - W_START)) s ended $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/summary-lines.md"
+            printf '{"stage":"%s","wall_seconds":%s,"ended":"%s"}\n' "$1" \
+              "$((SECONDS - W_START))" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/wall-times.jsonl"
+          }
+          {
+            IMG_TAG="wafrs-${{ github.run_id }}-${{ github.run_attempt }}"
+            REG="ghcr.io/trishula-dev"
+            M="${GW}/fixtures/waf-harness/manifests"
+            kubectl apply -f "${GW}/manifests/crd/wafpolicy-crd.yaml"
+            kubectl apply -f "${M}/operator-rbac.yaml"
+            kubectl apply -f "${M}/operator.yaml"
+            kubectl -n waf-harness set image deployment/waf-harness-operator operator="${REG}/operator:${IMG_TAG}"
+            kubectl -n waf-harness patch deployment waf-harness-operator --type merge \
+              -p '{"spec":{"template":{"spec":{"imagePullSecrets":[{"name":"ghcr-wafrs"}]}}}}'
+            kubectl -n waf-harness rollout status --timeout=8m deployment/waf-harness-operator
+            kubectl apply -f "${M}/policy-sqli.yaml"
+            BUNDLE=""
+            for _ in $(seq 1 120); do
+              if kubectl -n waf-harness get configmap dx1-wafpolicy-bundle >/dev/null 2>&1; then
+                BUNDLE=1
+                break
+              fi
+              sleep 0.5
+            done
+            test -n "${BUNDLE}"
+            kubectl -n waf-harness get configmap dx1-wafpolicy-bundle \
+              -o jsonpath='{.data.bundle\.json}' > bundle.json
+            test -s bundle.json
+            kubectl -n waf-harness exec deploy/waf-harness-engine -c engine -i \
+              -- /app -receive-bundle /bundle.json < bundle.json
+            kubectl -n waf-harness exec deploy/waf-harness-engine-sqlfix -c engine -i \
+              -- /app -receive-bundle /bundle.json < bundle.json
+            CONSULT=""
+            for _ in $(seq 1 120); do
+              if kubectl -n waf-harness logs deploy/waf-harness-engine --tail=30 2>/dev/null \
+                | grep -q "consult active"; then CONSULT=1; break; fi
+              sleep 0.5
+            done
+            test -n "${CONSULT}"
+            CONSULT=""
+            for _ in $(seq 1 120); do
+              if kubectl -n waf-harness logs deploy/waf-harness-engine-sqlfix --tail=30 2>/dev/null \
+                | grep -q "consult active"; then CONSULT=1; break; fi
+              sleep 0.5
+            done
+            test -n "${CONSULT}"
+            kubectl -n waf-harness logs deploy/waf-harness-engine --tail=20
+            kubectl -n waf-harness logs deploy/waf-harness-engine-sqlfix --tail=20
+            kubectl -n waf-harness get wafpolicy
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-policy.log"
+          echo "waf-release stage policy: bundle compiled and consult active" \
+            >> "${ARTIFACT_DIR}/summary-lines.md"
+          record_wall "policy"
+
+      # The suite-wide enforcement pin (the per-PR gate's WH-SQLI-001
+      # shape): the corpus, the sqlmap and the differential legs all
+      # depend on an enforced engine, so the pin probe gates here.
+      - name: The WH-SQLI-001 enforcement pin (403 + the rule header)
+        run: |
+          set -euo pipefail
+          W_START="${SECONDS}"
+          PY="${GW}/.waf-release-venv/bin/python"
+          PINS="${GW}/test/waf-release/pins.yaml"
+          CURL_REP="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["runner_job_images"]["curl"]["repository"], end="")' "${PINS}" )"
+          CURL_TAG="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["runner_job_images"]["curl"]["tag"], end="")' "${PINS}" )"
+          CURL_D64="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["runner_job_images"]["curl"]["digest_amd64"], end="")' "${PINS}" )"
+          record_wall() {
+            echo "waf-release stage $1: wall $((SECONDS - W_START)) s ended $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/summary-lines.md"
+            printf '{"stage":"%s","wall_seconds":%s,"ended":"%s"}\n' "$1" \
+              "$((SECONDS - W_START))" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/wall-times.jsonl"
+          }
+          {
+            cd "$(mktemp -d)"
+            IMG="${CURL_REP}:${CURL_TAG}@${CURL_D64}"
+            kubectl -n waf-harness run "wafrs-pin-probe" \
+              --image="${IMG}" --rm -i --quiet --restart=Never \
+              -- -s -i --max-time 15 \
+              'http://waf-harness-engine:8080/search?q=1%27%20UNION%20SELECT%20password%20FROM%20users--' \
+              > "${ARTIFACT_DIR}/stage-enforcement-pin-probe.txt" 2>/dev/null || true
+            V=pass
+            grep -q '^HTTP/.* 403' "${ARTIFACT_DIR}/stage-enforcement-pin-probe.txt" || V=fail
+            grep -qi '^x-trishula-rule:.*WH-SQLI-001' "${ARTIFACT_DIR}/stage-enforcement-pin-probe.txt" || V=fail
+            echo "waf-release stage enforcement-pin: WH-SQLI-001 probe verdict=${V}"
+            test "${V}" = "pass" || exit 1
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-enforcement-pin.log"
+          record_wall "enforcement-pin"
+
+      - name: Assemble the provision summary
+        if: always()
+        run: |
+          if test -f "${ARTIFACT_DIR}/summary-lines.md"; then
+            cat "${ARTIFACT_DIR}/summary-lines.md" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload the provision evidence (includes the cluster-id record)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wafrs-provision
+          path: artifacts/
+          if-no-files-found: warn
+
+  corpus:
+    name: "TR-205 (issue #293) corpus: the FULL goTestWAF corpus vs the pinned baseline"
+    needs: provision
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    outputs:
+      cluster_id: ${{ needs.provision.outputs.cluster_id }}
+    env:
+      SUITE_REF: ${{ inputs.tag || github.ref }}
+      ARTIFACT_DIR: ${{ github.workspace }}/corpus-artifacts
+      GW: ${{ github.workspace }}
+    steps:
+      - name: Open the run record
+        run: |
+          set -euo pipefail
+          mkdir -p "${ARTIFACT_DIR}"
+          printf '%s\n' "waf-release-suite corpus leg — suite ref ${SUITE_REF}" \
+            >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Check out the suite checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref }}
+          path: suite
+
+      - name: Stage the manifest-reader venv
+        run: |
+          python3 -m venv "${GITHUB_WORKSPACE}/.waf-release-venv"
+          "${GITHUB_WORKSPACE}/.waf-release-venv/bin/pip" install --quiet pyyaml==6.0.2
+          echo "pyyaml 6.0.2 ready"
+
+      - name: Auth doctl + re-fetch the job kubeconfig (per-run token; no artifact carries it)
+        env:
+          DO_TOKEN: ${{ secrets.WAF_RELEASE_DO_TOKEN }}
+        run: |
+          set -euo pipefail
+          PY="${GW}/.waf-release-venv/bin/python"
+          PINS="${GW}/suite/test/waf-release/pins.yaml"
+          DOCTL_TAG="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["doctl"]["release_tag"], end="")' "${PINS}" )"
+          DOCTL_VER="${DOCTL_TAG#v}"
+          DOCTL_SHA="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["doctl"]["linux_amd64_sha256"], end="")' "${PINS}" )"
+          TMP="$(mktemp -d)"
+          cd "${TMP}"
+          curl -sSfL -o doctl.tar.gz \
+            "https://github.com/digitalocean/doctl/releases/download/${DOCTL_TAG}/doctl-${DOCTL_VER}-linux-amd64.tar.gz"
+          printf '%s  doctl.tar.gz\n' "${DOCTL_SHA}" | sha256sum -c -
+          tar -xzf doctl.tar.gz
+          sudo install -m 755 doctl /usr/local/bin/doctl
+          if test -z "${DO_TOKEN:-}"; then
+            echo "the secret WAF_RELEASE_DO_TOKEN reads empty — set it per test/waf-release/README.md"
+            exit 1
+          fi
+          if ! echo "${DO_TOKEN}" | doctl auth init --access-token-stdin; then
+            if test -d ~/.config/doctl; then rm -rf ~/.config/doctl; fi
+            echo "${DO_TOKEN}" | doctl auth init --access-token-stdin
+          fi
+          doctl kubernetes cluster kubeconfig show "${{ needs.provision.outputs.cluster_id }}" \
+            > "${RUNNER_TEMP}/wafrs-kubeconfig"
+          echo "KUBECONFIG=${RUNNER_TEMP}/wafrs-kubeconfig" >> "${GITHUB_ENV}"
+
+      - name: Build the scan-job manifest from the committed corpus manifest
+        run: |
+          set -euo pipefail
+          PY="${GW}/.waf-release-venv/bin/python"
+          GW="${GW}/suite" ART="${ARTIFACT_DIR}" "${PY}" <<'PYEOF'
+          import os, sys, yaml
+          gw = os.environ["GW"]
+          art = os.environ["ART"]
+          full = yaml.safe_load(open(gw + "/test/waf-release/corpus-full.yaml"))
+          pins_gtw = yaml.safe_load(open(gw + "/test/waf-gate/pins.yaml"))["gotestwaf"]
+          f = full["flags"]
+          img = "%s@%s" % (pins_gtw["image_repo"], pins_gtw["image_digest"])
+          url = "http://%s:%s/" % (full["target"]["engine_service"], full["target"]["engine_port"])
+          b = full["bounds"]
+          fmt = f["report_formats"]
+          # The marker-stream wrapper. The scan runs as before; after the
+          # scan the same shell streams the /out tree through the pod log
+          # (tar over base64, between the REPORT_B64_* markers). The
+          # runner side reads the stream with kubectl logs — a log read
+          # works on a completed pod, a pod-cp does not. The Job still
+          # fails on a failed scan: the exit code travels, the stream
+          # only carries the evidence.
+          scan_cmd = " ".join([
+              "/app/gotestwaf",
+              "--url=" + url,
+              "--wafName=" + f["waf_name"],
+              "--nonBlockedAsPassed",
+              "--noEmailReport",
+              "--reportPath=/out",
+              "--reportFormat=" + fmt[0],
+              "--reportFormat=" + fmt[1],
+              "--sendDelay=%d" % f["send_delay_ms"],
+              "--randomDelay=%d" % f["random_delay_ms"],
+              "--workers=%d" % f["workers"],
+              "--blockStatusCodes=%s" % ",".join(str(x) for x in f["block_status_codes"]),
+              "--passStatusCodes=%s" % ",".join(str(x) for x in f["pass_status_codes"]),
+          ])
+          script = "\n".join([
+              "RC=0",
+              scan_cmd + " || RC=$?",
+              "echo scan-exit-${RC}",
+              "echo REPORT_B64_BEGIN",
+              "tar -C /out -czf - . 2>/dev/null | base64",
+              "echo REPORT_B64_END",
+              "exit \"${RC}\"",
+          ])
+          ns = {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "waf-release"}}
+          job = {
+              "apiVersion": "batch/v1",
+              "kind": "Job",
+              "metadata": {"name": "wafrs-corpus", "namespace": "waf-release"},
+              "spec": {
+                  "backoffLimit": b["backoff_limit"],
+                  "activeDeadlineSeconds": b["job_active_deadline_seconds"],
+                  "template": {"spec": {
+                      "restartPolicy": "Never",
+                      "containers": [{
+                          "name": "gotestwaf",
+                          "image": img,
+                          "imagePullPolicy": "IfNotPresent",
+                          "command": ["/bin/sh", "-ec"],
+                          "args": [script],
+                          "volumeMounts": [{"name": "out", "mountPath": "/out"}],
+                          "resources": full["resources"],
+                      }],
+                      "volumes": [{"name": "out", "emptyDir": {}}],
+                  }},
+              },
+          }
+          open(art + "/wafrs-corpus-job.yaml", "w").write("")
+          with open(art + "/wafrs-corpus-job.yaml", "w") as fh:
+              yaml.safe_dump_all([ns, job], fh, sort_keys=False)
+          open(art + "/wafrs-corpus-deadline.txt", "w").write(
+              str(b["job_active_deadline_seconds"] + b["runner_wait_slack_seconds"]))
+          sys.stdout.write("scan job written (image %s, url %s)\n" % (img, url))
+          PYEOF
+
+      - name: Launch the full-corpus scan job in the cluster
+        run: |
+          set -euo pipefail
+          W_START="${SECONDS}"
+          record_wall() {
+            echo "waf-release stage $1: wall $((SECONDS - W_START)) s ended $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/summary-lines.md"
+            printf '{"stage":"%s","wall_seconds":%s,"ended":"%s"}\n' "$1" \
+              "$((SECONDS - W_START))" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/wall-times.jsonl"
+          }
+          DEADLINE="$(cat "${ARTIFACT_DIR}/wafrs-corpus-deadline.txt")"
+          CLUSTER_ID="${{ needs.provision.outputs.cluster_id }}"
+          {
+            kubectl apply -f "${ARTIFACT_DIR}/wafrs-corpus-job.yaml"
+            kubectl -n waf-release wait --for=condition=complete job/wafrs-corpus --timeout="${DEADLINE}s" \
+              || {
+                   kubectl logs job/wafrs-corpus --all-containers --tail=200 \
+                     > "${ARTIFACT_DIR}/corpus-pod-crash.log" 2>&1 || true
+                   kubectl get events -n waf-release --field-selector involvedObject.name=wafrs-corpus \
+                     > "${ARTIFACT_DIR}/corpus-events.log" 2>&1 || true
+                   echo "the corpus job did not complete inside its bound (deadline ${DEADLINE}s, cluster ${CLUSTER_ID})"
+                   exit 1
+                 }
+            kubectl -n waf-release get job wafrs-corpus -o json \
+              > "${ARTIFACT_DIR}/corpus-job-status.json"
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-corpus-scan.log"
+          record_wall "corpus-scan"
+
+      - name: Collect the stream from the completed scan pod (the record + the copy-out)
+        run: |
+          set -euo pipefail
+          W_START="${SECONDS}"
+          record_wall() {
+            echo "waf-release stage $1: wall $((SECONDS - W_START)) s ended $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/summary-lines.md"
+            printf '{"stage":"%s","wall_seconds":%s,"ended":"%s"}\n' "$1" \
+              "$((SECONDS - W_START))" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/wall-times.jsonl"
+          }
+          PY="${GW}/.waf-release-venv/bin/python"
+          JOB_STATUS="${ARTIFACT_DIR}/corpus-job-status.json"
+          {
+            GW="${GW}/suite" JOB_STATUS="${JOB_STATUS}" "${PY}" <<'PYCHK'
+          import json, os, sys
+          st = json.load(open(os.environ["JOB_STATUS"])).get("status", {})
+          done = int(st.get("succeeded", 0) or 0) >= 1 or any(
+              c.get("type") == "Complete" or c.get("reason") == "JobComplete"
+              for c in st.get("conditions", []))
+          if not done:
+              sys.stderr.write("the job status does not parse complete: succeeded=%s conditions=%s\n"
+                               % (st.get("succeeded"), st.get("conditions")))
+              sys.exit(1)
+          PYCHK
+            POD="$( kubectl -n waf-release get pods -l job-name=wafrs-corpus -o json \
+              | "${PY}" -c 'import json,sys; ps=json.load(sys.stdin)["items"]; ok=[p["metadata"]["name"] for p in ps if p["status"]["phase"]=="Succeeded"]; print(ok[0]) if ok else sys.exit(1)' )"
+            kubectl logs -n waf-release "pod/${POD}" -c gotestwaf \
+              > "${ARTIFACT_DIR}/corpus-pod-stdout.log" 2>&1
+            test -s "${ARTIFACT_DIR}/corpus-pod-stdout.log"
+            ART="${ARTIFACT_DIR}" "${PY}" <<'PYTXT'
+          import os, sys
+          art = os.environ["ART"]
+          lines = open(art + "/corpus-pod-stdout.log", errors="replace").read().splitlines()
+          begins = [i for i, l in enumerate(lines) if l.strip() == "REPORT_B64_BEGIN"]
+          ends = [i for i, l in enumerate(lines) if l.strip() == "REPORT_B64_END"]
+          if not begins or not ends or ends[-1] <= begins[0]:
+              sys.stderr.write("the scan pod log carries no report stream markers\n")
+              sys.exit(1)
+          payload = "".join(l.strip() for l in lines[begins[0] + 1:ends[-1]])
+          open(art + "/corpus-report.b64", "w").write(payload)
+          sys.stdout.write("report stream read: %s b64 bytes\n" % len(payload))
+          PYTXT
+            mkdir -p "${ARTIFACT_DIR}/corpus-pod-out"
+            base64 -d "${ARTIFACT_DIR}/corpus-report.b64" | tar -xzf - -C "${ARTIFACT_DIR}/corpus-pod-out"
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-corpus-collect.log"
+          {
+            mkdir -p "${ARTIFACT_DIR}/reports"
+            J="$(find "${ARTIFACT_DIR}/corpus-pod-out" -name '*.json' | sort | head -1)"
+            H="$(find "${ARTIFACT_DIR}/corpus-pod-out" -name '*.html' | sort | head -1)"
+            test -n "${J}"
+            test -n "${H}"
+            cp "${J}" "${ARTIFACT_DIR}/reports/report-corpus.json"
+            cp "${H}" "${ARTIFACT_DIR}/reports/report-corpus.html"
+            kubectl -n waf-release delete job wafrs-corpus --ignore-not-found
+            echo "collected from the stream: $(basename "${J}"), $(basename "${H}")"
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-corpus-copy.log"
+          record_wall "corpus-collect"
+
+      - name: Corpus verdict (rows + FP + failed + baseline record or compare)
+        run: |
+          set -euo pipefail
+          W_START="${SECONDS}"
+          record_wall() {
+            echo "waf-release stage $1: wall $((SECONDS - W_START)) s ended $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/summary-lines.md"
+            printf '{"stage":"%s","wall_seconds":%s,"ended":"%s"}\n' "$1" \
+              "$((SECONDS - W_START))" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/wall-times.jsonl"
+          }
+          PY="${GW}/.waf-release-venv/bin/python"
+          {
+            GW="${GW}/suite" ART="${ARTIFACT_DIR}" "${PY}" <<'PYEOF'
+          import datetime as dt
+          import json, os, sys, yaml
+          gw = os.environ["GW"]
+          art = os.environ["ART"]
+          full = yaml.safe_load(open(gw + "/test/waf-release/corpus-full.yaml"))
+          rows = yaml.safe_load(open(gw + "/test/waf-release/corpus-rows.yaml"))["rows"]
+          base = yaml.safe_load(open(gw + "/test/waf-release/baseline.yaml"))
+          rep = json.load(open(art + "/reports/report-corpus.json"))
+          summ = rep.get("summary") or {}
+          tp = summ.get("true_positive_tests") or rep.get("true_positive_tests") or {}
+          tn = summ.get("true_negative_tests") or rep.get("true_negative_tests") or {}
+          tsets = tp.get("test_sets", {})
+          tsets_tn = tn.get("test_sets", {})
+          tstat = tp.get("summary", {})
+          tstat_tn = tn.get("summary", {})
+          problems = []
+          row_findings = []
+          for r in rows:
+              case = tsets.get(r["set"], {}).get(r["case"])
+              if case is None:
+                  problems.append("row missing: %s/%s" % (r["set"], r["case"]))
+                  continue
+              if int(case.get("bypassed", 0)) > int(r["bypassed_tests_max"]):
+                  problems.append("row over ceiling: %s/%s bypassed=%s"
+                                  % (r["set"], r["case"], case.get("bypassed")))
+                  row_findings.append({"set": r["set"], "case": r["case"],
+                                       "bypassed": int(case.get("bypassed", 0))})
+          for s in tsets_tn:
+              for c, st in tsets_tn[s].items():
+                  blocked = int(st.get("blocked", 0))
+                  if blocked > 0:
+                      problems.append("false-positive block: %s/%s blocked=%s" % (s, c, blocked))
+                      row_findings.append({"set": s, "case": c, "blocked_fp": blocked})
+          fp_blocked = int(tstat_tn.get("blocked_tests", 0))
+          if fp_blocked > 0:
+              problems.append("false-pos aggregate blocked=%s over 0" % fp_blocked)
+          fmax = int(full["verdict"]["failed_tests_max"])
+          failed_total = int(tstat.get("failed_tests", 0)) + int(tstat_tn.get("failed_tests", 0))
+          if failed_total > fmax:
+              problems.append("transport-failed tests %s over %s" % (failed_total, fmax))
+          recorded = base.get("recorded")
+          pend = base.get("pending_first_run")
+          action = "pending-record"
+          if not pend and recorded:
+              action = "compare"
+              for r in recorded.get("per_case", []):
+                  case = tsets.get(r["set"], {}).get(r["case"])
+                  if case is None:
+                      problems.append("baseline case missing: %s/%s" % (r["set"], r["case"]))
+                      continue
+                  if int(case.get("blocked", 0)) < int(r["blocked"]):
+                      problems.append("REGRESSION: %s/%s blocked=%s below recorded=%s"
+                                      % (r["set"], r["case"], case.get("blocked"), r["blocked"]))
+              sent = int(tstat.get("total_sent", 0)) or 1
+              meas = float(tstat.get("blocked_tests", 0)) / float(sent) * 100.0
+              rec = float(recorded.get("pass_rate_blocked_pct", 0.0))
+              floor = rec - float(base["comparison_rules"]["pass_rate_floor_pp"])
+              if meas < floor:
+                  problems.append("REGRESSION: pass rate %.2f%% under floor %.2f%%" % (meas, floor))
+          if action == "pending-record":
+              per_case = []
+              for s, cases in tsets.items():
+                  for c, st in cases.items():
+                      per_case.append({"set": s, "case": c, "sent": int(st.get("sent", 0)),
+                                       "blocked": int(st.get("blocked", 0)),
+                                       "bypassed": int(st.get("bypassed", 0)),
+                                       "unresolved": int(st.get("unresolved", 0)),
+                                       "failed": int(st.get("failed", 0))})
+              gtwp = yaml.safe_load(open(gw + "/test/waf-gate/pins.yaml"))["gotestwaf"]
+              recdoc = {
+                  "recorded_at_utc": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                  "run_id": os.environ.get("GITHUB_RUN_ID", "local"),
+                  "gotestwaf_digest": gtwp["image_digest"],
+                  "per_case": per_case,
+                  "pass_rate_blocked_pct": (float(tstat.get("blocked_tests", 0))
+                                            / float(int(tstat.get("total_sent", 0)) or 1)) * 100.0,
+                  "fp_blocked_total": fp_blocked,
+                  "failed_total": failed_total,
+              }
+              json.dump(recdoc, open(art + "/baseline-recorded.json", "w"), indent=2)
+          if row_findings or problems:
+              with open(art + "/bypass-findings.md", "w") as fh:
+                  fh.write("# Bypass findings — the corpus-row change path (issue #293 contract 8)\n\n")
+                  for p in problems:
+                      fh.write("- %s\n" % p)
+                  for fld in row_findings:
+                      fh.write("- row: %s/%s\n" % (fld.get("set"), fld.get("case")))
+                  fh.write("\nOne engine fix PR carries these rows plus the manifest change.\n")
+          verdict = {
+              "leg": "corpus",
+              "action": action,
+              "problems": problems,
+              "pass": not problems,
+              "sets_executed": sorted(tsets.keys()) + sorted(tsets_tn.keys()),
+          }
+          json.dump(verdict, open(art + "/corpus-verdict.json", "w"), indent=2)
+          for line in problems:
+              sys.stderr.write("corpus problem: %s\n" % line)
+          sys.exit(0 if not problems else 1)
+          PYEOF
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-corpus-verdict.log"
+          "${PY}" -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["pass"] else 1)' \
+            "${ARTIFACT_DIR}/corpus-verdict.json"
+          record_wall "corpus-verdict"
+
+      - name: Assemble the corpus summary
+        if: always()
+        run: |
+          if test -f "${ARTIFACT_DIR}/summary-lines.md"; then
+            cat "${ARTIFACT_DIR}/summary-lines.md" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+          if test -f "${ARTIFACT_DIR}/corpus-verdict.json"; then
+            python3 -c 'import json,sys; v=json.load(open(sys.argv[1])); print("waf-release corpus leg: verdict=%s action=%s sets=%s" % ("pass" if v["pass"] else "FAIL", v["action"], v["sets_executed"]))' \
+              "${ARTIFACT_DIR}/corpus-verdict.json" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload the corpus evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wafrs-corpus
+          path: corpus-artifacts/
+          if-no-files-found: warn
+
+  differential:
+    name: "TR-205 (issue #293) differential: the same corpus vs the open-appsec engine"
+    needs: provision
+    runs-on: ubuntu-24.04
+    timeout-minutes: 330
+    env:
+      SUITE_REF: ${{ inputs.tag || github.ref }}
+      ARTIFACT_DIR: ${{ github.workspace }}/differential-artifacts
+      GW: ${{ github.workspace }}
+    steps:
+      - name: Open the run record
+        run: |
+          set -euo pipefail
+          mkdir -p "${ARTIFACT_DIR}"
+          printf '%s\n' "waf-release-suite differential leg — suite ref ${SUITE_REF}" \
+            >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Check out the suite checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref }}
+          path: suite
+
+      - name: Stage the manifest-reader venv
+        run: |
+          python3 -m venv "${GITHUB_WORKSPACE}/.waf-release-venv"
+          "${GITHUB_WORKSPACE}/.waf-release-venv/bin/pip" install --quiet pyyaml==6.0.2
+          echo "pyyaml 6.0.2 ready"
+
+      - name: Auth doctl + re-fetch the job kubeconfig
+        env:
+          DO_TOKEN: ${{ secrets.WAF_RELEASE_DO_TOKEN }}
+        run: |
+          set -euo pipefail
+          PY="${GW}/.waf-release-venv/bin/python"
+          PINS="${GW}/suite/test/waf-release/pins.yaml"
+          DOCTL_TAG="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["doctl"]["release_tag"], end="")' "${PINS}" )"
+          DOCTL_VER="${DOCTL_TAG#v}"
+          DOCTL_SHA="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["doctl"]["linux_amd64_sha256"], end="")' "${PINS}" )"
+          TMP="$(mktemp -d)"
+          cd "${TMP}"
+          curl -sSfL -o doctl.tar.gz \
+            "https://github.com/digitalocean/doctl/releases/download/${DOCTL_TAG}/doctl-${DOCTL_VER}-linux-amd64.tar.gz"
+          printf '%s  doctl.tar.gz\n' "${DOCTL_SHA}" | sha256sum -c -
+          tar -xzf doctl.tar.gz
+          sudo install -m 755 doctl /usr/local/bin/doctl
+          if test -z "${DO_TOKEN:-}"; then
+            echo "the secret WAF_RELEASE_DO_TOKEN reads empty — set it per test/waf-release/README.md"
+            exit 1
+          fi
+          if ! echo "${DO_TOKEN}" | doctl auth init --access-token-stdin; then
+            if test -d ~/.config/doctl; then rm -rf ~/.config/doctl; fi
+            echo "${DO_TOKEN}" | doctl auth init --access-token-stdin
+          fi
+          doctl kubernetes cluster kubeconfig show "${{ needs.provision.outputs.cluster_id }}" \
+            > "${RUNNER_TEMP}/wafrs-kubeconfig"
+          echo "KUBECONFIG=${RUNNER_TEMP}/wafrs-kubeconfig" >> "${GITHUB_ENV}"
+
+      - name: Install helm at the pinned version (the differential runner carries none)
+        run: |
+          set -euo pipefail
+          PY="${GW}/.waf-release-venv/bin/python"
+          PINS="${GW}/suite/test/waf-release/pins.yaml"
+          HELM_TAG="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["helm"]["release_tag"], end="")' "${PINS}" )"
+          HELM_SHA="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["helm"]["linux_amd64_sha256"], end="")' "${PINS}" )"
+          {
+            TMP="$(mktemp -d)"
+            cd "${TMP}"
+            curl -sSfL -o helm.tar.gz \
+              "https://get.helm.sh/helm-${HELM_TAG}-linux-amd64.tar.gz"
+            printf '%s  helm.tar.gz\n' "${HELM_SHA}" | sha256sum -c -
+            tar xzf helm.tar.gz
+            sudo install -m 755 "linux-amd64/helm" /usr/local/bin/helm
+            helm version
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-helm-pin.log"
+          echo "waf-release stage helm-pin: ${HELM_TAG} installed (sha256 verified) before any helm call" \
+            >> "${ARTIFACT_DIR}/summary-lines.md"
+
+      - name: Bring up the open-appsec engine (pinned chart + pinned images)
+        run: |
+          set -euo pipefail
+          W_START="${SECONDS}"
+          record_wall() {
+            echo "waf-release stage $1: wall $((SECONDS - W_START)) s ended $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/summary-lines.md"
+            printf '{"stage":"%s","wall_seconds":%s,"ended":"%s"}\n' "$1" \
+              "$((SECONDS - W_START))" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/wall-times.jsonl"
+          }
+          PY="${GW}/.waf-release-venv/bin/python"
+          PINS="${GW}/suite/test/waf-release/pins.yaml"
+          CHART_URL="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["open_appsec"]["chart_url"], end="")' "${PINS}" )"
+          CHART_SHA="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["open_appsec"]["chart_sha256"], end="")' "${PINS}" )"
+          AGENT_D="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["open_appsec"]["agent"]["digest"], end="")' "${PINS}" )"
+          ATTACH_D="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["open_appsec"]["attachment"]["digest"], end="")' "${PINS}" )"
+          SYNC_D="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["open_appsec"]["smartsync_learning"]["digest"], end="")' "${PINS}" )"
+          SYNCF_D="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["open_appsec"]["smartsync_shared_files"]["digest"], end="")' "${PINS}" )"
+          TMP="$(mktemp -d)"
+          curl -sSfL -o "${TMP}/chart.tgz" "${CHART_URL}"
+          echo "${CHART_SHA}  ${TMP}/chart.tgz" | sha256sum -c -
+          SETS=(
+            --set "appsec.mode=standalone"
+            --set "appsec.persistence.enabled=false"
+            --set "appsec.tuning.enabled=false"
+            --set "controller.service.type=ClusterIP"
+            --set "controller.ingressClass=appsec-nginx"
+            --set "controller.ingressClassResource.name=appsec-nginx"
+            --set "controller.ingressClassResource.controllerValue=k8s.io/appsec-nginx"
+            --set "appsec.image.tag=1.1.36@${AGENT_D}"
+            --set "appsec.nginx.image.tag=1.1.36@${ATTACH_D}"
+            --set "appsec.learning.image.tag=latest@${SYNC_D}"
+            --set "appsec.storage.image.tag=latest@${SYNCF_D}"
+          )
+          helm --kubeconfig "${RUNNER_TEMP}/wafrs-kubeconfig" template "wafrs-appsec" "${TMP}/chart.tgz" \
+            --namespace appsec "${SETS[@]}" > "${ARTIFACT_DIR}/openappsec-rendered.yaml"
+          grep -q "@${AGENT_D}" "${ARTIFACT_DIR}/openappsec-rendered.yaml" \
+            || { echo "the rendered agent image does not carry the pinned digest"; exit 1; }
+          grep -q "@${ATTACH_D}" "${ARTIFACT_DIR}/openappsec-rendered.yaml" \
+            || { echo "the rendered attachment image does not carry the pinned digest"; exit 1; }
+          {
+            helm --kubeconfig "${RUNNER_TEMP}/wafrs-kubeconfig" upgrade --install "wafrs-appsec" "${TMP}/chart.tgz" \
+              --namespace appsec --create-namespace --wait --timeout 15m "${SETS[@]}"
+            kubectl -n appsec get pods,svc
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-openappsec-up.log"
+          echo "waf-release stage openappsec-up: chart + images pinned by digest, release applied" \
+            >> "${ARTIFACT_DIR}/summary-lines.md"
+          record_wall "openappsec-up"
+
+      - name: Resolve the prevent policy + apply the routed ingress
+        run: |
+          set -euo pipefail
+          PY="${GW}/.waf-release-venv/bin/python"
+          kubectl -n appsec get policies.openappsec.io -o json > "${ARTIFACT_DIR}/oapolicy-list.json" \
+            || true
+          GW="${GW}/suite" ART="${ARTIFACT_DIR}" "${PY}" <<'PYEOF'
+          import json, os, sys, yaml
+          art = os.environ["ART"]
+          gw = os.environ["GW"]
+          names = []
+          try:
+              items = json.load(open(art + "/oapolicy-list.json")).get("items", [])
+              names = [p["metadata"]["name"] for p in items]
+          except Exception:
+              pass
+          hit = [n for n in names if "prevent" in n]
+          if not hit:
+              sys.stderr.write("the installed open-appsec policy CR list carries no prevent name: %s\n" % names)
+              sys.exit(1)
+          docs = list(yaml.safe_load_all(open(gw + "/test/waf-release/openappsec-differential.yaml")))
+          obj = docs[1]
+          obj["metadata"]["annotations"]["openappsec.io/policy"] = hit[0]
+          yaml.safe_dump(obj, open(art + "/wafrs-openappsec-ingress.yaml", "w"), sort_keys=False)
+          open(art + "/oapolicy-resolved.txt", "w").write(hit[0] + "\n")
+          sys.stdout.write("resolved prevent policy: %s\n" % hit[0])
+          PYEOF
+          kubectl apply -f "${ARTIFACT_DIR}/wafrs-openappsec-ingress.yaml"
+          echo "waf-release stage openappsec-policy: policy $(cat "${ARTIFACT_DIR}/oapolicy-resolved.txt") wired onto the routed ingress" \
+            >> "${ARTIFACT_DIR}/summary-lines.md"
+
+      - name: The differential pre-scan enforcement probe (403 through the open-appsec engine)
+        run: |
+          set -euo pipefail
+          W_START="${SECONDS}"
+          PY="${GW}/.waf-release-venv/bin/python"
+          PINS="${GW}/suite/test/waf-release/pins.yaml"
+          CURL_REP="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["runner_job_images"]["curl"]["repository"], end="")' "${PINS}" )"
+          CURL_TAG="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["runner_job_images"]["curl"]["tag"], end="")' "${PINS}" )"
+          CURL_D64="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["runner_job_images"]["curl"]["digest_amd64"], end="")' "${PINS}" )"
+          record_wall() {
+            echo "waf-release stage $1: wall $((SECONDS - W_START)) s ended $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/summary-lines.md"
+            printf '{"stage":"%s","wall_seconds":%s,"ended":"%s"}\n' "$1" \
+              "$((SECONDS - W_START))" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/wall-times.jsonl"
+          }
+          {
+            kubectl -n waf-release create namespace waf-release --dry-run=client -o yaml \
+              | kubectl apply -f - >/dev/null
+            CTRL_SVC="$( kubectl -n appsec get svc -l app.kubernetes.io/component=controller -o jsonpath='{.items[0].metadata.name}' )"
+            test -n "${CTRL_SVC}"
+            echo "controller service: ${CTRL_SVC}.appsec.svc.cluster.local"
+            echo "${CTRL_SVC}" > "${ARTIFACT_DIR}/oap-controller-svc.txt"
+            IMG="${CURL_REP}:${CURL_TAG}@${CURL_D64}"
+            cd "$(mktemp -d)"
+            kubectl -n waf-release run "wafrs-diff-probe" \
+              --image="${IMG}" --rm -i --quiet --restart=Never \
+              -- -s -o /dev/null -w '%{http_code}' --max-time 15 \
+              "http://${CTRL_SVC}.appsec.svc.cluster.local/search?q=1%27%20UNION%20SELECT%20password%20FROM%20users--" \
+              > "${ARTIFACT_DIR}/diff-probe-status.txt" 2>/dev/null || echo 000 >> "${ARTIFACT_DIR}/diff-probe-status.txt"
+            STATUS="$(cat "${ARTIFACT_DIR}/diff-probe-status.txt")"
+            echo "open-appsec pre-scan probe status: ${STATUS}"
+            test "${STATUS}" = "403" || {
+              echo "the open-appsec engine did not enforce on the probe — the leg fails rather than records a silent pass"
+              exit 1
+            }
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-diff-probe.log"
+          record_wall "diff-probe"
+
+      - name: Build the differential scan-job manifest
+        run: |
+          set -euo pipefail
+          PY="${GW}/.waf-release-venv/bin/python"
+          GW="${GW}/suite" ART="${ARTIFACT_DIR}" \
+            CTRL_SVC="$(cat "${ARTIFACT_DIR}/oap-controller-svc.txt")" "${PY}" <<'PYEOF'
+          import os, sys, yaml
+          gw = os.environ["GW"]
+          art = os.environ["ART"]
+          svc = os.environ["CTRL_SVC"]
+          full = yaml.safe_load(open(gw + "/test/waf-release/corpus-full.yaml"))
+          pins_gtw = yaml.safe_load(open(gw + "/test/waf-gate/pins.yaml"))["gotestwaf"]
+          f = full["flags"]
+          b = full["bounds"]
+          fmt = f["report_formats"]
+          img = "%s@%s" % (pins_gtw["image_repo"], pins_gtw["image_digest"])
+          url = "http://%s.appsec.svc.cluster.local/" % svc
+          # The marker-stream wrapper (the corpus leg carries the same
+          # shape): the scan runs as before and the /out tree streams
+          # through the pod log after it, so the runner-side collection
+          # reads kubectl logs of a completed pod.
+          scan_cmd = " ".join([
+              "/app/gotestwaf",
+              "--url=" + url,
+              "--wafName=trishula-release-suite-differential-openappsec",
+              "--nonBlockedAsPassed",
+              "--noEmailReport",
+              "--reportPath=/out",
+              "--reportFormat=" + fmt[0],
+              "--reportFormat=" + fmt[1],
+              "--sendDelay=%d" % f["send_delay_ms"],
+              "--randomDelay=%d" % f["random_delay_ms"],
+              "--workers=%d" % f["workers"],
+              "--blockStatusCodes=%s" % ",".join(str(x) for x in f["block_status_codes"]),
+              "--passStatusCodes=%s" % ",".join(str(x) for x in f["pass_status_codes"]),
+          ])
+          script = "\n".join([
+              "RC=0",
+              scan_cmd + " || RC=$?",
+              "echo scan-exit-${RC}",
+              "echo REPORT_B64_BEGIN",
+              "tar -C /out -czf - . 2>/dev/null | base64",
+              "echo REPORT_B64_END",
+              "exit \"${RC}\"",
+          ])
+          ns = {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "waf-release"}}
+          job = {
+              "apiVersion": "batch/v1",
+              "kind": "Job",
+              "metadata": {"name": "wafrs-diff-openappsec", "namespace": "waf-release"},
+              "spec": {
+                  "backoffLimit": b["backoff_limit"],
+                  "activeDeadlineSeconds": b["job_active_deadline_seconds"],
+                  "template": {"spec": {
+                      "restartPolicy": "Never",
+                      "containers": [{
+                          "name": "gotestwaf",
+                          "image": img,
+                          "imagePullPolicy": "IfNotPresent",
+                          "command": ["/bin/sh", "-ec"],
+                          "args": [script],
+                          "volumeMounts": [{"name": "out", "mountPath": "/out"}],
+                          "resources": full["resources"],
+                      }],
+                      "volumes": [{"name": "out", "emptyDir": {}}],
+                  }},
+              },
+          }
+          with open(art + "/wafrs-diff-job.yaml", "w") as fh:
+              yaml.safe_dump_all([ns, job], fh, sort_keys=False)
+          open(art + "/wafrs-diff-deadline.txt", "w").write(
+              str(b["job_active_deadline_seconds"] + b["runner_wait_slack_seconds"]))
+          sys.stdout.write("differential scan job written (image %s, url %s)\n" % (img, url))
+          PYEOF
+
+      - name: Launch the differential scan job
+        run: |
+          set -euo pipefail
+          W_START="${SECONDS}"
+          record_wall() {
+            echo "waf-release stage $1: wall $((SECONDS - W_START)) s ended $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/summary-lines.md"
+            printf '{"stage":"%s","wall_seconds":%s,"ended":"%s"}\n' "$1" \
+              "$((SECONDS - W_START))" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/wall-times.jsonl"
+          }
+          DEADLINE="$(cat "${ARTIFACT_DIR}/wafrs-diff-deadline.txt")"
+          {
+            kubectl apply -f "${ARTIFACT_DIR}/wafrs-diff-job.yaml"
+            kubectl -n waf-release wait --for=condition=complete job/wafrs-diff-openappsec --timeout="${DEADLINE}s" \
+              || {
+                   kubectl logs job/wafrs-diff-openappsec --all-containers --tail=200 \
+                     > "${ARTIFACT_DIR}/diff-pod-crash.log" 2>&1 || true
+                   echo "the differential job did not complete inside its bound (deadline ${DEADLINE}s)"
+                   exit 1
+                 }
+            kubectl -n waf-release get job wafrs-diff-openappsec -o json \
+              > "${ARTIFACT_DIR}/diff-job-status.json"
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-diff-scan.log"
+          record_wall "diff-scan"
+
+      - name: Collect the differential stream from the completed scan pod
+        run: |
+          set -euo pipefail
+          W_START="${SECONDS}"
+          record_wall() {
+            echo "waf-release stage $1: wall $((SECONDS - W_START)) s ended $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/summary-lines.md"
+            printf '{"stage":"%s","wall_seconds":%s,"ended":"%s"}\n' "$1" \
+              "$((SECONDS - W_START))" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/wall-times.jsonl"
+          }
+          PY="${GW}/.waf-release-venv/bin/python"
+          JOB_STATUS="${ARTIFACT_DIR}/diff-job-status.json"
+          {
+            GW="${GW}/suite" JOB_STATUS="${JOB_STATUS}" "${PY}" <<'PYCHK'
+          import json, os, sys
+          st = json.load(open(os.environ["JOB_STATUS"])).get("status", {})
+          done = int(st.get("succeeded", 0) or 0) >= 1 or any(
+              c.get("type") == "Complete" or c.get("reason") == "JobComplete"
+              for c in st.get("conditions", []))
+          if not done:
+              sys.stderr.write("the job status does not parse complete: succeeded=%s conditions=%s\n"
+                               % (st.get("succeeded"), st.get("conditions")))
+              sys.exit(1)
+          PYCHK
+            POD="$( kubectl -n waf-release get pods -l job-name=wafrs-diff-openappsec -o json \
+              | "${PY}" -c 'import json,sys; ps=json.load(sys.stdin)["items"]; ok=[p["metadata"]["name"] for p in ps if p["status"]["phase"]=="Succeeded"]; print(ok[0]) if ok else sys.exit(1)' )"
+            kubectl logs -n waf-release "pod/${POD}" -c gotestwaf \
+              > "${ARTIFACT_DIR}/diff-pod-stdout.log" 2>&1
+            test -s "${ARTIFACT_DIR}/diff-pod-stdout.log"
+            ART="${ARTIFACT_DIR}" "${PY}" <<'PYTXT'
+          import os, sys
+          art = os.environ["ART"]
+          lines = open(art + "/diff-pod-stdout.log", errors="replace").read().splitlines()
+          begins = [i for i, l in enumerate(lines) if l.strip() == "REPORT_B64_BEGIN"]
+          ends = [i for i, l in enumerate(lines) if l.strip() == "REPORT_B64_END"]
+          if not begins or not ends or ends[-1] <= begins[0]:
+              sys.stderr.write("the scan pod log carries no report stream markers\n")
+              sys.exit(1)
+          payload = "".join(l.strip() for l in lines[begins[0] + 1:ends[-1]])
+          open(art + "/diff-report.b64", "w").write(payload)
+          sys.stdout.write("report stream read: %s b64 bytes\n" % len(payload))
+          PYTXT
+            mkdir -p "${ARTIFACT_DIR}/diff-pod-out"
+            base64 -d "${ARTIFACT_DIR}/diff-report.b64" | tar -xzf - -C "${ARTIFACT_DIR}/diff-pod-out"
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-diff-collect.log"
+          {
+            mkdir -p "${ARTIFACT_DIR}/reports"
+            J="$(find "${ARTIFACT_DIR}/diff-pod-out" -name '*.json' | sort | head -1)"
+            H="$(find "${ARTIFACT_DIR}/diff-pod-out" -name '*.html' | sort | head -1)"
+            test -n "${J}"
+            test -n "${H}"
+            cp "${J}" "${ARTIFACT_DIR}/reports/report-openappsec.json"
+            cp "${H}" "${ARTIFACT_DIR}/reports/report-openappsec.html"
+            kubectl -n waf-release delete job wafrs-diff-openappsec --ignore-not-found
+            echo "collected from the stream: $(basename "${J}"), $(basename "${H}")"
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-diff-copy.log"
+          record_wall "diff-collect"
+          echo "waf-release stage differential: scan complete, record-only verdict" \
+            >> "${ARTIFACT_DIR}/summary-lines.md"
+
+      - name: Assemble the differential summary
+        if: always()
+        run: |
+          if test -f "${ARTIFACT_DIR}/summary-lines.md"; then
+            cat "${ARTIFACT_DIR}/summary-lines.md" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload the differential evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wafrs-differential
+          path: differential-artifacts/
+          if-no-files-found: warn
+
+  sqlmap:
+    name: "TR-205 (issue #293) sqlmap: the SQLi gate at 0 successful injections"
+    needs: corpus
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      SUITE_REF: ${{ inputs.tag || github.ref }}
+      ARTIFACT_DIR: ${{ github.workspace }}/sqlmap-artifacts
+      GW: ${{ github.workspace }}
+    steps:
+      - name: Open the run record
+        run: |
+          set -euo pipefail
+          mkdir -p "${ARTIFACT_DIR}"
+          printf '%s\n' "waf-release-suite sqlmap leg — suite ref ${SUITE_REF}" \
+            >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Check out the suite checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ inputs.tag || github.ref }}
+          path: suite
+
+      - name: Stage the manifest-reader venv
+        run: |
+          python3 -m venv "${GITHUB_WORKSPACE}/.waf-release-venv"
+          "${GITHUB_WORKSPACE}/.waf-release-venv/bin/pip" install --quiet pyyaml==6.0.2
+          echo "pyyaml 6.0.2 ready"
+
+      - name: Auth doctl + re-fetch the job kubeconfig
+        env:
+          DO_TOKEN: ${{ secrets.WAF_RELEASE_DO_TOKEN }}
+        run: |
+          set -euo pipefail
+          PY="${GW}/.waf-release-venv/bin/python"
+          PINS="${GW}/suite/test/waf-release/pins.yaml"
+          DOCTL_TAG="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["doctl"]["release_tag"], end="")' "${PINS}" )"
+          DOCTL_VER="${DOCTL_TAG#v}"
+          DOCTL_SHA="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["doctl"]["linux_amd64_sha256"], end="")' "${PINS}" )"
+          TMP="$(mktemp -d)"
+          cd "${TMP}"
+          curl -sSfL -o doctl.tar.gz \
+            "https://github.com/digitalocean/doctl/releases/download/${DOCTL_TAG}/doctl-${DOCTL_VER}-linux-amd64.tar.gz"
+          printf '%s  doctl.tar.gz\n' "${DOCTL_SHA}" | sha256sum -c -
+          tar -xzf doctl.tar.gz
+          sudo install -m 755 doctl /usr/local/bin/doctl
+          if test -z "${DO_TOKEN:-}"; then
+            echo "the secret WAF_RELEASE_DO_TOKEN reads empty — set it per test/waf-release/README.md"
+            exit 1
+          fi
+          if ! echo "${DO_TOKEN}" | doctl auth init --access-token-stdin; then
+            if test -d ~/.config/doctl; then rm -rf ~/.config/doctl; fi
+            echo "${DO_TOKEN}" | doctl auth init --access-token-stdin
+          fi
+          doctl kubernetes cluster kubeconfig show "${{ needs.corpus.outputs.cluster_id }}" \
+            > "${RUNNER_TEMP}/wafrs-kubeconfig"
+          echo "KUBECONFIG=${RUNNER_TEMP}/wafrs-kubeconfig" >> "${GITHUB_ENV}"
+
+      - name: The pre-scan enforcement probes (both engine instances, before the scan)
+        run: |
+          set -euo pipefail
+          PY="${GW}/.waf-release-venv/bin/python"
+          PINS="${GW}/suite/test/waf-release/pins.yaml"
+          SMAN="${GW}/suite/test/waf-release/sqlmap.yaml"
+          CURL_REP="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["runner_job_images"]["curl"]["repository"], end="")' "${PINS}" )"
+          CURL_TAG="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["runner_job_images"]["curl"]["tag"], end="")' "${PINS}" )"
+          CURL_D64="$( "${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["runner_job_images"]["curl"]["digest_amd64"], end="")' "${PINS}" )"
+          read -r SF_SVC SF_PORT SF_ROUTE SF_RULE <<EOF
+          $( "${PY}" -c 'import yaml,sys; s=yaml.safe_load(open(sys.argv[1]))["enforcement_probe_sqlfix"]; print(s["service"], s["service_port"], s["request"], s["rule"], end="")' "${SMAN}" )
+          EOF
+          {
+            cd "$(mktemp -d)"
+            IMG="${CURL_REP}:${CURL_TAG}@${CURL_D64}"
+            kubectl -n waf-harness run "wafrs-sqlmap-pre" \
+              --image="${IMG}" --rm -i --quiet --restart=Never \
+              -- -s -i --max-time 15 \
+              'http://waf-harness-engine:8080/search?q=1%27%20UNION%20SELECT%20password%20FROM%20users--' \
+              > "${ARTIFACT_DIR}/sqlmap-pre-probe.txt" 2>/dev/null || true
+            V=pass
+            grep -q '^HTTP/.* 403' "${ARTIFACT_DIR}/sqlmap-pre-probe.txt" || V=fail
+            grep -qi '^x-trishula-rule:.*WH-SQLI-001' "${ARTIFACT_DIR}/sqlmap-pre-probe.txt" || V=fail
+            echo "sqlmap pre-scan probe verdict=${V} (the primary engine, /search)"
+            test "${V}" = "pass" || exit 1
+            kubectl -n waf-harness run "wafrs-sqlmap-pre-sqlfix" \
+              --image="${IMG}" --rm -i --quiet --restart=Never \
+              -- -s -i --max-time 15 \
+              "http://${SF_SVC}:${SF_PORT}${SF_ROUTE}" \
+              > "${ARTIFACT_DIR}/sqlmap-pre-probe-sqlfix.txt" 2>/dev/null || true
+            V=pass
+            grep -q '^HTTP/.* 403' "${ARTIFACT_DIR}/sqlmap-pre-probe-sqlfix.txt" || V=fail
+            grep -qi "x-trishula-rule:.*${SF_RULE}" "${ARTIFACT_DIR}/sqlmap-pre-probe-sqlfix.txt" || V=fail
+            echo "sqlmap pre-scan probe verdict=${V} (the sqlfix engine, ${SF_RULE})"
+            test "${V}" = "pass" || exit 1
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-sqlmap-pre.log"
+
+      - name: Build the bounded sqlmap scan-job manifest
+        run: |
+          set -euo pipefail
+          PY="${GW}/.waf-release-venv/bin/python"
+          GW="${GW}/suite" ART="${ARTIFACT_DIR}" "${PY}" <<'PYEOF'
+          import os, sys, yaml
+          gw = os.environ["GW"]
+          art = os.environ["ART"]
+          sm = yaml.safe_load(open(gw + "/test/waf-release/sqlmap.yaml"))
+          pins = yaml.safe_load(open(gw + "/test/waf-release/pins.yaml"))
+          pyimg = pins["runner_job_images"][sm["image"]["python_key"]]
+          pyref = "%s:%s@%s" % (pyimg["repository"], pyimg["tag"], pyimg["digest"])
+          f = sm["flags"]
+          t = sm["target"]
+          url = "%s://%s:%s%s" % (t["scheme"], t["engine_service"], t["engine_port"], t["route"])
+          cal = sm["calibration"]
+          cal_url = "%s://%s:%s%s" % (cal["scheme"], cal["service"], cal["service_port"], cal["route"])
+          extra = ""
+          if f.get("flush_session"):
+              extra += " --flush-session"
+          if f.get("disable_coloring"):
+              extra += " --disable-coloring"
+          # Two runs share one bounded Job. The calibration run dials the
+          # sqlfix Service directly (the engine-less route) and reads the
+          # pass proof: at least one successful injection. The gate run
+          # dials the engine front and must read none. The pod script
+          # drops -e on purpose: every phase failure reads into
+          # CAL_RC/ENGINE_RC and every failure path still streams the
+          # evidence. The plain base64 (never a -w flag) keeps the GNU
+          # and busybox forms equal; the extractor strips the line breaks
+          # either way (GNU wraps at 76 by default).
+          base_cmd = ("sqlmap --batch --level=%d --risk=%d --timeout=%d --threads=%d"
+                      % (f["level"], f["risk"], f["timeout"], f["threads"])) \
+                      + extra + " --output-dir=%s -u " % (f["output_dir"],)
+          cal_cmd = base_cmd + "'" + cal_url + "'"
+          eng_cmd = base_cmd + "'" + url + "'"
+          script = "\n".join([
+              "set -u",
+              "START=$(date +%s)",
+              "stream() { echo REPORT_B64_BEGIN; tar -C /out -czf - . 2>/dev/null | base64; echo REPORT_B64_END; }",
+              "pip install --no-cache-dir --require-hashes -r /app/requirements.txt || { stream; exit 1; }",
+              "CAL_RC=0",
+              cal_cmd + " || CAL_RC=$?",
+              "echo WAFRS-SQLMAP-PHASE-ENGINE",
+              "ENGINE_RC=0",
+              eng_cmd + " || ENGINE_RC=$?",
+              'echo "wafrs-sqlmap-rc calibration=${CAL_RC} engine=${ENGINE_RC}"',
+              'echo "sqlmap wall_seconds=$(( $(date +%s) - START ))"',
+              "stream",
+              'if test "${CAL_RC}" -ne 0 || test "${ENGINE_RC}" -ne 0; then exit 1; fi',
+              "exit 0",
+          ])
+          cm = {
+              "apiVersion": "v1", "kind": "ConfigMap",
+              "metadata": {"name": "wafrs-sqlmap-req", "namespace": "waf-release"},
+              "data": {"requirements.txt": sm["install"]["requirements_line"] + "\n"},
+          }
+          job = {
+              "apiVersion": "batch/v1", "kind": "Job",
+              "metadata": {"name": "wafrs-sqlmap", "namespace": "waf-release"},
+              "spec": {
+                  "backoffLimit": 0,
+                  "activeDeadlineSeconds": sm["bounds"]["job_active_deadline_seconds"],
+                  "template": {"spec": {
+                      "restartPolicy": "Never",
+                      "containers": [{
+                          "name": "sqlmap",
+                          "image": pyref,
+                          "imagePullPolicy": "IfNotPresent",
+                          "command": ["/bin/sh", "-c"],
+                          "args": [script],
+                          "volumeMounts": [
+                              {"name": "req", "mountPath": "/app"},
+                              {"name": "out", "mountPath": "/out"},
+                          ],
+                      }],
+                      "volumes": [
+                          {"name": "req", "configMap": {"name": "wafrs-sqlmap-req"}},
+                          {"name": "out", "emptyDir": {}},
+                      ],
+                  }},
+              },
+          }
+          with open(art + "/wafrs-sqlmap-job.yaml", "w") as fh:
+              yaml.safe_dump_all([cm, job], fh, sort_keys=False)
+          open(art + "/wafrs-sqlmap-step-minutes.txt", "w").write(
+              str(sm["bounds"]["runner_step_timeout_minutes"]))
+          sys.stdout.write("sqlmap job written (image %s, url %s)\n" % (pyref, url))
+          PYEOF
+
+      - name: Launch the bounded sqlmap scan job
+        run: |
+          set -euo pipefail
+          W_START="${SECONDS}"
+          record_wall() {
+            echo "waf-release stage $1: wall $((SECONDS - W_START)) s ended $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/summary-lines.md"
+            printf '{"stage":"%s","wall_seconds":%s,"ended":"%s"}\n' "$1" \
+              "$((SECONDS - W_START))" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/wall-times.jsonl"
+          }
+          STEP_MIN="$(cat "${ARTIFACT_DIR}/wafrs-sqlmap-step-minutes.txt")"
+          {
+            kubectl -n waf-release apply -f "${ARTIFACT_DIR}/wafrs-sqlmap-job.yaml"
+            kubectl -n waf-release wait --for=condition=complete job/wafrs-sqlmap --timeout="$((STEP_MIN * 60))s" \
+              || {
+                   kubectl logs job/wafrs-sqlmap --all-containers --tail=200 \
+                     > "${ARTIFACT_DIR}/sqlmap-pod-log-killed.log" 2>&1 || true
+                   echo "the sqlmap job did not complete inside its bound (${STEP_MIN} min) — a runtime breach"
+                   exit 1
+                 }
+            kubectl -n waf-release get job wafrs-sqlmap -o json \
+              > "${ARTIFACT_DIR}/sqlmap-job-status.json"
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-sqlmap-scan.log"
+          record_wall "sqlmap-scan"
+
+      - name: Collect the sqlmap stream and run the two-phase gate
+        run: |
+          set -euo pipefail
+          W_START="${SECONDS}"
+          record_wall() {
+            echo "waf-release stage $1: wall $((SECONDS - W_START)) s ended $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/summary-lines.md"
+            printf '{"stage":"%s","wall_seconds":%s,"ended":"%s"}\n' "$1" \
+              "$((SECONDS - W_START))" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              >> "${ARTIFACT_DIR}/wall-times.jsonl"
+          }
+          PY="${GW}/.waf-release-venv/bin/python"
+          JOB_STATUS="${ARTIFACT_DIR}/sqlmap-job-status.json"
+          {
+            GW="${GW}/suite" JOB_STATUS="${JOB_STATUS}" "${PY}" <<'PYCHK'
+          import json, os, sys
+          st = json.load(open(os.environ["JOB_STATUS"])).get("status", {})
+          done = int(st.get("succeeded", 0) or 0) >= 1 or any(
+              c.get("type") == "Complete" or c.get("reason") == "JobComplete"
+              for c in st.get("conditions", []))
+          if not done:
+              sys.stderr.write("the job status does not parse complete: succeeded=%s conditions=%s\n"
+                               % (st.get("succeeded"), st.get("conditions")))
+              sys.exit(1)
+          PYCHK
+            POD="$( kubectl -n waf-release get pods -l job-name=wafrs-sqlmap -o json \
+              | "${PY}" -c 'import json,sys; ps=json.load(sys.stdin)["items"]; ok=[p["metadata"]["name"] for p in ps if p["status"]["phase"]=="Succeeded"]; print(ok[0]) if ok else sys.exit(1)' )"
+            kubectl logs -n waf-release "pod/${POD}" -c sqlmap \
+              > "${ARTIFACT_DIR}/sqlmap-stdout.log" 2>&1
+            test -s "${ARTIFACT_DIR}/sqlmap-stdout.log"
+            ART="${ARTIFACT_DIR}" "${PY}" <<'PYTXT'
+          import os, sys
+          art = os.environ["ART"]
+          lines = open(art + "/sqlmap-stdout.log", errors="replace").read().splitlines()
+          begins = [i for i, l in enumerate(lines) if l.strip() == "REPORT_B64_BEGIN"]
+          ends = [i for i, l in enumerate(lines) if l.strip() == "REPORT_B64_END"]
+          if not begins or not ends or ends[-1] <= begins[0]:
+              sys.stderr.write("the scan pod log carries no report stream markers\n")
+              sys.exit(1)
+          payload = "".join(l.strip() for l in lines[begins[0] + 1:ends[-1]])
+          open(art + "/sqlmap-report.b64", "w").write(payload)
+          sys.stdout.write("report stream read: %s b64 bytes\n" % len(payload))
+          PYTXT
+            mkdir -p "${ARTIFACT_DIR}/sqlmap-pod-out"
+            base64 -d "${ARTIFACT_DIR}/sqlmap-report.b64" | tar -xzf - -C "${ARTIFACT_DIR}/sqlmap-pod-out"
+            kubectl -n waf-release delete job wafrs-sqlmap --ignore-not-found
+            echo "collected the sqlmap output tree from the stream (pod ${POD})"
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-sqlmap-collect.log"
+          record_wall "sqlmap-collect"
+          {
+            GW="${GW}/suite" ART="${ARTIFACT_DIR}" JOB_STATUS="${JOB_STATUS}" "${PY}" <<'PYEOF'
+          import json, os, re, sys, yaml
+          gw = os.environ["GW"]
+          art = os.environ["ART"]
+          sm = yaml.safe_load(open(gw + "/test/waf-release/sqlmap.yaml"))
+          stdout = open(art + "/sqlmap-stdout.log", errors="replace").read()
+          sep = "WAFRS-SQLMAP-PHASE-ENGINE"
+          idx = stdout.find(sep)
+          cal_stdout = stdout[:idx] if idx >= 0 else ""
+          eng_stdout = stdout[idx:] if idx >= 0 else stdout
+          base = art + "/sqlmap-pod-out"
+          cal_token = sm["calibration"]["host_token"]
+          eng_token = sm["target"]["host_token"]
+          cal_tree = ""
+          eng_tree = ""
+          if os.path.isdir(base):
+              for root2, _, files in os.walk(base):
+                  for fn in files:
+                      if fn == "log":
+                          text = open(os.path.join(root2, fn), errors="replace").read()
+                          # The long token first: the engine session
+                          # path carries the calibration token as a
+                          # substring (waf-harness-engine-sqlfix.
+                          # contains sqlfix.), so a cal-branch test
+                          # would swallow the engine rows (the review
+                          # row on the tree classification, 4540898564).
+                          if eng_token in root2:
+                              eng_tree += text
+                          elif cal_token in root2:
+                              cal_tree += text
+          cal_text = cal_stdout + "\n" + cal_tree
+          eng_text = eng_stdout + "\n" + eng_tree
+          def count(pat_list, text):
+              n = 0
+              for pattern in pat_list:
+                  n += len(re.findall(pattern, text))
+              return n
+          cal_inj = count(sm["verdict"]["injection_markers"], cal_text)
+          eng_inj = count(sm["verdict"]["injection_markers"], eng_text)
+          clean = sm["verdict"]["clean_marker"].lower() in eng_text.lower()
+          st = json.load(open(os.environ["JOB_STATUS"])).get("status", {})
+          completed = int(st.get("succeeded", 0) or 0) >= 1 or any(
+              c.get("type") == "Complete" or c.get("reason") == "JobComplete"
+              for c in st.get("conditions", []))
+          rcs = None
+          m = re.search(r"wafrs-sqlmap-rc calibration=(\d+) engine=(\d+)", stdout)
+          if m:
+              rcs = {"calibration": int(m.group(1)), "engine": int(m.group(2))}
+          problems = []
+          if idx < 0:
+              problems.append("the phase separator is absent from the pod stdout "
+                              "(the pod script predates the two-phase build)")
+          cal_min = int(sm["verdict"]["calibration_injections_min"])
+          if cal_inj < cal_min:
+              problems.append(sm["verdict"]["calibration_fail_message"]
+                              + ": the direct run reads %s injectable markers under %s"
+                              % (cal_inj, cal_min))
+          if eng_inj > int(sm["verdict"]["successful_injections_max"]):
+              problems.append("successful injection markers through the engine read %s over %s"
+                              % (eng_inj, sm["verdict"]["successful_injections_max"]))
+          if sm["verdict"]["completed_required"] and not completed:
+              problems.append("the scan job did not complete inside its bound — a runtime breach")
+          if not clean and eng_inj == 0:
+              problems.append("no clean verdict line and no injection marker in the engine phase: the run died early")
+          v = {"leg": "sqlmap", "completed": completed, "sqlmap_rcs": rcs,
+               "calibration_injections": cal_inj, "injections": eng_inj, "clean": clean,
+               "problems": problems, "pass": not problems}
+          json.dump(v, open(art + "/sqlmap-verdict.json", "w"), indent=2)
+          for p in problems:
+              sys.stderr.write("sqlmap problem: %s\n" % p)
+          sys.exit(0 if not problems else 1)
+          PYEOF
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-sqlmap-verdict.log"
+          "${PY}" -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1]))["pass"] else 1)' \
+            "${ARTIFACT_DIR}/sqlmap-verdict.json"
+          record_wall "sqlmap-verdict"
+
+      - name: Assemble the sqlmap summary
+        if: always()
+        run: |
+          if test -f "${ARTIFACT_DIR}/summary-lines.md"; then
+            cat "${ARTIFACT_DIR}/summary-lines.md" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+          if test -f "${ARTIFACT_DIR}/sqlmap-verdict.json"; then
+            python3 - "${ARTIFACT_DIR}/sqlmap-verdict.json" <<'PYEOF' >> "${GITHUB_STEP_SUMMARY}"
+          import json, sys
+          v = json.load(open(sys.argv[1]))
+          print("waf-release sqlmap leg: verdict=%s calibration_injections=%s injections=%s completed=%s"
+                % ("pass" if v["pass"] else "FAIL", v.get("calibration_injections"),
+                   v.get("injections"), v.get("completed")))
+          PYEOF
+          fi
+
+      - name: Upload the sqlmap evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wafrs-sqlmap
+          path: sqlmap-artifacts/
+          if-no-files-found: warn
+
+  diff:
+    name: "TR-205 (issue #293) diff: the per-corpus engine diff table"
+    needs: [corpus, differential]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      ARTIFACT_DIR: ${{ github.workspace }}/diff-out
+    steps:
+      - name: Open the run record
+        run: |
+          set -euo pipefail
+          mkdir -p "${ARTIFACT_DIR}"
+          printf '%s\n' "waf-release-suite diff leg" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Pull every leg's evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: "wafrs-*"
+          merge-multiple: true
+          path: pulled
+
+      - name: Build the diff table (join per test set and case)
+        run: |
+          set -euo pipefail
+          W_START="${SECONDS}"
+          {
+            ART="${ARTIFACT_DIR}" python3 <<'PYEOF'
+          import json, os, sys
+          art = os.environ["ART"]
+          def find(rel):
+              p = os.path.join("pulled", rel)
+              if not os.path.exists(p):
+                  sys.exit("the report does not exist under " + p)
+              return json.load(open(p))
+          t = find("reports/report-corpus.json")
+          o = find("reports/report-openappsec.json")
+          def sets(rep):
+              summ = rep.get("summary") or {}
+              tp = summ.get("true_positive_tests") or rep.get("true_positive_tests") or {}
+              return tp.get("test_sets", {}), (tp.get("summary") or {})
+          tsets, tstat = sets(t)
+          osets, ostat = sets(o)
+          rows = []
+          for s in sorted(set(tsets) | set(osets)):
+              cases = sorted(set(tsets.get(s, {})) | set(osets.get(s, {})))
+              for c in cases:
+                  rows.append({"test_set": s, "test_case": c,
+                               "trishula": tsets.get(s, {}).get(c) or {},
+                               "openappsec": osets.get(s, {}).get(c) or {}})
+          json.dump({"rows": rows, "trishula_summary": tstat, "openappsec_summary": ostat},
+                    open(art + "/diff.json", "w"), indent=2)
+          lines = ["# The engine diff (issue #293 contract 4)", "",
+                   "| test set | test case | trishula blocked/sent | open-appsec blocked/sent | delta blocked |",
+                   "|---|---|---|---|---|"]
+          for r in rows:
+              tb = int((r["trishula"] or {}).get("blocked", 0))
+              ts = int((r["trishula"] or {}).get("sent", 0))
+              ob = int((r["openappsec"] or {}).get("blocked", 0))
+              osv = int((r["openappsec"] or {}).get("sent", 0))
+              lines.append("| %s | %s | %s/%s | %s/%s | %s |" % (r["test_set"], r["test_case"], tb, ts, ob, osv, tb - ob))
+          lines.append("")
+          lines.append("- trishula aggregate: blocked %s / sent %s" % (tstat.get("blocked_tests"), tstat.get("total_sent")))
+          lines.append("- open-appsec aggregate: blocked %s / sent %s" % (ostat.get("blocked_tests"), ostat.get("total_sent")))
+          open(art + "/diff.md", "w").write("\n".join(lines) + "\n")
+          sys.stdout.write("diff rows: %s\n" % len(rows))
+          PYEOF
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-diff.log"
+          echo "waf-release stage diff: the per-corpus diff table built" \
+            >> "${ARTIFACT_DIR}/summary-lines.md"
+          echo "waf-release stage diff: wall $((SECONDS - W_START)) s" >> "${ARTIFACT_DIR}/summary-lines.md"
+
+      - name: Echo the diff head into the summary
+        run: |
+          if test -f "${ARTIFACT_DIR}/diff.md"; then
+            head -8 "${ARTIFACT_DIR}/diff.md" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload the diff evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wafrs-diff
+          path: diff-out/
+          if-no-files-found: warn
+
+  assets:
+    name: "TR-205 (issue #293) assets: the report set + the checksum sheet + the release attach"
+    needs: [corpus, sqlmap, differential, diff]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ARTIFACT_DIR: ${{ github.workspace }}/reports
+      TAG: ${{ inputs.tag }}
+    steps:
+      - name: Open the run record
+        run: |
+          set -euo pipefail
+          mkdir -p "${ARTIFACT_DIR}"
+          printf '%s\n' "waf-release-suite assets leg — tag=${TAG}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Pull every leg's evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: "wafrs-*"
+          path: pulled
+
+      - name: Assemble the release report set + the strict checksum sheet
+        run: |
+          set -euo pipefail
+          {
+            cp "pulled/wafrs-corpus/reports/report-corpus.json" "${ARTIFACT_DIR}/"
+            cp "pulled/wafrs-corpus/reports/report-corpus.html" "${ARTIFACT_DIR}/"
+            cp "pulled/wafrs-differential/reports/report-openappsec.json" "${ARTIFACT_DIR}/"
+            cp "pulled/wafrs-differential/reports/report-openappsec.html" "${ARTIFACT_DIR}/"
+            cp "pulled/wafrs-diff/diff.json" "${ARTIFACT_DIR}/"
+            cp "pulled/wafrs-diff/diff.md" "${ARTIFACT_DIR}/"
+            cp "pulled/wafrs-sqlmap/sqlmap-verdict.json" "${ARTIFACT_DIR}/"
+            cp "pulled/wafrs-sqlmap/sqlmap-stdout.log" "${ARTIFACT_DIR}/sqlmap-scan-stdout.log"
+            test -f "pulled/wafrs-corpus/baseline-recorded.json" \
+              && cp "pulled/wafrs-corpus/baseline-recorded.json" "${ARTIFACT_DIR}/" || true
+            test -f "pulled/wafrs-corpus/bypass-findings.md" \
+              && cp "pulled/wafrs-corpus/bypass-findings.md" "${ARTIFACT_DIR}/" || true
+            find pulled -maxdepth 2 -name 'wall-times.jsonl' -exec cat {} \; \
+              >> "${ARTIFACT_DIR}/wall-times.jsonl" 2>/dev/null || true
+            N="$(find "${ARTIFACT_DIR}" -maxdepth 1 -type f ! -name 'SHA256SUMS' | wc -l | tr -d ' ')"
+            if test "${N}" -eq 0; then
+              echo "the report set reads empty — nothing to checksum"
+              exit 1
+            fi
+            ( cd "${ARTIFACT_DIR}" && find . -maxdepth 1 -type f ! -name 'SHA256SUMS' -print0 \
+              | sort -z | xargs -0 sha256sum > SHA256SUMS )
+            echo "report set: ${N} files + SHA256SUMS"
+          } 2>&1 | tee "stage-assets.log"
+          echo "waf-release stage assets: report set assembled with SHA256SUMS" \
+            >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Attach the report set to the tag release (the workflow never cuts a tag)
+        if: ${{ inputs.attach_release == true && inputs.tag != '' }}
+        run: |
+          set -euo pipefail
+          {
+            gh api "repos/${{ github.repository }}/git/ref/tags/${TAG}" > /dev/null \
+              || { echo "the tag ${TAG} does not exist — the operator keeps the tag cut; attach refused"; exit 1; }
+            if gh release view "${TAG}" --repo "${{ github.repository }}" --json id > /dev/null 2>&1; then
+              gh release upload "${TAG}" "${ARTIFACT_DIR}"/* --repo "${{ github.repository }}" --clobber
+            else
+              gh release create "${TAG}" "${ARTIFACT_DIR}"/* --verify-tag \
+                --repo "${{ github.repository }}" \
+                --title "WAF release suite reports — ${TAG}" \
+                --notes "The issue #293 release-stage WAF suite reports (the full corpus, the sqlmap gate, the engine diff) with SHA256SUMS."
+            fi
+            echo "waf-release assets: attached to release ${TAG}"
+          } 2>&1 | tee "stage-attach.log"
+
+      - name: Record the artifacts-only path (the rehearsal record)
+        if: ${{ inputs.attach_release != true || inputs.tag == '' }}
+        run: |
+          set -euo pipefail
+          echo "waf-release assets leg: attach not requested (rehearsal) — the report set stays a run artifact" \
+            >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Attest the report set (the repo's attest convention)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: reports/*
+
+      - name: Render the wall-time table into the summary (the recorded-run form)
+        run: |
+          set -euo pipefail
+          {
+            echo "## The recorded stage walls"
+            echo ""
+            echo '| stage | wall seconds | ended (UTC) |'
+            echo '|---|---|---|'
+            cat "${ARTIFACT_DIR}/wall-times.jsonl" 2>/dev/null \
+              | python3 -c '
+          import json, sys
+          seen = {}
+          for line in sys.stdin:
+              line = line.strip()
+              if not line:
+                  continue
+              try:
+                  r = json.loads(line)
+              except Exception:
+                  continue
+              seen[r.get("stage", "?")] = "| %s | %s | %s |" % (r.get("stage", "?"), r.get("wall_seconds", "?"), r.get("ended", ""))
+          for k in seen:
+              print(seen[k])
+          ' >> "${GITHUB_STEP_SUMMARY}"
+            echo ""
+            echo "## The checksum sheet (SHA256SUMS over the report set)"
+            echo '```'
+            cat "${ARTIFACT_DIR}/SHA256SUMS"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload the canonical report set
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wafrs-reports-canon
+          path: reports/
+          if-no-files-found: warn
+
+  teardown:
+    name: "TR-205 (issue #293) teardown: destroy the cluster on every path (fail on a breach)"
+    needs: [provision, corpus, sqlmap, differential, diff, assets]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      ARTIFACT_DIR: ${{ github.workspace }}/artifacts
+    steps:
+      - name: Install doctl at the pinned digest + auth
+        env:
+          DO_TOKEN: ${{ secrets.WAF_RELEASE_DO_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${ARTIFACT_DIR}"
+          if test -z "${DO_TOKEN:-}"; then
+            echo "the secret WAF_RELEASE_DO_TOKEN reads empty — set it per test/waf-release/README.md"
+            exit 1
+          fi
+          TMP="$(mktemp -d)"
+          cd "${TMP}"
+          curl -sSfL -o doctl.tar.gz \
+            "https://github.com/digitalocean/doctl/releases/download/v2.1.0/doctl-2.1.0-linux-amd64.tar.gz"
+          printf '%s  doctl.tar.gz\n' \
+            "e9d0488c56cfe6369d3310a14e14b0a6cd71a37091503d016d28e31630ee3010" | sha256sum -c -
+          tar -xzf doctl.tar.gz
+          sudo install -m 755 doctl /usr/local/bin/doctl
+          if ! echo "${DO_TOKEN}" | doctl auth init --access-token-stdin; then
+            if test -d ~/.config/doctl; then rm -rf ~/.config/doctl; fi
+            echo "${DO_TOKEN}" | doctl auth init --access-token-stdin
+          fi
+
+      - name: Pull the provision evidence (the cluster-id record when the output reads empty)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: "wafrs-provision*"
+          path: provision-art
+
+      - name: Destroy the cluster (force; verify absent; fail on a breach)
+        run: |
+          set -euo pipefail
+          {
+            CLUSTER_ID="${{ needs.provision.outputs.cluster_id }}"
+            CLUSTER_NAME="wafrs-${{ github.run_id }}-${{ github.run_attempt }}"
+            RUN_TAG="wafrs-suite-${{ github.run_id }}"
+            if test -d provision-art; then
+              for f in provision-art/*/cluster-id.txt; do
+                if test -f "${f}"; then
+                  ART_ID="$(cat "${f}" | tr -d '[:space:]')"
+                  if test -n "${ART_ID}" && test -z "${CLUSTER_ID}"; then
+                    CLUSTER_ID="${ART_ID}"
+                  fi
+                fi
+              done
+            fi
+            doctl kubernetes cluster list -o json > clusters.json
+            TARGETS="$( CLUSTER_ID="${CLUSTER_ID}" CLUSTER_NAME="${CLUSTER_NAME}" RUN_TAG="${RUN_TAG}" python3 <<'PYEOF'
+          import json, os, sys
+          cid = os.environ["CLUSTER_ID"]
+          cname = os.environ["CLUSTER_NAME"]
+          rtag = os.environ["RUN_TAG"]
+          hits = []
+          for c in json.load(open("clusters.json")):
+              tags = " ".join(c.get("tags") or [])
+              if cid and (c.get("id") == cid):
+                  hits.append(c["id"])
+              elif c.get("name") == cname or cname in c.get("name", "") or (rtag and rtag in tags):
+                  hits.append(c["id"] or c["name"])
+          print(" ".join(hits))
+          PYEOF
+          )"
+            if test -z "${TARGETS}" && test -n "${CLUSTER_ID}"; then
+              TARGETS="${CLUSTER_ID}"
+            fi
+            if test -z "${TARGETS}"; then
+              echo "waf-release teardown: no cluster on the record (nothing to delete)"
+            fi
+            for T in ${TARGETS}; do
+              echo "waf-release teardown: deleting ${T}"
+              OK=0
+              for _ in 1 2 3; do
+                if doctl kubernetes cluster delete "${T}" --force; then OK=1; break; fi
+                sleep 10
+              done
+              if [ "${OK}" != "1" ]; then
+                echo "waf-release teardown BREACH: the delete of ${T} failed 3 times — read the step log"
+                exit 1
+              fi
+            done
+            LEFT="pending"
+            for _ in $(seq 1 30); do
+              doctl kubernetes cluster list -o json > clusters-verify.json
+              LEFT="$( CLUSTER_ID="${TARGETS}" CLUSTER_NAME="${CLUSTER_NAME}" RUN_TAG="${RUN_TAG}" python3 <<'PYEOF'
+          import json, os
+          names = set(x.strip() for x in os.environ["CLUSTER_ID"].split())
+          cname = os.environ["CLUSTER_NAME"]
+          rtag = os.environ["RUN_TAG"]
+          left = []
+          for c in json.load(open("clusters-verify.json")):
+              tags = " ".join(c.get("tags") or [])
+              key = c.get("id") or c.get("name")
+              if (key and key in names) or c.get("name") == cname or cname in c.get("name", "") or (rtag and rtag in tags):
+                  left.append(key)
+          print(" ".join(left))
+          PYEOF
+          )"
+              if test -z "${LEFT}"; then break; fi
+              echo "teardown wait: still present: ${LEFT}"
+              sleep 10
+            done
+            if test -n "${LEFT}"; then
+              echo "waf-release teardown BREACH: the cluster list still carries ${LEFT}"
+              exit 1
+            fi
+            echo "waf-release teardown: the cluster list reads clean"
+          } 2>&1 | tee "${ARTIFACT_DIR}/stage-teardown.log"
+          echo "waf-release teardown: cluster destroyed, the list verified empty" \
+            >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload the teardown record
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: wafrs-teardown
+          path: artifacts/
+          if-no-files-found: warn

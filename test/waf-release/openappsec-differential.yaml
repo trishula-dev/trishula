@@ -1,0 +1,79 @@
+# test/waf-release/openappsec-differential.yaml — TR-205 leaf (issue #293,
+# contract 4): the differential leg. The same full corpus scans the
+# open-appsec engine and the trishula engine. The run publishes the diff.
+#
+# Engine under test. open-appsec installs through its documented helm
+# chart (the Ingress NGINX variant) in standalone mode. Standalone
+# reads local management, no SaaS connection, no agent token. The chart
+# brings its own Ingress NGINX controller. An Ingress object routes all
+# hosts to the same vuln-app fixture the trishula engine fronts. Both
+# engines read the same upstream answers. The corpus driver resolves
+# the controller service and points the scanner at it. No load balancer
+# and no node port exists on this leg (the controller service stays
+# ClusterIP).
+#
+# Policy. The differential pins the installed policy custom resource
+# whose name ends in -prevent. The chart installs the best-practice
+# policy pair in detect and prevent forms. The committed ingress
+# annotation carries a __WAFRS_POLICY_NAME__ placeholder that the
+# driver substitutes at apply time. A policy that reads detect would
+# publish a diff against a not blocking target. The pre-scan probe
+# below gates the leg, so the record only carries an enforcing engine.
+#
+# Cold-start note. open-appsec ships its signatures active and its
+# machine-learning model learning. The diff therefore records the
+# signature-layer answer on top of a fresh model. The record-only
+# stance of the leg (no verdict, no baseline) keeps that bias visible.
+# The diff table names both engines per corpus row and never scores
+# the suite red off the differential.
+---
+helm_release:
+  name: wafrs-appsec
+  namespace: appsec
+  mode: standalone
+  persistence_enabled: false
+  tuning_enabled: false
+  controller_service_type: ClusterIP
+  ingress_class: appsec-nginx
+ingress:
+  manifest: test/waf-release/openappsec-differential.yaml   # this file (the object below)
+  policy_annotation_placeholder: __WAFRS_POLICY_NAME__
+  policy_resolution: the policy.openappsec.io CR whose name contains 'prevent'
+  backend:
+    namespace: waf-harness
+    service: vuln-app
+    port: 8080
+pre_scan_probe:
+  request: "/search?q=1%27%20UNION%20SELECT%20password%20FROM%20users--"
+  expect_http: 403
+scanner:
+  corpus: corpus-full.yaml     # the same embedded corpus, the same flags, waf_name distinguishes the report
+  waf_name: trishula-release-suite-differential-openappsec
+  target_resolution: kubectl service discovery, cluster-internal (controller svc, port 80)
+verdict: record-only            # the diff publishes; no baseline and no red path on this leg
+diff:
+  join_key: (test_set, test_case)
+  columns: [engine, sent, blocked, bypassed, unresolved, failed]
+  publish: [diff.md, diff.json]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: wafrs-openappsec-route
+  namespace: waf-harness
+  labels:
+    app.kubernetes.io/part-of: trishula-waf-release-suite
+  annotations:
+    openappsec.io/policy: __WAFRS_POLICY_NAME__
+spec:
+  ingressClassName: appsec-nginx
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: vuln-app
+                port:
+                  number: 8080

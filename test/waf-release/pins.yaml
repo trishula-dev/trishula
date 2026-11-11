@@ -1,0 +1,116 @@
+# test/waf-release/pins.yaml — TR-205 leaf (issue #293, the release-stage
+# WAF suite). Every tool and image pin for the release suite sits here.
+# The step scripts and the workflow read this file at run time.
+# They fetch only the objects at these digests. A pin change is a
+# version-bump PR. It edits this file plus the README table.
+#
+# Digest provenance. Every digest below was recorded at authoring time
+# (2026-11-11). The sources: the live registry API or the upstream
+# checksum file.
+#   - doctl: the doctl-2.1.0-checksums.sha256 release asset.
+#   - wallarm/gotestwaf 0.5.8: the docker registry manifest GET on the
+#     0.5.8 tag (an OCI image index). The index carries the linux amd64
+#     and arm64 children plus two unknown-arch attestation entries.
+#     That matches the attestation-entry pattern in
+#     test/waf-gate/pins.yaml. The digest matches the #291 pin
+#     byte-for-byte; re-verified.
+#   - python 3.12-slim and curlimages/curl: registry manifest GET.
+#   - sqlmap: the PyPI JSON API release-file digests plus the git-tag
+#     tarball digest (both recorded). The wheel hash feeds pip
+#     --require-hashes at run time.
+#   - open-appsec chart: sha256 over the downloaded tgz. The image
+#     digests: registry manifest GET on the chart's own image tags.
+#   - helm: sha256 over the downloaded get.helm.sh tarball.
+# The runner-side jobs re-verify each fetch with sha256sum -c. The
+# Kubernetes pulls verify the digests themselves (a digest pull cannot
+# return other bytes).
+---
+cluster:
+  provider: digitalocean-doks
+  kubernetes_version: 1.37.0-do.3
+  region: nyc1
+  node_size: s-4vcpu-8gb
+  node_count: 2
+  create_timeout_s: 900
+  # The version tracks the newest DOKS Available Version at authoring
+  # time (the DO changelog, 2026-11-11). DO keeps only the latest minor
+  # line open. When DO retires a version, the create step fails. The
+  # fix is a pins PR that records the new version here.
+
+doctl:
+  release_tag: v2.1.0
+  checksums_asset: doctl-2.1.0-checksums.sha256
+  linux_amd64_sha256: e9d0488c56cfe6369d3310a14e14b0a6cd71a37091503d016d28e31630ee3010
+  linux_arm64_sha256: 0b4cb4dad8aa54f74bd422367c895c3022e74da80eca6331538024c35d7cf39f
+
+helm:
+  release_tag: v3.22.1
+  linux_amd64_sha256: 896cf63684a42a723d61c980369d6e588330927deb13676ca0d85006dd6da0ea
+  # helm 4.3.1 exists. The open-appsec chart documentation checks out
+  # against the 3.x line. The release suite pins the 3.x line until
+  # someone drives the documented install under helm 4. A bump is a
+  # pins PR.
+
+# The goTestWAF pin stays in the #291 table (the corpus-row change path
+# owns it). The release suite reads the gotestwaf key there at run time.
+# This file carries no second copy.
+gotestwaf_pin_source: test/waf-gate/pins.yaml
+
+runner_job_images:
+  python:
+    repository: docker.io/library/python
+    tag: "3.12-slim"
+    digest: sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+  curl:
+    repository: docker.io/curlimages/curl
+    tag: "8.13.0"
+    digest: sha256:d43bdb28bae0be0998f3be83199bfb2b81e0a30b034b6d7586ce7e05de34c3fd
+    # The probe pods pin the linux amd64 child digest below (the #300
+    # fix pass re-resolved it live). The amd64 value is the immutable
+    # single-platform pull; the index digest above stays the recorded
+    # multi-arch parent (its children match the live 8.13.0 index).
+    digest_amd64: sha256:e6ebb770fb6e2236c2e83ad6b6dbbd32cb6dff0b17a9482a7d4bca20f1c9b50a
+
+sqlmap:
+  version: "1.10.11"
+  wheel_file: sqlmap-1.10.11-py2.py3-none-any.whl
+  wheel_sha256: 223a0dda06eadb8eb8a06d2e9ef90281919fdc2203d9cf5979da3311d6af440a
+  gh_tag_tarball_sha256: 4eb31c50d9b375361754de95e496a1abdc07c25d520e0c0a36f69e8f516e6e97
+  install: pip-install-require-hashes
+
+open_appsec:
+  chart_url: https://downloads.openappsec.io/packages/helm-charts/nginx-ingress/open-appsec-k8s-nginx-ingress-latest.tgz
+  chart_sha256: fcb65c9345ea7099c6f640137010f110609bf66858e23fa36c0f8f79b14983c3
+  chart_bytes: 125551
+  chart_version: 1.1.36
+  ingress_controller_upstream: ingress-nginx 4.15.1 (controller image pinned by digest inside the chart values)
+  agent:
+    repository: ghcr.io/openappsec/agent
+    tag: "1.1.36"
+    digest: sha256:314e8260a039df2870df51cefc277e62d16728fe9e5eb9138f4fc4e7daea6243
+  attachment:
+    repository: ghcr.io/openappsec/nginx-ingress-attachment
+    tag: "1.1.36"
+    digest: sha256:b8639ea54728e161c1c5e15b98f647e0e55f3ae4b4064866330f8f980c9095c9
+  smartsync_learning:
+    repository: ghcr.io/openappsec/smartsync
+    tag: latest
+    digest: sha256:580d68c50cc7b6a7199deba9bf74ada06cce3fc53828d42ba5095a6715a067b0
+  smartsync_shared_files:
+    repository: ghcr.io/openappsec/smartsync-shared-files
+    tag: latest
+    digest: sha256:30c1daa0b33ef845449c44b2cf4d752c47f3c5116188e55a86fba4db8704c74d
+  smartsync_tuning:
+    repository: ghcr.io/openappsec/smartsync-tuning
+    tag: latest
+    digest: sha256:cc53aa8a3a5e478eddd6f5c556793a180c0dc71f5a42d4ddfb3cf4e5e465d14d
+
+fixture_images:
+  # The five suite images (engine, operator, vuln-app, benign-app,
+  # sqlfix-app) build from the suite checkout. The deploy contract names
+  # the tag checkout, never a PR sha. They push to GHCR under a per-run
+  # tag. The cluster pulls those bytes.
+  recipe: fixtures/waf-harness/Dockerfile
+  registry: ghcr.io/trishula-dev
+  tag_scheme: "wafrs-<run_id>-<run_attempt>"
+  per_run: true
