@@ -1,0 +1,58 @@
+# TR-205 (issue #289) — the benign traffic fixture app: one stdlib Go
+# server (fixtures/waf-harness/benign-app), image built in-job from the PR
+# checkout (item 2). It serves normal traffic and accepts no query input.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: benign-app
+  namespace: waf-harness
+  labels:
+    app.kubernetes.io/name: benign-app
+    app.kubernetes.io/part-of: trishula-waf-harness
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: benign-app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: benign-app
+        app.kubernetes.io/part-of: trishula-waf-harness
+    spec:
+      containers:
+        - name: benign-app
+          image: trishula-wh-benign-app:pr
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: benign-app
+  namespace: waf-harness
+  labels:
+    app.kubernetes.io/name: benign-app
+    app.kubernetes.io/part-of: trishula-waf-harness
+spec:
+  selector:
+    app.kubernetes.io/name: benign-app
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
