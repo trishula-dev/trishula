@@ -16,3 +16,7 @@ expect:
   phase2_seed: [941100, 941110, 941160, 941320]
   # observed off-seed attack ids (live probe evidence, README table).
   phase2_offseed: [941390, 942131, 942431, 942432]
+  # libinjection fingerprint class pin (issue #290): the 941100 carrier
+  # fires the XSS class over the form value (libinjection returns no XSS
+  # fingerprint; live 2-run verified).
+  xss_fp: true

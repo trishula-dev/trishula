@@ -1,0 +1,22 @@
+# TR-07b corpus case (go-ftw shape) — the TR-290 benign-clean row: SQLi- and
+# XSS-shaped but libinjection-clean surfaces (verified: IsSQLi/IsXSS false on
+# every probe value; see README fingerprint section) pin the fingerprint class
+# ABSENT (issue #290: benign requests never raise the fingerprint class).
+# The values stay word-only: a markup-shaped value (<b>…) trips the CRS 941
+# regex family, and this row pins a fully benign request.
+name: 21-libinject-benign
+surface: "SQLi/XSS-shaped but libinjection-clean probes"
+request:
+  method: "GET"
+  uri: "/?union=rules&select=join%20the%20club&order=first"
+  version: "1.1"
+  headers:
+    Host: "trishula.local"
+    User-Agent: "Mozilla/5.0 (X11; Linux) union/1.0"
+expect:
+  # engine-mirror-noise pin (setup + threshold echoes; README).
+  phase1_pinned: [900000, 900110, 900990]
+  # 941010 demoted via ctl:ruleRemoveTargetById (990002); README.
+  p1_941010: true
+  # no sqli_fp pin, no xss_fp pin: the mirror asserts ZERO fingerprint-class
+  # evidence for this row (the benign-clean pin; issue #290).

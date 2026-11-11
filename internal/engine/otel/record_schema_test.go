@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/trishula-dev/trishula/internal/crs"
 	"github.com/trishula-dev/trishula/internal/engine/ingest"
 	"github.com/trishula-dev/trishula/internal/engine/ladder"
 )
@@ -205,6 +206,9 @@ func TestVerdictRecordCarriesStageStamps(t *testing.T) {
 			AttrRequestID: true, AttrVerdictAction: true, AttrVerdictPhase: true,
 			AttrVerdictRoute: true, AttrVerdictRules: true, AttrVerdictScore: true,
 			"ladder.rows": true, "shield.stages": true,
+			// TR-290 (issue #290): the fingerprint evidence rides the
+			// verdict signals (the record's fingerprint array).
+			AttrFingerprint: true,
 		}
 		for _, lr := range snap.Logs {
 			if lr.EventName != SpanName {
@@ -235,6 +239,115 @@ func TestVerdictRecordCarriesStageStamps(t *testing.T) {
 					t.Fatalf("row %d token = %q, want %q (walk order = §3.4 order)", i, tok, got)
 				}
 			}
+		}
+	})
+}
+
+// TR-290 (issue #290): the verdict record's fingerprint fields. The
+// returned libinjection fingerprints ride the verdict signal set (the
+// span + the log record carry the crs.fingerprints attribute, the
+// {rule, class, fp} row array); the counter's attribute set stays pinned
+// (no fingerprint keys on the datapoint). Absence carries no claim: a
+// benign verdict (no fingerprint class) reads no fingerprint attribute.
+// The record schema string bumps to trishula.verdict.v2 in the same
+// change (the record-schema is versioned; issue #290).
+func TestVerdictRecordCarriesFingerprints(t *testing.T) {
+	t.Run("the span + the record carry the fingerprint evidence", func(t *testing.T) {
+		p := newTestPipeline(t)
+		rid := "req-fp-1"
+		ctx := ContextWithRequestID(context.Background(), rid)
+		v := &ladder.Verdict{
+			Action: ladder.ActionBlock,
+			Fingerprints: []crs.Fingerprint{
+				{RuleID: 942100, Class: crs.FingerprintClassSQLi, FP: "1UEnk"},
+				{RuleID: 941100, Class: crs.FingerprintClassXSS},
+			},
+		}
+		if _, err := p.Emit(ctx, txFixture(), v); err != nil {
+			t.Fatalf("Emit: %v", err)
+		}
+		snap := p.Exporter().Snapshot()
+
+		want := []struct {
+			Rule  int    `json:"rule"`
+			Class string `json:"class"`
+			FP    string `json:"fp,omitempty"`
+		}{
+			{Rule: 942100, Class: "sqli", FP: "1UEnk"},
+			{Rule: 941100, Class: "xss"},
+		}
+		wantRaw, _ := json.Marshal(want)
+
+		var span *Span
+		for i := range snap.Spans {
+			if snap.Spans[i].Name == SpanName {
+				span = &snap.Spans[i]
+				break
+			}
+		}
+		if span == nil {
+			t.Fatalf("no %q span in the snapshot", SpanName)
+		}
+		if got := kvGet(span.Attributes, AttrFingerprint); got != string(wantRaw) {
+			t.Fatalf("span %s = %q, want %q (the {rule, class, fp} row array)",
+				AttrFingerprint, got, wantRaw)
+		}
+
+		var rec *LogRecord
+		for i := range snap.Logs {
+			if snap.Logs[i].EventName == SpanName {
+				rec = &snap.Logs[i]
+				break
+			}
+		}
+		if rec == nil {
+			t.Fatalf("no %q log record in the snapshot", SpanName)
+		}
+		if got := kvGet(rec.Attributes, AttrFingerprint); got != string(wantRaw) {
+			t.Fatalf("record %s = %q, want %q (the verdict log line carries the fingerprints)",
+				AttrFingerprint, got, wantRaw)
+		}
+
+		// the counter's attribute set stays pinned: no fingerprint key on
+		// the metric datapoint.
+		for _, dp := range snap.Metrics {
+			if dp.Name == MetricVerdicts {
+				for _, kv := range dp.Attributes {
+					if kv.Key == AttrFingerprint {
+						t.Fatalf("metric carries %s (the datapoint set stays pinned)", AttrFingerprint)
+					}
+				}
+			}
+		}
+	})
+
+	t.Run("absence carries no claim (benign verdict → no fingerprint attr)", func(t *testing.T) {
+		p := newTestPipeline(t)
+		rid := "req-fp-2"
+		ctx := ContextWithRequestID(context.Background(), rid)
+		if _, err := p.Emit(ctx, txFixture(), &ladder.Verdict{Action: ladder.ActionAllow}); err != nil {
+			t.Fatalf("Emit: %v", err)
+		}
+		snap := p.Exporter().Snapshot()
+		for i := range snap.Logs {
+			if snap.Logs[i].EventName != SpanName {
+				continue
+			}
+			if kvHas(snap.Logs[i].Attributes, AttrFingerprint) {
+				t.Fatalf("benign verdict carries %s (absence must carry no claim): %v",
+					AttrFingerprint, snap.Logs[i].Attributes)
+			}
+		}
+		for i := range snap.Spans {
+			if snap.Spans[i].Name == SpanName && kvHas(snap.Spans[i].Attributes, AttrFingerprint) {
+				t.Fatalf("benign verdict span carries %s (absence must carry no claim)", AttrFingerprint)
+			}
+		}
+	})
+
+	t.Run("the record schema string carries the fingerprint bump", func(t *testing.T) {
+		if RecordSchema != "trishula.verdict.v2" {
+			t.Fatalf("RecordSchema = %q, want trishula.verdict.v2 (the record is versioned; the fingerprint extension bumps the schema version in the same change)", RecordSchema)
 		}
 	})
 }
