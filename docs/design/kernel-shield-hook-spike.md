@@ -132,22 +132,33 @@ summary. The fields:
 The post-run fill reads these fields into the runner-image pin for the CI
 gate (issue #292, row 3).
 
-## 6. Results (PENDING)
+## 6. Results
 
-Rule: this section stays empty until the recorded-run receipt exists.
+Rule: this section carries the recorded run receipt and the fill. The receipt
+re-reads at each future spike run; a future run posts a fresh table.
 
 - Owner: issue #292.
-- Receipt: the PR CI run of
-  [../../.github/workflows/shield-hook-spike.yml](../../.github/workflows/shield-hook-spike.yml).
-  A `workflow_dispatch` on a PR head produces the same receipt shape.
-- The fill carries:
-
-  - the per-hook table with its load states and verbatim errors.
-  - the artifact link (`shield-hook-spike.txt`).
-  - the pinned-recommendation values.
-  - one `min kernel features` cell per `FAIL` row.
-- The table carries no row until the fill lands:
+- Receipt: PR #297 head, run
+  [42932662527](https://github.com/trishula-dev/trishula/actions/runs/42932662527)
+  (2026-11-11, the `ubuntu:24.04` privileged pod on the runner kernel).
+  Artifact: `shield-hook-spike` (the full verbatim record).
+- The runner pair the receipt records: kernel `7.0.0-1019-azure`, runner image
+  `ubuntu26/20261101.186.1`, pod image `ubuntu:24.04`, BTF present
+  (7267528 bytes). The pair floats with the hosted image; every spike run
+  re-records it, and the fresh run receipt re-links here.
+- The result: 4 of 4 hook classes load on the hosted runner kernel. The
+  per-PR legs run on hosted runners; no separate kernel-node pool is
+  required for the CI tiers. The release-stage node requirement reduces to
+  the runner-default set: a kernel with BTF and privileged containers.
 
 | hook (program) | load state | error (truncated) | min kernel features |
 | --- | --- | --- | --- |
-| (no recorded run yet — the issue #292 fill adds the rows) | | | |
+| shield_xdp (xdp) | LOADED | — | runner defaults (BTF present) |
+| ban_xdp (xdp) | LOADED | — | runner defaults (BTF present) |
+| tc_ingress_waf (tc) | LOADED | — | runner defaults (BTF present) |
+| route_mark (tc) | LOADED | — | runner defaults (BTF present) |
+
+The object-level provenance from the receipt (sha256 short / size pairs):
+`shield_xdp 78d3b14fdf81/10816 B`, `ban_xdp cad16bcff92e/5656 B`,
+`tc_ingress_waf 1eaa7bc2dcb1/113128 B`, `route_mark b43fdcc18278/10072 B`.
+A future size delta over ~3x names a stale pair before any load attempt.
