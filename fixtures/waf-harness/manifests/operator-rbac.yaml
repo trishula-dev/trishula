@@ -1,0 +1,63 @@
+# TR-205 (issue #289) — the RBAC the thin operator needs in waf-harness:
+# watch/list/get WAFPolicies (the reconcile input) and get/create/patch the
+# bundle ConfigMap (the output). Namespaced to waf-harness.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: waf-harness-operator
+  namespace: waf-harness
+  labels:
+    app.kubernetes.io/part-of: trishula-waf-harness
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: waf-harness-operator
+  namespace: waf-harness
+  labels:
+    app.kubernetes.io/part-of: trishula-waf-harness
+rules:
+  - apiGroups:
+      - trishula.security
+    resources:
+      - wafpolicies
+    verbs:
+      - get
+      - list
+      - watch
+      - patch
+  - apiGroups:
+      - trishula.security
+    resources:
+      - wafpolicies/status
+    verbs:
+      - get
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: waf-harness-operator
+  namespace: waf-harness
+  labels:
+    app.kubernetes.io/part-of: trishula-waf-harness
+roleRef:
+  kind: Role
+  name: waf-harness-operator
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+  - kind: ServiceAccount
+    name: waf-harness-operator
+    namespace: waf-harness

@@ -1,0 +1,70 @@
+# TR-205 (issue #289) — the operator: one pod running cmd/operator, the
+# image built in-job from the PR checkout (item 2). It watches WAFPolicy
+# CRs in waf-harness and publishes the compiled bundle to the
+# dx1-wafpolicy-bundle ConfigMap in the same namespace (the bundle slot is
+# hard-named in cmd/operator; apply-effect.sh, the proven lab lane, waits
+# on the same name).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: waf-harness-operator
+  namespace: waf-harness
+  labels:
+    app.kubernetes.io/name: trishula-operator
+    app.kubernetes.io/instance: waf-harness
+    app.kubernetes.io/part-of: trishula-waf-harness
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: trishula-operator
+      app.kubernetes.io/instance: waf-harness
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: trishula-operator
+        app.kubernetes.io/instance: waf-harness
+        app.kubernetes.io/part-of: trishula-waf-harness
+    spec:
+      serviceAccountName: waf-harness-operator
+      containers:
+        - name: operator
+          image: trishula-wh-operator:pr
+          imagePullPolicy: IfNotPresent
+          args:
+            - --namespace
+            - waf-harness
+          ports:
+            - name: probe
+              containerPort: 1936
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: probe
+            initialDelaySeconds: 1
+            periodSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: probe
+            initialDelaySeconds: 2
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: waf-harness-operator
+  namespace: waf-harness
+  labels:
+    app.kubernetes.io/name: trishula-operator
+    app.kubernetes.io/instance: waf-harness
+    app.kubernetes.io/part-of: trishula-waf-harness
+spec:
+  selector:
+    app.kubernetes.io/name: trishula-operator
+    app.kubernetes.io/instance: waf-harness
+  ports:
+    - name: probe
+      port: 1936
+      targetPort: probe

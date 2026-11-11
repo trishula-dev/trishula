@@ -1,0 +1,52 @@
+# TR-205 (issue #289) — the harness engine policy. The rule pack (the
+# ConfigMap the policy's ruleSets[0].name resolves to, cmd/operator's
+# v0 source, data key pack.yaml) carries the enforced SQLi gate: a UNION
+# probe in the query string on the /search route. The policy follows the
+# compiled lab shape (deployment/dx1/manifests/dx1-wafpolicy.yaml):
+# defaultAction pass keeps the undecided traffic transparent, and
+# modeFlags pins the shield OFF — the kernel leg is issue #292, and a
+# shield-load refusal here reports in the summary (never hides).
+#
+# Effects the smoke probe verifies (verified against the dx1 lab shapes):
+#   - GET /search?q=<UNION probe> → 403, X-Trishula-Decision: block, the
+#     rule id WH-SQLI-001 in X-Trishula-Rule;
+#   - no-rule traffic (the benign GET and the benign query) takes
+#     defaultAction pass → the transparent forward is preserved.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: waf-harness-sqli
+  namespace: waf-harness
+  labels:
+    app.kubernetes.io/part-of: trishula-waf-harness
+data:
+  pack.yaml: |
+    rules:
+      - id: WH-SQLI-001
+        name: sqli-in-search-query
+        description: >-
+          Blocks SQLi UNION probes in query strings on the search route
+          (the #289 smoke-probe rule; enforced = the decision is block).
+        action: enforce
+        expression: |
+          path.matches("/search") && request.query.contains("UNION")
+---
+apiVersion: trishula.security/v1alpha1
+kind: WAFPolicy
+metadata:
+  name: waf-harness-gate
+  namespace: waf-harness
+  labels:
+    app.kubernetes.io/part-of: trishula-waf-harness
+spec:
+  defaultAction: pass
+  modeFlags:
+    inline: true
+    shield: false
+    shadow: true
+  ruleSets:
+    - name: waf-harness-sqli
+      source:
+        crsVersion: 4.x
+        profile: PL1

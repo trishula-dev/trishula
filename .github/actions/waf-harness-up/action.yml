@@ -1,0 +1,212 @@
+# TR-205 (issue #289) — the reusable WAF-harness-up composite action.
+#
+# One call brings up the complete ephemeral rig inside the calling job:
+#   tools → kind cluster → PR-sha images → fixture deploy → pinned
+#   baseline → policy compile + consult active.
+#
+# Later tool stages (issue #291: go-ftw, waf-bypass, goTestWAF) call this
+# action and dial the engine endpoint from the outputs. Each caller gets
+# its own ephemeral cluster; the caller's job owns the teardown step
+# (issue #289, item 1). The engine image builds from the caller's
+# checkout (the PR head sha; item 2), never from a registry pull.
+#
+# Every stage tees its raw output to $ARTIFACT_DIR/stage-<name>.log and
+# appends one PASS line to $ARTIFACT_DIR/summary-lines.md; the calling
+# workflow merges that file into the job summary (item 6). A stage that
+# fails stops at its log; the merge step stamps the FAIL lines.
+name: waf-harness-up
+description: >-
+  Bring up the TR-205 ephemeral WAF harness: kind + PR-sha engine +
+  fixture apps + policy compile. Outputs the engine endpoint for the
+  later tool stages.
+outputs:
+  cluster-name:
+    description: The kind cluster this call created.
+    value: waf-harness
+  namespace:
+    description: The namespace the harness deploys into.
+    value: waf-harness
+  engine-endpoint:
+    description: The stable job-internal engine endpoint (item 4).
+    value: waf-harness-engine.waf-harness.svc.cluster.local:8080
+  policy-name:
+    description: The enforced WAFPolicy the smoke probe reads.
+    value: waf-harness-gate
+runs:
+  using: composite
+  steps:
+    - name: Stage the artifact directory
+      shell: bash
+      run: |
+        set -euo pipefail
+        ARTIFACT_DIR="${ARTIFACT_DIR:-$GITHUB_WORKSPACE/artifacts}"
+        mkdir -p "${ARTIFACT_DIR}"
+        echo "ARTIFACT_DIR=${ARTIFACT_DIR}" >> "${GITHUB_ENV}"
+
+    - id: tools
+      name: Install kind v0.33.0 (the pin lab-nightly uses)
+      shell: bash
+      run: |
+        set -euo pipefail
+        {
+          TOOL_DIR="$(mktemp -d)"
+          curl -sSfL -o "${TOOL_DIR}/kind" \
+            "https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64"
+          chmod +x "${TOOL_DIR}/kind"
+          sudo install -m 755 "${TOOL_DIR}/kind" /usr/local/bin/kind
+          rm -rf "${TOOL_DIR}"
+          kind version
+        } 2>&1 | tee "${ARTIFACT_DIR}/stage-tools.log"
+        echo "waf-harness stage tools: kind v0.33.0 installed" \
+          >> "${ARTIFACT_DIR}/summary-lines.md"
+
+    - name: Go toolchain (the build step; go.mod pins the version)
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      with:
+        go-version-file: go.mod
+
+    - id: cluster
+      name: Create the ephemeral kind cluster (pinned node image)
+      shell: bash
+      run: |
+        set -euo pipefail
+        {
+          KINDEST_NODE_REF="kindest/node:v1.35.8"
+          KINDEST_NODE_DIGEST="07b2536e30b803ed61d1677a79df6115f798ce64c80f9e22f6ed45afd09323c0"
+          docker pull "${KINDEST_NODE_REF}@sha256:${KINDEST_NODE_DIGEST}"
+          kind create cluster \
+            --name waf-harness \
+            --image "${KINDEST_NODE_REF}@sha256:${KINDEST_NODE_DIGEST}"
+          kubectl get nodes -o wide
+          kubectl config current-context
+        } 2>&1 | tee "${ARTIFACT_DIR}/stage-cluster.log"
+        echo "waf-harness stage cluster: kind cluster waf-harness ready (node v1.35.8)" \
+          >> "${ARTIFACT_DIR}/summary-lines.md"
+
+    - id: images
+      name: Build the 4 PR-sha images and load them (engine, operator, 2 fixtures)
+      shell: bash
+      run: |
+        set -euo pipefail
+        {
+          FIX="${GITHUB_WORKSPACE}"
+          echo "PR SHA: ${GITHUB_SHA}"
+          TMP="$(mktemp -d)"
+          build_img() { # build_img <go-package> <image-tag> <binary-name>
+            local pkg="$1" tag="$2" name="$3" bin
+            bin="${TMP}/${name}"
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "${bin}" "${pkg}"
+            docker build -q \
+              --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+              --build-arg "BIN=${name}" \
+              -t "${tag}" \
+              -f "${FIX}/fixtures/waf-harness/Dockerfile" "${TMP}"
+            kind load docker-image "${tag}" --name waf-harness
+            docker inspect "${tag}" \
+              --format '{{.Id}} revision={{index .Config.Labels "org.opencontainers.image.revision"}}'
+          }
+          build_img ./cmd/engine trishula-wh-engine:pr engine
+          build_img ./cmd/operator trishula-wh-operator:pr operator
+          build_img ./fixtures/waf-harness/vuln-app trishula-wh-vuln-app:pr vuln-app
+          build_img ./fixtures/waf-harness/benign-app trishula-wh-benign-app:pr benign-app
+        } 2>&1 | tee "${ARTIFACT_DIR}/stage-images.log"
+        echo "waf-harness stage images: 4 images built from the checkout and loaded" \
+          >> "${ARTIFACT_DIR}/summary-lines.md"
+
+    - id: fixtures
+      name: Deploy the fixtures + engine (namespace, apps, engine Service)
+      shell: bash
+      run: |
+        set -euo pipefail
+        {
+          M="fixtures/waf-harness/manifests"
+          kubectl apply -f "${M}/namespace.yaml"
+          kubectl apply -f "${M}/benign-app.yaml"
+          kubectl apply -f "${M}/vuln-app.yaml"
+          kubectl apply -f "${M}/engine.yaml"
+          kubectl -n waf-harness rollout status --timeout=5m deployment/benign-app
+          kubectl -n waf-harness rollout status --timeout=5m deployment/vuln-app
+          kubectl -n waf-harness rollout status --timeout=5m deployment/waf-harness-engine
+          kubectl -n waf-harness get deploy,pods,svc -o wide
+        } 2>&1 | tee "${ARTIFACT_DIR}/stage-fixtures.log"
+        echo "waf-harness stage fixtures: benign-app, vuln-app and the engine are Ready" \
+          >> "${ARTIFACT_DIR}/summary-lines.md"
+
+    - id: baseline
+      name: Pin the pre-gate baseline (probes through the engine, no policy yet)
+      shell: bash
+      run: |
+        set -euo pipefail
+        {
+          cd "$(mktemp -d)"
+          kubectl -n waf-harness port-forward svc/waf-harness-engine 18080:8080 \
+            >/dev/null 2>&1 &
+          FORWARD_PID="${!}"
+          for _ in $(seq 1 60); do
+            curl -sS -o /dev/null --max-time 3 http://127.0.0.1:18080/healthz && break
+            sleep 0.5
+          done
+          curl -s -i --max-time 10 http://127.0.0.1:18080/ \
+            | tee "${ARTIFACT_DIR}/baseline-home.txt"
+          curl -s -i --max-time 10 'http://127.0.0.1:18080/search?q=steel' \
+            | tee "${ARTIFACT_DIR}/baseline-query.txt"
+          curl -s -i --max-time 10 'http://127.0.0.1:18080/search?q=UNION%20SELECT%20password' \
+            | tee "${ARTIFACT_DIR}/baseline-sqli.txt"
+          kill "${FORWARD_PID}" 2>/dev/null || true
+          wait "${FORWARD_PID}" 2>/dev/null || true
+          BASE_HOME="$(awk 'NR==1{print $2}' "${ARTIFACT_DIR}/baseline-home.txt")"
+          BASE_QUERY="$(awk 'NR==1{print $2}' "${ARTIFACT_DIR}/baseline-query.txt")"
+          BASE_SQLI="$(awk 'NR==1{print $2}' "${ARTIFACT_DIR}/baseline-sqli.txt")"
+          test "${BASE_HOME}" = "200"
+          test "${BASE_QUERY}" = "200"
+          test "${BASE_SQLI}" = "200"
+          # The pre-gate contract: NO decision headers before the policy.
+          for bf in baseline-home.txt baseline-sqli.txt; do
+            if grep -qi "^x-trishula-decision" "${ARTIFACT_DIR}/${bf}"; then
+              printf '%s\n' \
+                "waf-harness baseline FAIL: ${bf} carries a decision header pre-gate"
+              exit 1
+            fi
+          done
+          echo "pinned baseline: all 3 probes 200 with no decision headers"
+        } 2>&1 | tee "${ARTIFACT_DIR}/stage-baseline.log"
+        echo "waf-harness stage baseline: PINNED — 3 probes 200, no decision surface" \
+          >> "${ARTIFACT_DIR}/summary-lines.md"
+
+    - id: policy
+      name: Compile the policy (CRD, operator, WAFPolicy) and activate the consult
+      shell: bash
+      run: |
+        set -euo pipefail
+        {
+          cd "$(mktemp -d)"
+          M="${GITHUB_WORKSPACE}/fixtures/waf-harness/manifests"
+          kubectl apply -f "${GITHUB_WORKSPACE}/manifests/crd/wafpolicy-crd.yaml"
+          kubectl apply -f "${M}/operator-rbac.yaml"
+          kubectl apply -f "${M}/operator.yaml"
+          kubectl -n waf-harness rollout status --timeout=5m deployment/waf-harness-operator
+          kubectl apply -f "${M}/policy-sqli.yaml"
+          BUNDLE=""
+          for _ in $(seq 1 120); do
+            if kubectl -n waf-harness get configmap dx1-wafpolicy-bundle >/dev/null 2>&1
+            then BUNDLE=1; break; fi
+            sleep 0.5
+          done
+          test -n "${BUNDLE}"
+          kubectl -n waf-harness get configmap dx1-wafpolicy-bundle \
+            -o jsonpath='{.data.bundle\.json}' > bundle.json
+          test -s bundle.json
+          kubectl -n waf-harness exec deploy/waf-harness-engine -c engine -i \
+            -- /app -receive-bundle /bundle.json < bundle.json
+          CONSULT=""
+          for _ in $(seq 1 120); do
+            kubectl -n waf-harness logs deploy/waf-harness-engine --tail=30 2>/dev/null \
+              | grep -q "consult active" && CONSULT=1 && break
+            sleep 0.5
+          done
+          test -n "${CONSULT}"
+          kubectl -n waf-harness logs deploy/waf-harness-engine --tail=20
+          kubectl -n waf-harness get wafpolicy
+        } 2>&1 | tee "${ARTIFACT_DIR}/stage-policy.log"
+        echo "waf-harness stage policy: bundle compiled and consult active" \
+          >> "${ARTIFACT_DIR}/summary-lines.md"

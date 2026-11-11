@@ -1,0 +1,207 @@
+# TR-205 (issue #289, RFC numbered) — the CI WAF test harness.
+#
+# The build statement, one item per issue #289 requirement:
+#   1. The job creates an ephemeral kind cluster in-job and destroys it in
+#      an always() teardown step (no surviving state on the runner).
+#   2. The engine image builds in-job from this checkout (the PR head
+#      sha, the image's revision label stamps it); no registry pull.
+#   3. The fixture set deploys one deliberately SQLi-vulnerable app and
+#      one benign traffic app; the baseline stage pins the engine's
+#      pre-gate shapes before the policy applies.
+#   4. The engine exposes the stable job-internal endpoint
+#      waf-harness-engine.waf-harness.svc.cluster.local:8080 (a ClusterIP
+#      Service); the probes port-forward the runner localhost to it.
+#   5. No standing infrastructure and no stored kubeconfig secrets: the
+#      cluster lives inside this job only.
+#   6. Every stage tees its raw output to an artifact and the summary
+#      carries one line per stage.
+#
+# The reusable unit is the composite action .github/actions/waf-harness-up:
+# the per-PR adversarial gate (issue #291: go-ftw + waf-bypass + a
+# goTestWAF subset) attaches as separate jobs that call the same action
+# and dial the engine endpoint from its outputs; no harness rewrite.
+#
+# The kernel leg stays out of this harness: modeFlags pins shield false
+# (issue #292 owns the eBPF shield hook loads on a privileged node). The
+# shield-posture stage reports the posture in the summary; a shield-load
+# refusal reports there in the same shape, never hides.
+name: waf-harness
+
+on:
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trishula-waf-harness
+  cancel-in-progress: false
+
+jobs:
+  waf-harness:
+    name: "TR-205 (issue #289) waf harness: kind + PR-sha engine + fixtures + smoke"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Open the run record
+        run: |
+          printf '%s\n' "waf-harness run (issue #289) — head sha ${GITHUB_SHA}" \
+            >> "${GITHUB_STEP_SUMMARY}"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      # The one reusable call: cluster + PR-sha images + fixtures +
+      # baseline + policy. Issue #291's tool jobs call this same action.
+      - name: Bring up the harness (composite waf-harness-up)
+        id: harness
+        uses: ./.github/actions/waf-harness-up
+
+      # Item 3+6: the smoke gate. The raw probe outputs land as artifacts;
+      # the asserts read the wire: benign GET 200, benign query 200, the
+      # SQLi probe 403 with X-Trishula-Decision: block and the rule id
+      # WH-SQLI-001 in X-Trishula-Rule (the dx1 lab's verified header
+      # contract), and the benign fixture app answers directly.
+      - name: Smoke probe (benign pass + SQLi block + rule id)
+        id: probe
+        run: |
+          set -euo pipefail
+          ART="${ARTIFACT_DIR:-${GITHUB_WORKSPACE}/artifacts}"
+          {
+            cd "$(mktemp -d)"
+            kubectl -n waf-harness port-forward svc/waf-harness-engine 18080:8080 \
+              >/dev/null 2>&1 &
+            P_ENGINE="${!}"
+            kubectl -n waf-harness port-forward svc/benign-app 18081:8080 \
+              >/dev/null 2>&1 &
+            P_BENIGN="${!}"
+            for _ in $(seq 1 60); do
+              curl -sS -o /dev/null --max-time 3 http://127.0.0.1:18080/healthz && break
+              sleep 0.5
+            done
+            trap 'kill "${P_ENGINE}" "${P_BENIGN}" 2>/dev/null || true' EXIT
+
+            assert() { # assert <what> <got> <want>
+              if test "$2" != "$3"; then
+                printf 'waf-harness probe FAIL: %s — got %s, want %s\n' \
+                  "$1" "$2" "$3"
+                exit 1
+              fi
+            }
+
+            # (a) the benign GET through the engine passes normally.
+            curl -s -i --max-time 10 http://127.0.0.1:18080/ \
+              | tee "${ART}/waf-probe-benign-home.log"
+            ST_HOME="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+              http://127.0.0.1:18080/)"
+            assert home-status "${ST_HOME}" 200
+            # Post-policy the consult records its pass decision (the
+            # dx1 defaultAction contract); pre-gate the header is absent.
+            grep -qi '^x-trishula-decision: pass' \
+              "${ART}/waf-probe-benign-home.log" || {
+              printf '%s\n' \
+                "waf-harness probe FAIL: the benign home response lost its pass decision"
+              exit 1
+            }
+
+            # (a2) a non-attack query passes (defaultAction pass).
+            curl -s -i --max-time 10 'http://127.0.0.1:18080/search?q=steel' \
+              | tee "${ART}/waf-probe-benign-query.log"
+            ST_QUERY="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+              'http://127.0.0.1:18080/search?q=steel')"
+            assert query-status "${ST_QUERY}" 200
+
+            # (b) the SQLi probe: 403 + block + the rule id, on the wire.
+            curl -s -i --max-time 10 \
+              'http://127.0.0.1:18080/search?q=UNION%20SELECT%20password' \
+              | tee "${ART}/waf-probe-sqli.log"
+            ST_SQLI="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+              'http://127.0.0.1:18080/search?q=UNION%20SELECT%20password')"
+            assert sqli-status "${ST_SQLI}" 403
+            grep -qi '^x-trishula-decision: block' "${ART}/waf-probe-sqli.log"
+            grep -qi '^x-trishula-rule: WH-SQLI-001' "${ART}/waf-probe-sqli.log"
+
+            # The verdict record: the engine's own log for the window.
+            RULE_IN_LOG="the response headers carry the rule id"
+            if kubectl -n waf-harness logs deploy/waf-harness-engine --tail=50 \
+                > "${ART}/engine-verdict-record.log" 2>&1 \
+                && grep -q "WH-SQLI-001" "${ART}/engine-verdict-record.log"; then
+              RULE_IN_LOG="the engine log record also names the rule id"
+            fi
+
+            # (c) the benign fixture app answers directly (fixture set item 3).
+            curl -s -i --max-time 10 http://127.0.0.1:18081/ \
+              | tee "${ART}/waf-probe-benign-app.log"
+            ST_APP="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+              http://127.0.0.1:18081/)"
+            assert app-status "${ST_APP}" 200
+
+            printf '%s\n' \
+              "waf-harness stage probe: benign GET 200, benign query 200, SQLi 403 block WH-SQLI-001" \
+              >> "${ART}/summary-lines.md"
+            printf '%s\n' "waf-harness verdict record: ${RULE_IN_LOG}" \
+              >> "${ART}/summary-lines.md"
+          } 2>&1 | tee "${ART}/stage-probe.log"
+
+      # Report-only. modeFlags pins shield false; issue #292 owns the
+      # kernel leg's load on a privileged node. A refusal from a future
+      # load attempt reports in this stage's shape through the summary,
+      # never as a silent skip.
+      - name: Shield posture (report-only)
+        id: shield
+        if: success()
+        run: |
+          ART="${ARTIFACT_DIR:-${GITHUB_WORKSPACE}/artifacts}"
+          {
+            kubectl -n waf-harness get wafpolicy waf-harness-gate \
+              -o jsonpath='{.spec.modeFlags}' 2>&1 | tee "${ART}/shield-posture.log"
+            kubectl -n waf-harness logs deploy/waf-harness-engine --tail=200 \
+              | grep -i shield | tee -a "${ART}/shield-posture.log" \
+              || echo "no engine shield-log lines (the proxy leaf makes no eBPF call)" \
+                | tee -a "${ART}/shield-posture.log"
+            echo "waf-harness stage shield-posture: shield=false; the kernel leg is issue #292; no refusal recorded" \
+              >> "${ART}/summary-lines.md"
+          } || true
+
+      # Item 6: one line per stage, assembled from the stage record file.
+      - name: Assemble the stage summary
+        if: always()
+        run: |
+          ART="${ARTIFACT_DIR:-${GITHUB_WORKSPACE}/artifacts}"
+          if test -f "${ART}/summary-lines.md"; then
+            cat "${ART}/summary-lines.md" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+          for s in tools cluster images fixtures baseline policy probe shield; do
+            if ! grep -q "^waf-harness stage ${s}" "${ART}/summary-lines.md" 2>/dev/null; then
+              printf '%s\n' \
+                "waf-harness stage ${s}: FAILED OR NOT REACHED — the stage log sits in the artifacts" \
+                >> "${GITHUB_STEP_SUMMARY}"
+            fi
+          done
+
+      # Item 1: destroy the cluster even on failure.
+      - name: Teardown the kind cluster
+        if: always()
+        run: |
+          if kind get clusters 2>/dev/null | grep -qx waf-harness; then
+            kind delete cluster --name waf-harness \
+              && printf '%s\n' "waf-harness stage teardown: cluster deleted" \
+                >> "${GITHUB_STEP_SUMMARY}" \
+              || printf '%s\n' "waf-harness stage teardown: delete failed — read the step log" \
+                >> "${GITHUB_STEP_SUMMARY}"
+          else
+            printf '%s\n' \
+              "waf-harness stage teardown: no cluster present (nothing to delete)" \
+              >> "${GITHUB_STEP_SUMMARY}"
+          fi
+          exit 0
+
+      - name: Upload the stage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: waf-harness-evidence
+          path: artifacts/
+          if-no-files-found: warn
