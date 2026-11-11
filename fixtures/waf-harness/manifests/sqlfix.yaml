@@ -1,0 +1,144 @@
+# fixtures/waf-harness/manifests/sqlfix.yaml — TR-205 (issue #293, the
+# #300 fix pass): the genuinely SQLi-vulnerable sqlite fixture plus the
+# engine instance that fronts it.
+#
+# Two objects live here.
+#
+# 1. The sqlfix-app Deployment + Service. The app
+# (fixtures/waf-harness/sqlfix-app) runs the concatenated SELECT against
+# a seeded sqlite table (the pure-Go modernc.org/sqlite driver) and
+# answers with the rows, so an injection executes and its answer
+# reaches the scan. The calibration phase of the sqlmap leg dials this
+# Service DIRECTLY (engine-less) and expects at least one successful
+# injection — the pass proof that the target carries the gate.
+#
+# 2. The waf-harness-engine-sqlfix Deployment + Service. The same
+# engine image fronts the sqlfix fixture only (the --upstream hop), so
+# the sqlmap gate phase runs through an enforcing engine that reads
+# the same compiled bundle. The policy-activation step pushes the
+# bundle to BOTH engine instances; the enforcement probe for this
+# route reads 403 plus the X-Trishula-Rule header.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sqlfix-app
+  namespace: waf-harness
+  labels:
+    app.kubernetes.io/name: sqlfix-app
+    app.kubernetes.io/part-of: trishula-waf-harness
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sqlfix-app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sqlfix-app
+        app.kubernetes.io/part-of: trishula-waf-harness
+    spec:
+      containers:
+        - name: sqlfix-app
+          image: trishula-wh-sqlfix-app:pr
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sqlfix
+  namespace: waf-harness
+  labels:
+    app.kubernetes.io/name: sqlfix-app
+    app.kubernetes.io/part-of: trishula-waf-harness
+spec:
+  selector:
+    app.kubernetes.io/name: sqlfix-app
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: waf-harness-engine-sqlfix
+  namespace: waf-harness
+  labels:
+    app.kubernetes.io/name: trishula-engine-sqlfix
+    app.kubernetes.io/instance: waf-harness
+    app.kubernetes.io/part-of: trishula-waf-harness
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: trishula-engine-sqlfix
+      app.kubernetes.io/instance: waf-harness
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: trishula-engine-sqlfix
+        app.kubernetes.io/instance: waf-harness
+        app.kubernetes.io/part-of: trishula-waf-harness
+    spec:
+      containers:
+        - name: engine
+          image: trishula-wh-engine:pr
+          imagePullPolicy: IfNotPresent
+          args:
+            - --listen
+            - :8080
+            - --upstream
+            - http://sqlfix.waf-harness.svc.cluster.local:8080
+            - --hop
+            - engine
+            - --bundle
+            - /bundle.json
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: waf-harness-engine-sqlfix
+  namespace: waf-harness
+  labels:
+    app.kubernetes.io/name: trishula-engine-sqlfix
+    app.kubernetes.io/instance: waf-harness
+    app.kubernetes.io/part-of: trishula-waf-harness
+spec:
+  selector:
+    app.kubernetes.io/name: trishula-engine-sqlfix
+    app.kubernetes.io/instance: waf-harness
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

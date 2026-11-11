@@ -19,10 +19,14 @@ schedule keeps the pins warm.
 2. The corpus job runs the full goTestWAF corpus and compares the pass
    rate against `baseline.yaml`. A regression marks the run red. The
    baseline carries pending-first-run semantics (below).
-3. The sqlmap job runs sqlmap 1.10.11 at pinned flags. The target is
-   the deliberately SQLi-vulnerable fixture (`vuln-app`, the `/search`
-   route) through the enforcing engine. The runtime reads bounded, and
-   the gate records 0 successful injections.
+3. The sqlmap job runs sqlmap 1.10.11 at pinned flags, in two phases.
+   The calibration phase dials the genuinely SQLi-vulnerable sqlite
+   fixture (`sqlfix-app`, the `/sql` route) directly, with no engine on
+   the path, and expects at least one successful injection — the proof
+   that the target can carry the gate. The gate phase dials the same
+   fixture through the enforcing engine and records 0 successful
+   injections. The runtime reads bounded, and the calibration that
+   reads zero fails the leg with 'the target cannot prove the gate'.
 4. The differential job runs the same corpus on the open-appsec engine.
    The chart and images carry pinned digests. The diff job joins both
    reports per corpus row and publishes the diff table.
@@ -51,7 +55,7 @@ schedule keeps the pins warm.
 | `corpus-full.yaml` | the full-corpus manifest: flags, bounds, the verdict gates |
 | `corpus-rows.yaml` | the six committed rows moved here from `test/waf-gate/gotestwaf-subset.yaml` |
 | `corpus-fp.yaml` | the false-pos contract moved here from `test/waf-gate/gotestwaf-fp.yaml` |
-| `sqlmap.yaml` | the sqlmap target, the pinned flags, the bounds, the verdict markers |
+| `sqlmap.yaml` | the sqlmap target, the calibration and gate targets, the pinned flags, the bounds, the verdict markers |
 | `openappsec-differential.yaml` | the open-appsec config plus the routed Ingress object |
 | `wall-budget.yaml` | the per-stage budgets and the estimate rows |
 
@@ -106,6 +110,40 @@ and carries no second copy.
    doctl kubernetes cluster delete <name> --force
    ```
 
+## The sqlfix fixture and the calibration phase
+
+The suite's proof target is `fixtures/waf-harness/sqlfix-app`. The app
+runs its concatenated statement (`SELECT name FROM users WHERE id =
+'<q>'`) against a seeded sqlite table (the pure-Go `modernc.org/sqlite`
+driver; no cgo, so the scratch image build stays static) and returns
+the rows. An injection the engine misses both executes and answers.
+The engine instance `waf-harness-engine-sqlfix`
+(fixtures/waf-harness/manifests/sqlfix.yaml) fronts that fixture only;
+the policy activation pushes the compiled bundle to both engine
+instances, and each must log `consult active`.
+
+The scan Job carries two sqlmap runs. The calibration run dials the
+`sqlfix` Service directly and must read at least one of the manifest's
+injection markers; zero fails the leg with 'the target cannot prove
+the gate'. The gate run dials the engine front with the same flags and
+must read none, with the manifest's clean marker present. The
+pre-scan probes check both engine instances with 403 responses
+(WH-SQLI-001 on the primary engine's `/search`, WH-SQLI-002 on the
+sqlfix engine's `/sql`).
+
+## The report streams
+
+The scan pods never rely on `kubectl cp` of a completed pod (a cp
+needs a running container; logs of a completed pod read fine). Every
+scanner Job appends its report set to the pod log after the scan:
+`tar` over `base64`, wrapped in the `REPORT_B64_BEGIN` and
+`REPORT_B64_END` markers. The runner-side collection reads `kubectl
+logs` of the succeeded pod, splits the marker region, decodes and
+untars into `<leg>-pod-out`, and copies the report files into the
+leg's evidence directory. The Job exit code still travels: the wait
+drives the gate, the stream carries only the evidence. Every failure
+path streams too, so a failed scan still lands its partial reports.
+
 ## The change paths
 
 - A bypass or a false positive the corpus finds: an engine fix PR
@@ -137,18 +175,33 @@ cluster exists for the run window only.
 
 ## The validation boundary
 
-This leaf was validated locally. The checks:
-YAML parses. actionlint runs clean (exit 0; the style notes resolved).
-The drivers ran a dry battery against synthetic reports with the
-goTestWAF JSON shape. The battery covered the gates, the baseline
-record and compare paths, the sqlmap verdict parser, the diff join and
-the checksum sheet logic. The sqlmap flag manifest reads against the
-pinned flags. Every digest in `pins.yaml` was recorded at authoring
+This leaf was validated locally, most recently in the #300 review-fix
+pass. The checks:
+YAML parses (the workflow plus every manifest). actionlint runs clean
+(exit 0; the style notes resolved). The drivers ran a dry battery
+against synthetic reports with the goTestWAF JSON shape. The battery
+covered the gates, the baseline record and compare paths, the sqlmap
+verdict parser in the two-phase shape (the pass proof, the engine
+bypass, the calibration that proves nothing, the deadline breach, the
+run that died early), the corpus and differential scan-job builders
+(the marker-stream wrapper text inspected), the diff join and the
+checksum sheet logic. The stream round-trip (marker split, decode,
+untar) ran locally under both base64 line forms (the single-line
+busybox form and the 76-column GNU form) and returned byte-identical
+files. The sqlfix app cross-compiles (`CGO_ENABLED=0 GOOS=linux
+GOARCH=amd64 go build`), `go vet` stays clean, and its `/sql` route
+answered a local smoke run (one seeded row for the plain query, all
+three rows for the tautology form, the store error text for the error
+form). The goTestWAF image entrypoint, the curl amd64 digest and the
+doctl tarball (sha256 plus the member list) re-resolved live from the
+registry APIs. Every digest in `pins.yaml` was recorded at authoring
 time (2026-11-11) from the live registry API or the upstream checksum
-file.
+file; the curl amd64 child digest was added in the fix pass
+(2026-11-12) from the same live reads.
 
-The cluster provisioning, the sqlmap scan and the open-appsec
-bring-up prove on the first rehearsal. The operator dispatches that
-rehearsal after step 2. No local environment carries the DigitalOcean
-credentials. The receipts sit in the `.lane` directory of the
-authoring tree.
+The cluster provisioning, the sqlmap scan, the open-appsec bring-up
+and the enforcement probes prove on the first rehearsal. The operator
+dispatches that rehearsal after step 2. No local environment carries
+the DigitalOcean credentials. The receipts sit in the `.lane`
+directory of the authoring tree (the fix-pass receipts follow the
+authoring ones).

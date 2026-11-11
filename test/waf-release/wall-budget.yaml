@@ -27,7 +27,7 @@ budgets:
   - stage: sqlmap
     job_timeout_minutes: 45
     scan_job_deadline_s: 1800
-    estimate: "10-20 min"
+    estimate: "15-35 min"         # two sqlmap runs share the Job (calibration direct, then through the engine)
   - stage: diff
     job_timeout_minutes: 20
     estimate: "1-2 min"

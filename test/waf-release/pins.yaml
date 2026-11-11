@@ -65,6 +65,11 @@ runner_job_images:
     repository: docker.io/curlimages/curl
     tag: "8.13.0"
     digest: sha256:d43bdb28bae0be0998f3be83199bfb2b81e0a30b034b6d7586ce7e05de34c3fd
+    # The probe pods pin the linux amd64 child digest below (the #300
+    # fix pass re-resolved it live). The amd64 value is the immutable
+    # single-platform pull; the index digest above stays the recorded
+    # multi-arch parent (its children match the live 8.13.0 index).
+    digest_amd64: sha256:e6ebb770fb6e2236c2e83ad6b6dbbd32cb6dff0b17a9482a7d4bca20f1c9b50a
 
 sqlmap:
   version: "1.10.11"
@@ -101,10 +106,10 @@ open_appsec:
     digest: sha256:cc53aa8a3a5e478eddd6f5c556793a180c0dc71f5a42d4ddfb3cf4e5e465d14d
 
 fixture_images:
-  # The four suite images (engine, operator, vuln-app, benign-app) build
-  # from the suite checkout. The deploy contract names the tag checkout,
-  # never a PR sha. They push to GHCR under a per-run tag.
-  # The cluster pulls those bytes.
+  # The five suite images (engine, operator, vuln-app, benign-app,
+  # sqlfix-app) build from the suite checkout. The deploy contract names
+  # the tag checkout, never a PR sha. They push to GHCR under a per-run
+  # tag. The cluster pulls those bytes.
   recipe: fixtures/waf-harness/Dockerfile
   registry: ghcr.io/trishula-dev
   tag_scheme: "wafrs-<run_id>-<run_attempt>"
