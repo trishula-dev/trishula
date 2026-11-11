@@ -11,7 +11,7 @@ package main
 //	                             Coraza (reference CRS evaluator) → the
 //	                             S2 reference verdict (rule ids)
 //	bola <objectID> <owner> <subject>   ownership-mismatch decision in
-//	                             the spec's verdict.v1 record shape (S3)
+//	                             the spec's verdict.v2 record shape (S3)
 //	cel <method> <path> <rate>   the merged TR-02 seed pack (S3, rate rule)
 //	ring <pinned-map> <n>        kernel ring events via the merged ingest
 //	                             decoder → S0/transport evidence
@@ -121,7 +121,7 @@ func bolaSub(objectID, owner, subject string) {
 	match := subject == owner
 	verdict := map[bool]string{true: "AUTHORIZED", false: "BLOCK (API1:2023 BOLA)"}[match]
 	fmt.Printf("bola:     object=%s owner=%s subject=%s → %s\n", objectID, owner, subject, verdict)
-	fmt.Printf("          verdict.v1: {route:\"/api/v1/orders/:id\", rule:\"auth.ownership_match\", "+
+	fmt.Printf("          verdict.v2: {route:\"/api/v1/orders/:id\", rule:\"auth.ownership_match\", "+
 		"action:%q, decision:%t, evidence:{owner:%q, subject:%q}}\n",
 		map[bool]string{true: "allow", false: "block"}[match], match, owner, subject)
 }

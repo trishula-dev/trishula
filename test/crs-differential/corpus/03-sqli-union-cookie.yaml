@@ -17,3 +17,6 @@ expect:
   phase2_seed: [942100, 942190, 942360, 942361, 942362, 942480]
   # observed off-seed attack ids (live probe evidence, README table).
   phase2_offseed: [942200, 942260, 942270]
+  # libinjection fingerprint class pin (issue #290): the 942100 carrier's
+  # SQLi fingerprint over the cookie value (live 2-run verified).
+  sqli_fp: "1UEnk"

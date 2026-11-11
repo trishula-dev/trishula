@@ -207,4 +207,14 @@ type Expect struct {
 	// stays the rule-semantics pin. Absent (false) = the row parses clean
 	// and passes to CRS untouched.
 	ParseReject bool `json:"parse_reject,omitempty"`
+	// SqliFP (issue #290) pins the libinjection SQLi fingerprint the
+	// case's CRS 942-class carriers carry (the @detectSQLi activation's
+	// captured fingerprint, live-walk evidence). Empty = the case pins NO
+	// fingerprint class: the reference must carry zero SQLi-class
+	// evidence (the benign-clean row shape).
+	SqliFP string `json:"sqli_fp,omitempty"`
+	// XssFP (issue #290) asserts the XSS fingerprint class fired on the
+	// case (libinjection returns no XSS fingerprint: the class pin is
+	// boolean). False = the case pins no XSS-class evidence.
+	XssFP bool `json:"xss_fp,omitempty"`
 }

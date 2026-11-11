@@ -175,7 +175,7 @@ bash lab/module-4/run.sh
 | rate-algorithms | `go test -v ./internal/engine/rateban/` over the token bucket, sliding window, EWMA and key composition tables | every named row holds |
 | ban-ladder | `go test -v ./test/ban-conformance/` — the ScoredWindowBan v1 oracle over the fixture file | the spec algorithm reproduces from the fixture set alone |
 | fingerprints | `go test -v ./internal/engine/botdef/` over the header fingerprint and behavior window tests | browser vs tool shapes classify apart; the merge policy holds |
-| verdict-records | `cmd/attackdemo`: the seed rate rule at sub-limit, boundary and over-limit rates; the BOLA decision record | the verdict flips at the boundary; the `verdict.v1` record prints |
+| verdict-records | `cmd/attackdemo`: the seed rate rule at sub-limit, boundary and over-limit rates; the BOLA decision record | the verdict flips at the boundary; the `verdict.v2` record prints |
 | kernel-ban | `go test -tags ban_e2e ./test/banenforce/` — optional, needs the kernel environment (Module 3's lab carries the same gate) | threshold-cross → kernel drop → expiry → evidence JSONL |
 
 The full shape plus the VM mode for the kernel leg:

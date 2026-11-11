@@ -204,6 +204,9 @@ vocabulary names dispositions and never reports `enforced`.
 ## 7. The verdict record shape
 
 Decision: extend `trishula.verdict.v1`. No v2 bump.
+Superseded 2026-11-11: `trishula.verdict` bumps to v2 for the libinjection
+fingerprint fields (TR-205 leaf 2, issue #290). The §15.2 record schema
+carries the v2 field rows.
 
 - The extension: one optional root object `"shield": {"stages": <int>}`. The integer carries
   the decoded bitmap.
