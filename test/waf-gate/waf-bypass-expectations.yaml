@@ -1,0 +1,44 @@
+# test/waf-gate/waf-bypass-expectations.yaml (TR-205, issue #291 row 2)
+# — the battery expectations. The layer runs every waf-bypass payload
+# dir at the pin except the excluded dirs; the verdict reads the tool
+# JSON buckets:
+#   BYPASSED — an attack payload the engine did not block (a bypass)
+#   FALSED   — an FP-class payload the engine blocked (a false positive)
+#   FAILED   — a request outside 2xx and the block codes
+# PASSED holds both the blocked attack payloads and the passed FP
+# payloads; the verdict reads only the three buckets above plus the
+# coverage check: the dir prefix of every red-bucket entry must sit in
+# this manifest (a tool battery change without a manifest row fails the
+# layer).
+#
+# The excluded dirs: GraphQL and API payloads target endpoint contracts
+# the harness fixtures do not serve.
+# A new bypass is a corpus row: fix it in an engine PR, then this
+# manifest records the new expectation (issue #291, the corpus-row
+# change path).
+---
+exclude_dirs:
+  - GraphQL
+  - API
+expected_blocked_dirs:
+  - CM
+  - LDAP
+  - LFI
+  - MFD
+  - Misc
+  - NoSQLi
+  - OR
+  - RCE
+  - RFI
+  - SQLi
+  - SSI
+  - SSRF
+  - SSTI
+  - UWA
+  - XSS
+expected_passed_dirs:
+  - FP
+tolerances:
+  bypassed_max: 0
+  falsed_max: 0
+  failed_max: 0

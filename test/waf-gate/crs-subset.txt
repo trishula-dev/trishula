@@ -1,0 +1,24 @@
+# test/waf-gate/crs-subset.txt (TR-205, issue #291 row 3) — the
+# committed go-ftw case list, one CRS rule id per line. The layer runs
+# only these rules' regression tests. Every row sits in a CRS family
+# the engine ships (941 XSS, 942 SQLi), carries severity critical in
+# the pinned rulepack, and has regression test files in the pinned
+# corpus (coreruleset v4.30.0): 204 tests across the 13 rows; the
+# workflow floor check holds the sample real.
+#
+# A corpus-row PR remains the only change path: a rule id row means one line
+# here (add or remove) and a README table note. A red row (the engine
+# misses a pinned row) is an engine fix PR that restores the row.
+941100
+941101
+941110
+941140
+941160
+942100
+942101
+942140
+942160
+942170
+942190
+942230
+942500

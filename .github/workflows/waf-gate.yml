@@ -1,0 +1,505 @@
+# TR-205 (issue #291, RFC numbered) — the per-PR adversarial WAF gate.
+#
+# The build statement, one item per issue #291 requirement:
+#   1. The gate runs go-ftw with the CRS test corpus and the expected
+#      per-rule verdicts, against the live engine on the harness
+#      (cloud mode: the verdict reads the HTTP status; a CRS-critical
+#      row passes its test on a 403 block).
+#   2. The gate runs the waf-bypass evasion battery at a pinned commit
+#      (test/waf-gate/pins.yaml); one bypass or one false positive
+#      fails the layer.
+#   3. The gate runs the pinned goTestWAF case subset: the committed
+#      case list sits in test/waf-gate/gotestwaf-subset.yaml; a
+#      corpus-row PR carries them; only a corpus-row PR changes it.
+#   4. The gate runs the goTestWAF false-positive battery through the
+#      engine; benign traffic that blocks fails the layer.
+#   5. A red layer fails its step, so the check turns red; the summary
+#      records the per-layer pass rate plus the wall time, plus the
+#      final aggregate.
+#   6. Every layer tees its raw report to the run artifacts (an
+#      always() leg).
+#   7. Determinism: test/waf-gate/pins.yaml carries every tool pin
+#      (digests and commits); the step scripts fetch only the objects
+#      at those digests, and every layer reads its committed manifest
+#      (test/waf-gate/).
+#
+# The gate calls the shared composite .github/actions/waf-harness-up
+# (issue #289): the one call brings up the kind cluster, the PR-sha
+# images, the fixtures and the policy; the layers dial the engine
+# endpoint from its outputs through the port-forward. This job owns the
+# teardown (issue #289, item 1): a failed kind delete fails the gate.
+name: waf-gate
+
+on:
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trishula-waf-gate-${{ github.head_ref || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  waf-gate:
+    name: "TR-205 (issue #291) waf gate: CRS corpus + bypass battery + goTestWAF subset + FP"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Open the run record
+        run: |
+          HEAD_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
+          printf '%s\n' "waf-gate run (issue #291) — head sha ${HEAD_SHA}" \
+            >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Check out the PR head (the images label THIS sha)
+        id: co
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      # The shared call (issue #289): cluster + PR-sha images + fixtures
+      # + baseline + policy with consult active. The layers dial
+      # waf-harness-engine.waf-harness.svc.cluster.local:8080 through the
+      # port-forward this job opens below.
+      - name: Bring up the harness (composite waf-harness-up)
+        id: harness
+        uses: ./.github/actions/waf-harness-up
+        env:
+          HEAD_SHA: ${{ steps.co.outputs.commit }}
+
+      - name: Stage the manifest-reader venv (PyYAML, version-pinned)
+        run: |
+          set -euo pipefail
+          python3 -m venv "${GITHUB_WORKSPACE}/.waf-gate-venv"
+          "${GITHUB_WORKSPACE}/.waf-gate-venv/bin/pip" install --quiet \
+            pyyaml==6.0.2
+          "${GITHUB_WORKSPACE}/.waf-gate-venv/bin/python" -c \
+            'import yaml; print("pyyaml 6.0.2 ready")'
+
+      - name: Open the probe pipe (port-forward the engine + the benign fixture)
+        id: pipe
+        run: |
+          set -euo pipefail
+          ART="${ARTIFACT_DIR:-${GITHUB_WORKSPACE}/artifacts}"
+          {
+            cd "$(mktemp -d)"
+            kubectl -n waf-harness port-forward svc/waf-harness-engine 18080:8080 \
+              >/dev/null 2>&1 &
+            P_E="${!}"
+            kubectl -n waf-harness port-forward svc/benign-app 18081:8080 \
+              >/dev/null 2>&1 &
+            P_B="${!}"
+            printf '%s %s\n' "${P_E}" "${P_B}" > "${ART}/port-forward.pids"
+            for _ in $(seq 1 60); do
+              curl -sS -o /dev/null --max-time 3 http://127.0.0.1:18080/healthz \
+                && break
+              sleep 0.5
+            done
+            ST_E="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+              http://127.0.0.1:18080/)"
+            ST_B="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+              http://127.0.0.1:18081/)"
+            test "${ST_E}" = "200"
+            test "${ST_B}" = "200"
+            echo "probe pipe open: engine ${ST_E}, benign fixture ${ST_B}"
+          } 2>&1 | tee "${ART}/stage-probe-pipe.log"
+          echo "waf-gate stage probes: port-forward ready (engine 18080, benign 18081)" \
+            >> "${ART}/summary-lines.md"
+
+      # Requirement 1: the CRS regression suite (go-ftw, cloud mode) over
+      # the committed case list; requirement 7: the pins come from
+      # test/waf-gate/pins.yaml with sha256 verification. Cloud mode is
+      # blind when a test carries no expected status (go-ftw v2.6.2
+      # returns pass on expected status 0), so the committed
+      # crs-overrides.yaml gives every subset test its status: 403 for
+      # the expect_ids rows (the engine block contract) and 200 for the
+      # no-expect rows. The probe after the suite pins the header
+      # contract: a CRS-critical row answers 403 with the CRS rule id in
+      # X-Trishula-Rule (the manual rule WH-SQLI-001 stays separate).
+      - name: Layer 1 — CRS regression suite (go-ftw, cloud mode)
+        id: goftw
+        run: |
+          set -euo pipefail
+          ART="${ARTIFACT_DIR:-${GITHUB_WORKSPACE}/artifacts}"
+          GW="${GITHUB_WORKSPACE}"
+          PY="${GW}/.waf-gate-venv/bin/python"
+          L_START="${SECONDS}"
+          {
+            WORK="$(mktemp -d)"
+            cd "${WORK}"
+            PINS="${GW}/test/waf-gate/pins.yaml"
+            CRS_TAG="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["coreruleset"]["release_tag"], end="")' "${PINS}")"
+            CRS_SHA="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["coreruleset"]["tarball_sha256"], end="")' "${PINS}")"
+            FTW_TAG="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["go_ftw"]["release_tag"], end="")' "${PINS}")"
+            FTW_AS="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["go_ftw"]["binary_asset"], end="")' "${PINS}")"
+            FTW_SHA="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["go_ftw"]["binary_sha256"], end="")' "${PINS}")"
+            echo "pins: go-ftw ${FTW_TAG} (${FTW_AS}), corpus ${CRS_TAG}"
+            curl -sSfL -o crs.tar.gz \
+              "https://github.com/coreruleset/coreruleset/archive/refs/tags/${CRS_TAG}.tar.gz"
+            echo "${CRS_SHA}  crs.tar.gz" | sha256sum -c -
+            tar xzf crs.tar.gz
+            curl -sSfL -o ftw.tar.gz \
+              "https://github.com/coreruleset/go-ftw/releases/download/${FTW_TAG}/${FTW_AS}"
+            echo "${FTW_SHA}  ftw.tar.gz" | sha256sum -c -
+            tar xzf ftw.tar.gz
+            chmod +x ftw
+            FTW_REGEX="$("${PY}" -c 'import sys; ids=[l.split()[0] for l in open(sys.argv[1]) if l.strip() and not l.startswith("#")]; print("^(" + "|".join(ids) + ")-", end="")' \
+              "${GW}/test/waf-gate/crs-subset.txt")"
+            echo "include regex: ${FTW_REGEX}"
+            FTW_RC=0
+            ./ftw run --config "${GW}/test/waf-gate/ftw.yaml" \
+              --overrides "${GW}/test/waf-gate/crs-overrides.yaml" \
+              -d "${WORK}/coreruleset-${CRS_TAG#v}/tests/regression/tests" \
+              -i "${FTW_REGEX}" -t \
+              > ftw-run.log 2>&1 || FTW_RC=$?
+            cat ftw-run.log
+            FTW_TOTAL="$(grep -oE '[0-9]+ total tests' ftw-run.log \
+              | grep -oE '[0-9]+' | head -1 || true)"
+            FTW_FAIL="$(grep -oE '[0-9]+ test\(s\) failed' ftw-run.log \
+              | grep -oE '[0-9]+' | head -1 || true)"
+            FTW_SKIP="$(grep -oE 'skipped [0-9]+ tests' ftw-run.log \
+              | grep -oE '[0-9]+' | head -1 || true)"
+            case "${FTW_TOTAL}" in *[!0-9]*|"") FTW_TOTAL=999 ;; esac
+            case "${FTW_FAIL}" in *[!0-9]*|"") FTW_FAIL=999 ;; esac
+            case "${FTW_SKIP}" in *[!0-9]*|"") FTW_SKIP=999 ;; esac
+            curl -sS -i --max-time 15 -X POST 'http://127.0.0.1:18080/post' \
+              -H 'Content-Type: application/x-www-form-urlencoded' \
+              --data 'var=1234 OR 1=1' -o crs-probe.txt || true
+            CRS_PROBE=pass
+            grep -q '^HTTP/.* 403' crs-probe.txt || CRS_PROBE=fail
+            grep -qi '^x-trishula-rule:.*9421' crs-probe.txt || CRS_PROBE=fail
+            WALL=$((SECONDS - L_START))
+            FTW_PASS=$((FTW_TOTAL - FTW_FAIL))
+            FTW_Y="${FTW_TOTAL}"
+            V=pass
+            test "${FTW_RC}" -eq 0 || V=fail
+            test "${FTW_FAIL}" -eq 0 || V=fail
+            test "${FTW_SKIP}" -eq 0 || V=fail
+            test "${FTW_Y}" -ge 180 || V=fail
+            test "${CRS_PROBE}" = "pass" || V=fail
+            printf 'waf-gate stage go-ftw: pass %s/%s wall %sss verdict=%s\n' \
+              "${FTW_PASS}" "${FTW_Y}" "${WALL}" "${V}" \
+              >> "${ART}/summary-lines.md"
+            printf '%s\n' "verdict=${V}" > "${ART}/layer-go-ftw.verdict"
+            echo "go-ftw rc=${FTW_RC} pass=${FTW_PASS} fail=${FTW_FAIL} skip=${FTW_SKIP} corpus-probe=${CRS_PROBE}"
+          } 2>&1 | tee "${ART}/stage-go-ftw.log"
+          grep -qx 'verdict=pass' "${ART}/layer-go-ftw.verdict" || exit 1
+
+      # Requirement 2 + 4: the evasion battery at the pinned commit. The
+      # tool JSON buckets carry the verdict: BYPASSED = a bypassed attack
+      # payload, FALSED = a blocked FP-class payload, FAILED = a request
+      # outside 2xx and the block codes. The committed expectations
+      # manifest (test/waf-gate/waf-bypass-expectations.yaml) holds the
+      # tolerances; a bypass becomes a corpus row in a fix PR.
+      - name: Layer 2 — waf-bypass evasion battery (pinned commit)
+        id: bypass
+        run: |
+          set -euo pipefail
+          ART="${ARTIFACT_DIR:-${GITHUB_WORKSPACE}/artifacts}"
+          GW="${GITHUB_WORKSPACE}"
+          PY="${GW}/.waf-gate-venv/bin/python"
+          L_START="${SECONDS}"
+          {
+            WORK="$(mktemp -d)"
+            cd "${WORK}"
+            PINS="${GW}/test/waf-gate/pins.yaml"
+            WB_SHA="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["waf_bypass"]["pin_commit"], end="")' "${PINS}")"
+            WB_REPO="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["waf_bypass"]["repo"], end="")' "${PINS}")"
+            echo "pins: waf-bypass ${WB_SHA}"
+            git init -q waf-bypass
+            git -C waf-bypass remote add origin "${WB_REPO}"
+            git -C waf-bypass fetch -q --depth 1 origin "${WB_SHA}"
+            git -C waf-bypass checkout -q FETCH_HEAD
+            python3 -m venv venv
+            ./venv/bin/pip install --quiet -r waf-bypass/requirements.txt
+            WB_RC=0
+            ./venv/bin/python waf-bypass/main.py \
+              --host='http://127.0.0.1:18080' \
+              --threads=15 --timeout=15 \
+              --json-format --no-progress --exclude-dir='GraphQL,API' \
+              > result.json 2> "${ART}/stage-waf-bypass.err" || WB_RC=$?
+            cp result.json "${ART}/stage-waf-bypass-result.json" || true
+            tail -c 2000 "${ART}/stage-waf-bypass.err" || true
+            printf '%s\n' "${WB_RC}" > "${ART}/layer-waf-bypass.rc"
+            echo "waf-bypass rc=${WB_RC}"
+          } 2>&1 | tee "${ART}/stage-waf-bypass.log"
+          WALL=$((SECONDS - L_START))
+          ART="${ART}" GW="${GW}" "${PY}" <<'PY' > "${ART}/layer-waf-bypass.stats"
+          import json, os, yaml
+          art = os.environ["ART"]
+          gw = os.environ["GW"]
+          try:
+              d = json.load(open(art + "/stage-waf-bypass-result.json"))
+          except Exception:
+              d = {}
+          rc = open(art + "/layer-waf-bypass.rc").read().strip() or "1"
+          m = yaml.safe_load(open(gw + "/test/waf-gate/waf-bypass-expectations.yaml"))
+          exp = m["expected_blocked_dirs"] + m["expected_passed_dirs"]
+          tol = m["tolerances"]
+          def kf(k):
+              v = d.get(k) or {}
+              return list(v.keys()) if isinstance(v, dict) else [r[0] for r in v]
+          bp = [str(x).split("/")[0].upper() for x in kf("BYPASSED")]
+          fd = [str(x).split("/")[0].upper() for x in kf("FALSED")]
+          fl = [str(x).split("/")[0].upper() for x in kf("FAILED")]
+          ps = [str(x).split("/")[0].upper() for x in kf("PASSED")]
+          cov = int(all(x in exp for x in bp + fd + fl))
+          print("%d %d %d %d %d %d %d %d %d %s" % (
+              len(bp), len(fd), len(fl), cov, len(ps),
+              len(bp) + len(fd) + len(fl) + len(ps),
+              int(tol["bypassed_max"]), int(tol["falsed_max"]),
+              int(tol["failed_max"]), rc))
+          PY
+          STATS="$(cat "${ART}/layer-waf-bypass.stats" 2>/dev/null || true)"
+          read -r WBYP WFD WFL COV WPS WTOTAL TBAY TFAL TFLD WBRC <<< "${STATS}" || true
+          case "${WBYP}${WFD}${WFL}${COV}${WPS}${WTOTAL}${TBAY}${TFAL}${TFLD}" in \
+            *[!0-9]*|"") WBYP=999; WFD=999; WFL=999; COV=0; WPS=0; WTOTAL=0; TBAY=0; TFAL=0; TFLD=0 ;; esac
+          case "${WBRC}" in *[!0-9]*|"") WBRC=1 ;; esac
+          V=pass
+          test "${WBRC}" -eq 0 || V=fail
+          test "${WTOTAL}" -ge 1 || V=fail
+          test "${WBYP}" -le "${TBAY}" || V=fail
+          test "${WFD}" -le "${TFAL}" || V=fail
+          test "${WFL}" -le "${TFLD}" || V=fail
+          test "${COV}" -eq 1 || V=fail
+          printf 'waf-gate stage waf-bypass: pass %s/%s wall %sss verdict=%s\n' \
+            "${WPS}" "${WTOTAL}" "${WALL}" "${V}" \
+            >> "${ART}/summary-lines.md"
+          printf '%s\n' "verdict=${V}" > "${ART}/layer-waf-bypass.verdict"
+          echo "waf-bypass bypassed=${WBYP} falsed=${WFD} failed=${WFL} passed=${WPS} total=${WTOTAL} covered=${COV}"
+          grep -qx 'verdict=pass' "${ART}/layer-waf-bypass.verdict" || exit 1
+
+      # Requirement 3 + 7: the pinned goTestWAF subset. One docker run per
+      # committed case row; the image pins at the digest in pins.yaml; the
+      # reports land under artifacts/gotestwaf-subset/<case>/ and the
+      # python read counts the bypasses. --nonBlockedAsPassed keeps only
+      # real 4xx-class blocks in the blocked bucket: a not-blocked attack
+      # request reads bypassed, never blocked.
+      - name: Layer 3 — goTestWAF pinned subset
+        id: gtw
+        run: |
+          set -euo pipefail
+          ART="${ARTIFACT_DIR:-${GITHUB_WORKSPACE}/artifacts}"
+          GW="${GITHUB_WORKSPACE}"
+          PY="${GW}/.waf-gate-venv/bin/python"
+          L_START="${SECONDS}"
+          {
+            PINS="${GW}/test/waf-gate/pins.yaml"
+            M="${GW}/test/waf-gate/gotestwaf-subset.yaml"
+            IMG="$("${PY}" -c 'import yaml,sys; p=yaml.safe_load(open(sys.argv[1]))["gotestwaf"]; print(p["image_repo"]+":"+p["image_tag"]+"@"+p["image_digest"], end="")' "${PINS}")"
+            GTW_SET="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["test_set"], end="")' "${M}")"
+            CASES="$("${PY}" -c 'import yaml,sys; print(" ".join(yaml.safe_load(open(sys.argv[1]))["cases"]), end="")' "${M}")"
+            WKRS="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["flags"]["workers"], end="")' "${M}")"
+            DLY="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["flags"]["send_delay_ms"], end="")' "${M}")"
+            WN="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["flags"]["waf_name"], end="")' "${M}")"
+            echo "pins: gotestwaf ${IMG}; subset ${GTW_SET}: ${CASES}"
+            docker pull "${IMG}"
+            GTW_FAIL=0
+            for CASE in ${CASES}; do
+              REP="${ART}/gotestwaf-subset/${CASE}"
+              mkdir -p "${REP}/reports"
+              if docker run --rm --network=host \
+                  -v "${REP}/reports:/app/reports" \
+                  -v "${GW}/test/waf-gate:/gate-manifests:ro" \
+                  "${IMG}" \
+                  --url='http://127.0.0.1:18080' \
+                  --wafName "${WN}" \
+                  --testSet "${GTW_SET}" \
+                  --testCase "${CASE}" \
+                  --nonBlockedAsPassed \
+                  --skipWAFIdentification \
+                  --reportFormat json --noEmailReport --hideArgsInReport \
+                  --workers "${WKRS}" --sendDelay "${DLY}" --randomDelay 0 \
+                  > "${REP}/console.log" 2>&1; then
+                tail -n 3 "${REP}/console.log"
+              else
+                echo "gotestwaf case ${CASE}: run aborted (the console log sits in the artifacts)"
+                GTW_FAIL=$((GTW_FAIL + 1))
+              fi
+            done
+            echo "gotestwaf aborted runs: ${GTW_FAIL}"
+          } 2>&1 | tee "${ART}/stage-gotestwaf-subset.log"
+          WALL=$((SECONDS - L_START))
+          ART="${ART}" GW="${GW}" "${PY}" <<'PY' > "${ART}/layer-gotestwaf-subset.stats"
+          import glob, json, os, yaml
+          art = os.environ["ART"]
+          gw = os.environ["GW"]
+          m = yaml.safe_load(open(gw + "/test/waf-gate/gotestwaf-subset.yaml"))
+          mx = int(m["verdict"]["bypassed_tests_max"])
+          files = sorted(glob.glob(art + "/gotestwaf-subset/*/reports/waf-evaluation-report-*.json"))
+          byp = blk = unr = fal = sent = 0
+          for f in files:
+              j = json.load(open(f))
+              tp = j.get("true_positive_tests") or (j.get("summary") or {}).get("true_positive_tests") or {}
+              r = tp.get("summary") or {}
+              sent += r.get("total_sent", 0)
+              byp += r.get("bypassed_tests", 0)
+              blk += r.get("blocked_tests", 0)
+              unr += r.get("unresolved_tests", 0)
+              fal += r.get("failed_tests", 0)
+          print("%d %d %d %d %d %d %d %d" % (
+              byp, blk, unr, fal, sent, mx,
+              len(files), len(m["cases"])))
+          PY
+          STATS="$(cat "${ART}/layer-gotestwaf-subset.stats" 2>/dev/null || true)"
+          read -r GBYP GBLK GUNS GFAIL GSENT GMAX GNFILES NCASES <<< "${STATS}" || true
+          case "${GBYP}${GBLK}${GSENT}${GMAX}${GNFILES}${NCASES}" in \
+            *[!0-9]*|"") GBYP=999; GNFILES=0; NCASES=1 ;; esac
+          V=pass
+          test "${GNFILES}" -eq "${NCASES}" || V=fail
+          test "${GBYP}" -le "${GMAX}" || V=fail
+          printf 'waf-gate stage gotestwaf-subset: pass %s/%s wall %sss verdict=%s\n' \
+            "${GBLK}" "${GSENT}" "${WALL}" "${V}" \
+            >> "${ART}/summary-lines.md"
+          printf '%s\n' "verdict=${V}" > "${ART}/layer-gotestwaf-subset.verdict"
+          echo "gotestwaf totals: bypassed=${GBYP} blocked=${GBLK} unresolved=${GUNS} failed=${GFAIL} sent=${GSENT} (max=${GMAX}, reports=${GNFILES}/${NCASES})"
+          grep -qx 'verdict=pass' "${ART}/layer-gotestwaf-subset.verdict" || exit 1
+
+      # Requirement 4: the false-positive battery. The false-pos set runs
+      # through the engine (the WAF surface); the benign fixture answers
+      # the pass-through traffic. Default status semantics hold: only a
+      # real 403 answer counts blocked. The block count MUST read zero.
+      - name: Layer 4 — goTestWAF false-positive battery
+        id: gtwfp
+        run: |
+          set -euo pipefail
+          ART="${ARTIFACT_DIR:-${GITHUB_WORKSPACE}/artifacts}"
+          GW="${GITHUB_WORKSPACE}"
+          PY="${GW}/.waf-gate-venv/bin/python"
+          L_START="${SECONDS}"
+          {
+            PINS="${GW}/test/waf-gate/pins.yaml"
+            M="${GW}/test/waf-gate/gotestwaf-fp.yaml"
+            IMG="$("${PY}" -c 'import yaml,sys; p=yaml.safe_load(open(sys.argv[1]))["gotestwaf"]; print(p["image_repo"]+":"+p["image_tag"]+"@"+p["image_digest"], end="")' "${PINS}")"
+            FP_SET="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["test_set"], end="")' "${M}")"
+            WKRS="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["flags"]["workers"], end="")' "${M}")"
+            DLY="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["flags"]["send_delay_ms"], end="")' "${M}")"
+            WN="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["flags"]["waf_name"], end="")' "${M}")"
+            MX="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["verdict"]["blocked_tests_max"], end="")' "${M}")"
+            echo "pins: gotestwaf ${IMG}; false-positive set ${FP_SET}; blocked max ${MX}"
+            FP_RC=0
+            REP="${ART}/gotestwaf-fp"
+            mkdir -p "${REP}/reports"
+            docker run --rm --network=host \
+              -v "${REP}/reports:/app/reports" \
+              -v "${GW}/test/waf-gate:/gate-manifests:ro" \
+              "${IMG}" \
+              --url='http://127.0.0.1:18080' \
+              --wafName "${WN}" \
+              --testSet "${FP_SET}" \
+              --skipWAFIdentification \
+              --reportFormat json --noEmailReport --hideArgsInReport \
+              --workers "${WKRS}" --sendDelay "${DLY}" --randomDelay 0 \
+              > "${REP}/console.log" 2>&1 || FP_RC=$?
+            tail -n 3 "${REP}/console.log"
+            printf '%s\n' "${FP_RC}" > "${ART}/layer-gotestwaf-fp.rc"
+            echo "gotestwaf-fp rc=${FP_RC}"
+          } 2>&1 | tee "${ART}/stage-gotestwaf-fp.log"
+          WALL=$((SECONDS - L_START))
+          ART="${ART}" GW="${GW}" "${PY}" <<'PY' > "${ART}/layer-gotestwaf-fp.stats"
+          import glob, json, os, yaml
+          art = os.environ["ART"]
+          gw = os.environ["GW"]
+          m = yaml.safe_load(open(gw + "/test/waf-gate/gotestwaf-fp.yaml"))
+          mx = int(m["verdict"]["blocked_tests_max"])
+          files = sorted(glob.glob(art + "/gotestwaf-fp/reports/waf-evaluation-report-*.json"))
+          blk = sent = 0
+          for f in files:
+              j = json.load(open(f))
+              tn = j.get("true_negative_tests") or (j.get("summary") or {}).get("true_negative_tests") or {}
+              r = tn.get("summary") or {}
+              sent += r.get("total_sent", 0)
+              blk += r.get("blocked_tests", 0)
+          rc = open(art + "/layer-gotestwaf-fp.rc").read().strip() or "1"
+          print("%d %d %d %d %s" % (blk, sent, mx, len(files), rc))
+          PY
+          STATS="$(cat "${ART}/layer-gotestwaf-fp.stats" 2>/dev/null || true)"
+          read -r FBLK FSENT FMAX NFILES FPRC <<< "${STATS}" || true
+          case "${FBLK}${FSENT}${FMAX}${NFILES}" in *[!0-9]*|"") FBLK=999; NFILES=0 ;; esac
+          case "${FPRC}" in *[!0-9]*|"") FPRC=1 ;; esac
+          V=pass
+          test "${FPRC}" -eq 0 || V=fail
+          test "${NFILES}" -ge 1 || V=fail
+          test "${FBLK}" -le "${FMAX}" || V=fail
+          printf 'waf-gate stage gotestwaf-fp: pass %s/%s wall %sss verdict=%s\n' \
+            "$((FSENT - FBLK))" "${FSENT}" "${WALL}" "${V}" \
+            >> "${ART}/summary-lines.md"
+          printf '%s\n' "verdict=${V}" > "${ART}/layer-gotestwaf-fp.verdict"
+          grep -qx 'verdict=pass' "${ART}/layer-gotestwaf-fp.verdict" || exit 1
+
+      # Requirement 5: one line per layer (the verdict files above) plus
+      # the aggregate; a missing line stamps the FAILED OR NOT REACHED
+      # shape (the house contract). A red mark came from the layer step.
+      - name: Assemble the stage summary
+        if: always()
+        run: |
+          set -euo pipefail
+          ART="${ARTIFACT_DIR:-${GITHUB_WORKSPACE}/artifacts}"
+          if test -f "${ART}/summary-lines.md"; then
+            cat "${ART}/summary-lines.md" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+          PASS=0
+          FAIL=0
+          for l in go-ftw waf-bypass gotestwaf-subset gotestwaf-fp; do
+            if test -f "${ART}/layer-${l}.verdict"; then
+              if grep -qx 'verdict=pass' "${ART}/layer-${l}.verdict"; then
+                PASS=$((PASS + 1))
+              else
+                FAIL=$((FAIL + 1))
+              fi
+            else
+              printf '%s\n' \
+                "waf-gate stage ${l}: FAILED OR NOT REACHED — the stage log sits in the artifacts" \
+                >> "${GITHUB_STEP_SUMMARY}"
+            fi
+          done
+          if test $((PASS + FAIL)) -eq 4 && test "${FAIL}" -eq 0; then
+            printf '%s\n' "waf-gate verdict: pass — layers passed ${PASS}/4" \
+              >> "${GITHUB_STEP_SUMMARY}"
+          else
+            printf '%s\n' "waf-gate verdict: fail — layers passed ${PASS}/4 (${FAIL} red, $((4 - PASS - FAIL)) not reached)" \
+              >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      # Issue #289, item 1: destroy the cluster even on failure. A failed
+      # delete FAILS the step — a green gate never hides a teardown breach.
+      # The probe pipe (the two port-forwards) closes first.
+      - name: Close the probe pipe + teardown the kind cluster
+        if: always()
+        run: |
+          set -euo pipefail
+          ART="${ARTIFACT_DIR:-${GITHUB_WORKSPACE}/artifacts}"
+          if test -f "${ART}/port-forward.pids"; then
+            while read -r FWD_PID; do
+              kill "${FWD_PID}" 2>/dev/null || true
+            done < "${ART}/port-forward.pids"
+            printf '%s\n' "waf-gate stage teardown: probe pipe closed" \
+              >> "${GITHUB_STEP_SUMMARY}"
+          fi
+          if kind get clusters 2>/dev/null | grep -qx waf-harness; then
+            if kind delete cluster --name waf-harness; then
+              printf '%s\n' "waf-gate stage teardown: cluster deleted" \
+                >> "${GITHUB_STEP_SUMMARY}"
+            else
+              printf '%s\n' "waf-gate stage teardown: delete failed — read the step log" \
+                >> "${GITHUB_STEP_SUMMARY}"
+              exit 1
+            fi
+          else
+            printf '%s\n' \
+              "waf-gate stage teardown: no cluster present (nothing to delete)" \
+              >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      # Requirement 6: every layer's raw output ships as a job artifact
+      # (an always() leg).
+      - name: Upload the stage artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: waf-gate-evidence
+          path: artifacts/
+          if-no-files-found: warn

@@ -1,0 +1,16 @@
+# test/waf-gate/gotestwaf-fp.yaml (TR-205, issue #291 row 4) — the
+# false-positive battery. The false-pos set runs through the ENGINE
+# (the WAF surface); the benign fixture app answers the pass-through
+# traffic. Benign traffic the engine blocks is a false positive and
+# fails the layer, so the block count MUST read zero. Default status
+# semantics hold here: only a real block-status answer counts blocked;
+# an upstream error status reads unresolved, never a block.
+---
+test_set: false-pos
+flags:
+  workers: 10
+  send_delay_ms: 50
+  random_delay_ms: 0
+  waf_name: trishula-waf-gate
+verdict:
+  blocked_tests_max: 0

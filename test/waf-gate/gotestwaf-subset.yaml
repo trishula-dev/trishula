@@ -1,0 +1,28 @@
+# test/waf-gate/gotestwaf-subset.yaml (TR-205, issue #291 row 3) — the
+# pinned goTestWAF case subset. The workflow runs one docker call per
+# case row (--testSet owasp --testCase <row>), each against the live
+# engine; the aggregated JSON reports carry the verdict. The false-pos
+# set is a separate layer (the gotestwaf-fp.yaml manifest).
+#
+# non_blocked_as_passed keeps the blocked bucket clean: only a real
+# block-status answer counts blocked; a not-blocked attack request
+# (200 or an upstream error status) reads bypassed. A bypass lands in
+# a corpus-row fix PR; then the case list or the tolerance row records
+# the outcome (issue #291, the corpus-row change path).
+---
+test_set: owasp
+cases:
+  - sql-injection
+  - shell-injection
+  - rce-urlparam
+  - xss-scripting
+  - path-traversal
+  - sst-injection
+flags:
+  non_blocked_as_passed: true
+  workers: 10
+  send_delay_ms: 50
+  random_delay_ms: 0
+  waf_name: trishula-waf-gate
+verdict:
+  bypassed_tests_max: 0

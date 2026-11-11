@@ -1,0 +1,34 @@
+# test/waf-gate/pins.yaml (TR-205, issue #291 row 7) — the tool pins for
+# the waf-gate workflow. The step scripts read this file and fetch only
+# the objects at these digests and commits. A pin change is a version
+# bump PR that edits this file plus the README table.
+#
+# go-ftw 2.6.2: the release binary digest matches the checksum line the
+# upstream ftw-checks file ships (recorded at authoring time; see the
+# .lane receipts).
+# coreruleset 4.30.0: the corpus tarball digest is recorded from the
+# GitHub release archive at authoring time.
+# waf-bypass: the pin is one commit; the tool tree's requirements.txt
+# exact-pins every transitive dependency at the same commit.
+# gotestwaf 0.5.8: the digest value came from the docker hub tag index
+# at authoring time; the source commit records the tag build. The hub tag list
+# carries no v-prefix on this project (the tag form is 0.5.8, the git
+# tag form is v0.5.8).
+---
+go_ftw:
+  release_tag: v2.6.2
+  source_commit: 4126a8d893514c054e8d27a5ebd4cca249581a2f
+  binary_asset: ftw_2.6.2_linux_amd64.tar.gz
+  binary_sha256: f5e04bf64e395719ef9c11fef1288930fffcb621917fe05db076a13a6464f0f3
+coreruleset:
+  release_tag: v4.30.0
+  source_commit: 0e6e598a818c613cec4e13d3ecf16b19af6a002f
+  tarball_sha256: a4bb3688ef6205b64471a9ccbf0d7b024eb8edf39b97c6f6c0006e7a948f8550
+waf_bypass:
+  repo: https://github.com/nemesida-waf/waf-bypass.git
+  pin_commit: 887f2f9d4667bc72c89a1384e1445925a10413c4
+gotestwaf:
+  image_repo: wallarm/gotestwaf
+  image_tag: "0.5.8"
+  image_digest: sha256:ff7184da90029a98c87bfdbadcee544c979b999593175d17b2d38f642ee29977
+  source_commit: 638194777ce0c9b05ea51fcbe72a0a7c63f07284
