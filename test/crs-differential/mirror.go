@@ -28,6 +28,10 @@ type MirrorExpectation struct {
 	// AttackP2 is the phase-2 attack-rule id set the mirror pins for the
 	// case (seed + off-seed, unioned).
 	AttackP2 []int
+	// SqliFP/XssFP (issue #290): the fingerprint-class pins (the corpus
+	// expect rows; ProjectMirror copies them verbatim).
+	SqliFP string
+	XssFP  bool
 }
 
 // ProjectMirror projects one corpus case into the mirror expectation the
@@ -44,6 +48,8 @@ func ProjectMirror(c Case) MirrorExpectation {
 		PinnedNoise:    c.Expect.Phase1Pinned,
 		Demoted1941010: c.Expect.P1941010,
 		AttackP2:       attack,
+		SqliFP:         c.Expect.SqliFP,
+		XssFP:          c.Expect.XssFP,
 	}
 }
 
@@ -78,6 +84,46 @@ func DiffMirror(c Case, me MirrorExpectation, ref crs.Verdict) string {
 		_, onlyLive := setDiff(me.AttackP2, refAttack)
 		return fmt.Sprintf("phase-2 attack set: mirror %v vs reference %v (mirror-only %v, reference-only %v)",
 			me.AttackP2, refAttack, onlyRef, onlyLive)
+	}
+	if d := diffFingerprints(me.SqliFP, me.XssFP, ref.Fingerprints); d != "" {
+		return d
+	}
+	return ""
+}
+
+// diffFingerprints (issue #290) diffs the corpus fingerprint-class pins
+// against the reference's libinjection evidence: a row pinning the SQLi
+// fingerprint requires EXACTLY that fingerprint (one distinct value over
+// the case's SQLi-class carriers); a row pinning the XSS class requires at
+// least one XSS-class evidence row; a row pinning a class absent (the
+// benign-clean shape: empty sqli_fp + false xss_fp) requires ZERO evidence.
+func diffFingerprints(wantSQLi string, wantXSS bool, ev []crs.Fingerprint) string {
+	var sqli []string
+	xss := 0
+	for _, f := range ev {
+		switch f.Class {
+		case crs.FingerprintClassSQLi:
+			sqli = append(sqli, f.FP)
+		case crs.FingerprintClassXSS:
+			xss++
+		}
+	}
+	sqli = uniqueSortedStrings(sqli)
+	if wantSQLi == "" {
+		if len(sqli) > 0 {
+			return fmt.Sprintf("sqli fingerprint class fired on a no-pin row: %v", sqli)
+		}
+	} else {
+		if len(sqli) != 1 || sqli[0] != wantSQLi {
+			return fmt.Sprintf("sqli fingerprint: want %q, reference %v", wantSQLi, sqli)
+		}
+	}
+	if wantXSS {
+		if xss == 0 {
+			return "xss fingerprint class: want the class, reference carries none"
+		}
+	} else if xss > 0 {
+		return fmt.Sprintf("xss fingerprint class fired on a no-pin row: %d rows", xss)
 	}
 	return ""
 }
@@ -133,6 +179,21 @@ func setDiff(a, b []int) (onlyA, onlyB []int) {
 		}
 	}
 	return
+}
+
+// uniqueSortedStrings sorts and de-duplicates a string slice (the
+// fingerprint-class comparisons diff distinct values positionally).
+func uniqueSortedStrings(in []string) []string {
+	src := make([]string, len(in))
+	copy(src, in)
+	sort.Strings(src)
+	out := make([]string, 0, len(src))
+	for i, v := range src {
+		if i == 0 || v != src[i-1] {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // uniqueSorted sorts and de-duplicates an int slice. Callers diff the

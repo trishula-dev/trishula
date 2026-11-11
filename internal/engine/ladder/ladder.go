@@ -12,6 +12,7 @@
 package ladder
 
 import (
+	crs "github.com/trishula-dev/trishula/internal/crs"
 	rateban "github.com/trishula-dev/trishula/internal/engine/rateban"
 )
 
@@ -129,4 +130,10 @@ type Verdict struct {
 	// the map read, the evidence row and the verdict record state the
 	// same facts. Nil = no signature.
 	DosSig *rateban.DoSSig
+	// Fingerprints (issue #290): the libinjection classification evidence
+	// the CRS 941/942 carrier rules surfaced (crs.Verdict projects it;
+	// the S2 slot forwards it when wired). Nil = the fingerprint classes
+	// did not fire (absence carries no claim — a benign request carries
+	// no fingerprint field on the verdict record).
+	Fingerprints []crs.Fingerprint
 }

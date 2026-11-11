@@ -2,19 +2,25 @@
 
 A hermetic differential harness that pins the **crs-reference** surface (the
 committed SecLang engine slice evaluated by `internal/crs`, the
-embedded-Coraza wrapper) against a **go-ftw-SHAPE corpus**: 20 synthesized
-requests, each with an expected per-phase rule-id set. The corpus also
-carries the 3 TR-199 conformance rows (the illegal-request class). Two gate
+embedded-Coraza wrapper) against a **go-ftw-SHAPE corpus**: 24 synthesized
+and synthesized-shape requests (21 CRS-parity rows, 3 TR-199 conformance
+rows), each with an expected per-phase rule-id set. The corpus also carries
+the 3 TR-199 conformance rows (the illegal-request class). Two gate
 classes assert two surfaces: the CRS-parity gate asserts the
 corpus-vs-reference equality per case and reports parity X/N; the pre-CRS
-conformance gate asserts the parse-path reject cells.
+conformance gate asserts the parse-path reject cells. The fingerprint-class
+rows (issue #290) pin the libinjection classification per case (`sqli_fp` /
+`xss_fp`), and the benign row pins zero fingerprint evidence.
 
 - Branch: `feat/tr07b-crs-differential` (child of TR-07 / TR-07a's
   `internal/crs` wrapper)
 - Gate: `go test ./test/crs-differential/ -run TestCorpusParity -count=1`
-- Pinned result at the committed sha: **parity 19/19 ran (3 conformance
-  rows; 1 skipped) = 100%** (target ≥ 90%); RED evidence (16/19, 3
-  deltas) is preserved in the RED commit body. The conformance gate:
+- 19/19 ran (3 conformance rows; 1 skipped) = 100% at the pre-extension
+  pin (target ≥ 90%); RED evidence (16/19, 3 deltas) is preserved in the
+  RED commit body. At the fingerprint extension (issue #290): **parity
+  20/20 ran (3 conformance rows; 1 skipped) = 100%** — 24 rows: 21
+  CRS-parity (incl. the benign-fingerprint row) + 3 conformance. The
+  conformance gate:
   `go test ./test/crs-differential/ -run TestCorpusConformanceRejects
   -count=1`.
 - Hermetic: the corpus (`corpus/*.yaml`) and the entire engine slice
@@ -75,6 +81,11 @@ expect:                                # all optional (clean-request shape)
   phase2_offseed: [942130, 942432]         # observed off-seed ids (this table)
   reject_rule: "http1:framing-cl-te"       # the TR-199 pre-CRS cell (conformance
                                            # rows only; CRS never evaluates them)
+  sqli_fp: "1UEnk"                         # OPTION (issue #290): pins the returned
+                                           # libinjection SQLi fingerprint (empty =
+                                           # the row pins zero SQLi-class evidence)
+  xss_fp: true                             # OPTION (issue #290): pins the XSS class
+                                           # fired (libinjection returns no XSS fingerprint)
 ```
 
 Schema notes:
@@ -100,13 +111,17 @@ Schema notes:
      ({900000, 900110, 900990} ∩ observed);
   2. `expect.p1_941010` == (941010 ∈ reference phase-1 matches);
   3. `expect.phase2_seed ∪ expect.phase2_offseed` == the reference
-     phase-2 attack set (noise ids excluded).
+     phase-2 attack set (noise ids excluded);
+  4. `expect.sqli_fp` / `expect.xss_fp` == the reference libinjection
+     fingerprint-class evidence (issue #290): a pin requires that exact
+     distinct SQLi fingerprint, or at least one XSS-class row; a no-pin
+     row (the benign shape) requires ZERO fingerprint evidence.
 - A skip must set BOTH `skipped: true` and a `skip:` reason string;
   skipped cases are excluded from the parity denominator and counted
   separately in the report.
 - An empty `expect:` is the clean-request shape (echo ids still pinned).
 
-### Inventory (23 rows: 20 CRS-parity + 3 conformance)
+### Inventory (24 rows: 21 CRS-parity + 3 conformance)
 
 | surface | cases |
 |---|---|
@@ -121,6 +136,7 @@ Schema notes:
 | JSON-body SQLi | 16 (SKIPPED: the ARGS-JSON gap, below) |
 | mixed heavy attack (all surfaces) | 17 (parse-reject pin: the raw-space target) |
 | param-name pollution probe | 18 |
+| libinjection benign-clean probe | 21 (the TR-290 fingerprint-absence pin) |
 | framing ambiguity: CL+TE together (TR-199; raw_head) | 30 |
 | framing ambiguity: duplicate CL values (TR-199; raw_head) | 31, 32 |
 
@@ -255,7 +271,7 @@ for the S2 slot slice.
 
 ```
 go test ./test/crs-differential/ -run TestCorpusParity -count=1
-# parity 19/19 ran (3 conformance rows; 1 skipped; target >= 90%) — zero unexplained deltas = gate
+# parity 20/20 ran (3 conformance rows; 1 skipped; target >= 90%) — zero unexplained deltas = gate
 
 go test ./test/crs-differential/ -run TestCorpusConformanceRejects -count=1
 # the TR-199 framing cells: 3 reject rows green; the CRS rows' parse cells green
@@ -268,6 +284,47 @@ Parity = passed / runnable (skips excluded from the denominator). The
 harness fails when ANY runnable case has an unexplained delta;
 corpus corrections must re-verify live against the reference evaluator
 (deterministic, 2+ runs) before pinning.
+
+## The fingerprint-class pins (issue #290)
+
+The shipped rulepack carries the libinjection classification rules. The
+vendored CRS 4.0.0-rc2 941/942 request-phase files carry the
+@detectSQLi/@detectXSS activation. `engine.conf` includes both files.
+Coraza v3.8.1 registers both operators natively (libinjection-go). The
+loaded carrier rules: 942100/942101 (@detectSQLi, phases 2/1) and
+941100/941101 (@detectXSS, phases 2/1).
+
+The reference projection carries the classification evidence
+(`crs.Verdict.Fingerprints`): one row per firing carrier value. The SQLi
+class carries the fingerprint libinjection returned. The XSS class
+returns none: libinjection's XSS API is boolean. The projection
+re-classifies each carrier's matched values. It calls the same
+libinjection entries the operators call. The projected class is exact
+per carrier.
+
+The corpus pins (live-verified against the reference walk, 2 runs):
+
+| case | carrier | pin | evidence |
+|---|---|---|---|
+| 03-sqli-union-cookie | 942100 | `sqli_fp: "1UEnk"` | the cookie value `1 UNION SELECT name FROM users--` |
+| 05-sqli-union-ua | 942100 | `sqli_fp: "1UEnk"` | the User-Agent value (same payload) |
+| 08-xss-script | 941100 | `xss_fp: true` | the QS value `<script>alert(1)</script>` |
+| 09-xss-post-form | 941100 | `xss_fp: true` | the form value (same payload) |
+| 17-mixed-heavy | 941100 | `xss_fp: true` | the q2 value (the SQLi payload sits in the ARGS target; engine.conf strips ARGS from 942100: no SQLi-class evidence) |
+| 21-libinject-benign | none | no pin | zero evidence (the benign-clean pin) |
+
+Every other corpus row pins no fingerprint class. The mirror requires
+ZERO fingerprint evidence there. Benign requests never raise the class.
+Case 21 carries SQLi/XSS-shaped but libinjection-clean values. Every
+probe value reads IsSQLi and IsXSS false. The row keeps the phase-2
+attack set empty.
+
+The record surfaces the evidence under `trishula.verdict.v2` (the spec's
+fingerprint record surface; spec section 15.2). The schema-version bump
+ships in the same change. `ladder.Verdict.Fingerprints` forwards from the
+CRS projection. The verdict span + the log record carry the
+`crs.fingerprints` attribute (the `{rule, class, fp}` row array). The
+counter's attribute set stays pinned.
 
 ## TR-16 — the compiled fast path: matcher differential gate
 

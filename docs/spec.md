@@ -1175,11 +1175,12 @@ eBPF contributes cheap counters (§9.5); the parser contributes payload features
 
 ```json
 {
-  "schema": "trishula.verdict.v1",
+  "schema": "trishula.verdict.v2",
   "trace_id": "…", "span_id": "…",
   "route": {"host": "api.example.com", "path": "/v1/chat", "policy": "chat-completions"},
   "shield": {"stages": 127},
   "client": {"ip": "…", "ja4": "…", "asn": 0, "reputation": 0.42, "rate_windows": {"5m": 41}},
+  "fingerprint": [{"rule": 942100, "class": "sqli", "fp": "1UEnk"}],
   "ladder": [
     {"stage": "kernel", "matched": [], "us": 1},
     {"stage": "matcher", "matched": ["920480"], "us": 12},
@@ -1200,7 +1201,7 @@ eBPF contributes cheap counters (§9.5); the parser contributes payload features
 The stage-stamp vocabulary follows the verdict record at [docs/design/stage-stamps-verdict.md](design/stage-stamps-verdict.md).
 
 **The stage-stamp record surface (TR-194, 2026-10-25).** The record evolves
-additively; the schema stays `trishula.verdict.v1`:
+additively. The stage stamps ship under `trishula.verdict.v1`:
 
 - `ladder` rows run in walk order, one row per run stage. The row shape
   stays `{stage, matched, us}`. The `stage` tokens use the canonical
@@ -1218,6 +1219,30 @@ additively; the schema stays `trishula.verdict.v1`:
   TCP flags, payload length, path hint, the stages integer). A link
   carries a context + attributes, never a span.
 
+**The fingerprint record surface (issue #290, 2026-11-11).** The record
+schema is versioned. The fingerprint extension bumps the schema to
+`trishula.verdict.v2`:
+
+- The optional root array `fingerprint` carries the libinjection
+  classification evidence (the CRS 941/942 carrier rules' returned
+  fingerprints). One row per firing carrier value.
+- The row shape is `{"rule": int, "class": string, "fp": string}`. `rule`
+  names the CRS carrier rule id (the shipped surface carries `942100`,
+  `942101`, `941100`, `941101`). `class` reads `sqli` or `xss`. `fp`
+  carries the SQLi fingerprint characters libinjection returned.
+- libinjection classifies XSS as a boolean. An `xss` row carries no `fp`
+  key.
+- The verdict span and the verdict log record carry the evidence as the
+  `crs.fingerprints` attribute (the row array JSON). The counter's
+  attribute set stays pinned.
+- A request whose fingerprint class does not fire carries no `fingerprint`
+  field. Benign requests MUST NOT raise the fingerprint class; the benign
+  corpus row pins the absence.
+- The CRS differential gate pins the class per corpus case
+  (`test/crs-differential/corpus/*.yaml`): the SQLi rows pin the returned
+  fingerprint, the XSS rows pin the class, and the benign row pins zero
+  evidence. See the harness README's fingerprint section.
+
 ### 15.3 Kernel-plane counters (shield)
 
 The shield exports this counter set:
@@ -1231,7 +1256,7 @@ The shield exports this counter set:
 - Grafana pack ships in-repo per route class: verdict mix, altitude hit-rates (kernel/matcher/evaluator/ML), FP-rate deltas, ring health, ban ledger trends, ML latencies.
 - **Redaction is structural:** the pipeline drops header values carrying `authorization`/`cookie`/token-shaped strings at emission. Body bytes never leave the pod unless `debugBodies: true` is set per policy *and* a purpose annotation is present. OTel exporters get the same treatment as logs (§18.3).
 
-- Every record's schema is versioned (`trishula.verdict.v1`). Backends pin and migrate explicitly; scraping and guessing are out.
+- Every record's schema is versioned (`trishula.verdict.v2`). Backends pin and migrate explicitly; scraping and guessing are out.
 
 ## 16. Kubernetes Deployment Model & Operations
 
@@ -1759,7 +1784,7 @@ A developer-first spec measures **adoption**, not just detection:
 | M7 | Uninstall kernel residue | zero objects, CI-asserted |
 | M8 | NGF reference lab green (steer/readiness/429/h2c/shadow/uninstall) | CI-blocking per release |
 | M9 | Time-to-enforce RuleSet apply | ≤ 5 s |
-| M10 | OTel verdict records schema-valid | 100% (schema pinned `trishula.verdict.v1`) |
+| M10 | OTel verdict records schema-valid | 100% (schema pinned `trishula.verdict.v2`) |
 
 **Adoption is the real success metric** (§2.4): clusters where developers — not a security team — maintain most `RuleSet`/`BanPolicy` CRs. Contribution telemetry measures it; the project publishes quarterly (opt-in, aggregate).
 

@@ -10,6 +10,7 @@ import (
 	"github.com/corazawaf/coraza/v3"
 	"github.com/corazawaf/coraza/v3/debuglog"
 	"github.com/corazawaf/coraza/v3/types"
+	"github.com/corazawaf/libinjection-go"
 )
 
 // Package crs (TR-07 PR A): the embedded-Coraza CRS shadow evaluator —
@@ -34,6 +35,40 @@ type Match struct {
 	Disruptive bool
 }
 
+// Fingerprint class constants (issue #290): the libinjection classes the
+// shipped CRS carrier rules return. libinjection classifies SQLi with a
+// fingerprint string and XSS as a boolean (no fingerprint), so an XSS
+// evidence row carries an empty FP.
+const (
+	FingerprintClassSQLi = "sqli"
+	FingerprintClassXSS  = "xss"
+)
+
+// Fingerprint is one libinjection classification the CRS 941/942 carrier
+// rules surfaced for the request (issue #290): the carrier's rule id, the
+// class, and the SQLi fingerprint libinjection returned. An XSS row
+// carries no FP (libinjection returns none for the XSS class).
+type Fingerprint struct {
+	RuleID int    // the CRS carrier rule id (942100/942101/941100/941101)
+	Class  string // FingerprintClassSQLi or FingerprintClassXSS
+	FP     string // the libinjection SQLi fingerprint; empty for xss
+}
+
+// fingerprintCarriers (issue #290) are the vendored CRS 4.0.0-rc2 rules
+// whose operator is the libinjection classifier — the @detectSQLi/
+// @detectXSS activation the 941/942 request-phase files define. The
+// projection recomputes the classification over each carrier's matched
+// values (the operators call the same libinjection entries, so the
+// projected class is exact per carrier): the Coraza operator capture
+// (TX:0) is write-last-wins across matches, so it cannot attribute one
+// fingerprint per carrier rule.
+var fingerprintCarriers = map[int]string{
+	942100: FingerprintClassSQLi, // REQUEST_COOKIES/UA/Referer/ARGS_NAMES/ARGS/XML
+	942101: FingerprintClassSQLi, // REQUEST_BASENAME/REQUEST_FILENAME
+	941100: FingerprintClassXSS,  // REQUEST_COOKIES/UA/ARGS_NAMES/ARGS/XML
+	941101: FingerprintClassXSS,  // REQUEST_FILENAME/Referer
+}
+
 // Verdict is the shadow-verdict shape for one CRS request across both
 // phases: per-phase matches plus the interruption evidence (a
 // disruptive phase-2 deny leaves an interruption carrying the denying
@@ -44,6 +79,11 @@ type Verdict struct {
 	Interrupted   bool
 	InterruptRule int
 	InterruptStat int
+	// Fingerprints (issue #290): the libinjection classification evidence
+	// the CRS 941/942 carrier rules surfaced, in carrier-match order (a
+	// carrier may match several values; each firing value carries one
+	// row). Nil = the fingerprint classes did not fire on this request.
+	Fingerprints []Fingerprint
 }
 
 // Options carry the per-request scope (request line, headers, body) plus
@@ -244,6 +284,32 @@ func (e *fileEvaluator) Evaluate(o Options) (Verdict, error) {
 			v.Phase1Matches = append(v.Phase1Matches, m)
 		case PhaseRequestBody:
 			v.Phase2Matches = append(v.Phase2Matches, m)
+		}
+		// The fingerprint-class projection (issue #290): a firing carrier's
+		// matched values re-classify through the same libinjection entries
+		// the Coraza operators call, so each row is the carrier's exact
+		// classification (the SQLi class carries the returned fingerprint;
+		// the XSS class returns none).
+		if class, ok := fingerprintCarriers[m.RuleID]; ok {
+			for _, md := range mr.MatchedDatas() {
+				var (
+					hit bool
+					fp  string
+				)
+				switch class {
+				case FingerprintClassSQLi:
+					hit, fp = libinjection.IsSQLi(md.Value())
+				case FingerprintClassXSS:
+					hit = libinjection.IsXSS(md.Value())
+				}
+				if hit {
+					v.Fingerprints = append(v.Fingerprints, Fingerprint{
+						RuleID: m.RuleID,
+						Class:  class,
+						FP:     fp,
+					})
+				}
+			}
 		}
 	}
 	return v, nil

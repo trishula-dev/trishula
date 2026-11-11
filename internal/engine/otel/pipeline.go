@@ -79,6 +79,16 @@
 //	correlated event reads NO shield field. The metric's datapoint set
 //	stays pinned (no stamp keys on the counter).
 //
+//	Fingerprint extension (TR-290, issue #290): the record schema bumps to
+//	trishula.verdict.v2 (RecordSchema). When the verdict carries the
+//	libinjection classification evidence (the CRS 941/942 carrier rules'
+//	returned fingerprints), the span + the log record carry
+//	crs.fingerprints (the []Fingerprint JSON: one {rule, class, fp} row per
+//	firing carrier value; the XSS class returns no fingerprint and its row
+//	reads no fp key). A verdict with no fingerprint evidence reads NO
+//	crs.fingerprints attribute (absence carries no claim). The metric's
+//	datapoint set stays pinned (no fingerprint keys on the counter).
+//
 // The middleware span `trishula.request` (wire.go) carries request.id,
 // http.method and http.path as string attrs and parents the verdict span.
 package otel
@@ -96,6 +106,7 @@ import (
 	"time"
 
 	"encoding/json"
+	"github.com/trishula-dev/trishula/internal/crs"
 	"github.com/trishula-dev/trishula/internal/engine/ingest"
 	"github.com/trishula-dev/trishula/internal/engine/ladder"
 	rateban "github.com/trishula-dev/trishula/internal/engine/rateban"
@@ -124,6 +135,13 @@ const (
 	// present on ban records always (a ban always carries its sig or nil —
 	// nil sig = no attr).
 	AttrDosSig = "verdict.dos.sig"
+	// AttrFingerprint (TR-290, issue #290): the libinjection fingerprint
+	// evidence the CRS 941/942 carrier rules returned, the []Fingerprint
+	// JSON ({rule, class, fp} rows). Present on the span and the log
+	// record only when the verdict carries evidence; a benign verdict
+	// (no fingerprint class) reads no attribute. The metric's datapoint
+	// set stays pinned (no fingerprint keys on the counter).
+	AttrFingerprint = "crs.fingerprints"
 	// TR-194 (issue #236): the stage-stamp fields. ladder.rows carries
 	// the walk rows JSON (the record's §7 ladder array);
 	// shield.stages carries the OR of the correlated FlowEvent bitmaps
@@ -164,6 +182,12 @@ const (
 
 // DefaultServiceName is the resource service.name when Config leaves it empty.
 const DefaultServiceName = "trishula-engine"
+
+// RecordSchema is the verdict-record schema string the emitted fields live
+// under (the spec's §15.2 log-body schema; backends pin and migrate
+// explicitly). TR-290 (issue #290) bumps the record schema v1 → v2 in the
+// same change as the fingerprint extension.
+const RecordSchema = "trishula.verdict.v2"
 
 // Sentinel errors (errors.Is-able, per the repo's explicit-error convention).
 var (
@@ -423,6 +447,11 @@ func VerdictAttrs(tx *ingest.TxContext, v *ladder.Verdict) []attribute.KeyValue 
 		// DoSSig JSON).
 		attrs = append(attrs, attribute.String(AttrDosSig, dosSigJSON(*v.DosSig)))
 	}
+	if v != nil && len(v.Fingerprints) > 0 {
+		// TR-290 (issue #290): the verdict record states the libinjection
+		// classification evidence (the {rule, class, fp} row array).
+		attrs = append(attrs, attribute.String(AttrFingerprint, fingerprintsJSON(v.Fingerprints)))
+	}
 	return attrs
 }
 
@@ -537,13 +566,39 @@ func ladderRowsJSON(rows []ladder.Row) string {
 	return string(b)
 }
 
+// fingerprintJSONRow is the verdict record's fingerprint row shape (the
+// record's fingerprint array, issue #290: {rule, class, fp}; the SQLi
+// class carries the returned fingerprint, the XSS class carries none and
+// reads no fp key).
+type fingerprintJSONRow struct {
+	Rule  int    `json:"rule"`
+	Class string `json:"class"`
+	FP    string `json:"fp,omitempty"`
+}
+
+// fingerprintsJSON renders the fingerprint evidence for the
+// crs.fingerprints attribute (carrier-match order, one row per firing
+// value).
+func fingerprintsJSON(fps []crs.Fingerprint) string {
+	out := make([]fingerprintJSONRow, 0, len(fps))
+	for _, f := range fps {
+		out = append(out, fingerprintJSONRow{Rule: f.RuleID, Class: f.Class, FP: f.FP})
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
 // metricAttrs strips the span-only attrs (rules/score) from the metric set
-// (the documented metric attribute schema).
+// (the documented metric attribute schema). The fingerprint evidence stays
+// span+log-only too (issue #290: the counter's datapoint set stays pinned).
 func metricAttrs(attrs []attribute.KeyValue) []attribute.KeyValue {
 	out := make([]attribute.KeyValue, 0, len(attrs))
 	for _, kv := range attrs {
 		switch kv.Key {
-		case AttrVerdictRules, AttrVerdictScore:
+		case AttrVerdictRules, AttrVerdictScore, AttrFingerprint:
 			continue
 		default:
 			out = append(out, kv)

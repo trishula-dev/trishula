@@ -6,6 +6,7 @@ require (
 	cuelang.org/go v0.17.1
 	github.com/cilium/ebpf v0.22.0
 	github.com/corazawaf/coraza/v3 v3.8.1
+	github.com/corazawaf/libinjection-go v0.3.3
 	github.com/envoyproxy/go-control-plane/envoy v1.40.0
 	go.opentelemetry.io/otel v1.47.0
 	go.opentelemetry.io/otel/log v1.47.0
@@ -46,7 +47,6 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
-	github.com/corazawaf/libinjection-go v0.3.3 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
