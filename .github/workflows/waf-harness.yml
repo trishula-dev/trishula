@@ -35,7 +35,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: trishula-waf-harness
+  group: trishula-waf-harness-${{ github.head_ref || github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -46,18 +46,24 @@ jobs:
     steps:
       - name: Open the run record
         run: |
-          printf '%s\n' "waf-harness run (issue #289) — head sha ${GITHUB_SHA}" \
+          HEAD_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
+          printf '%s\n' "waf-harness run (issue #289) — head sha ${HEAD_SHA}" \
             >> "${GITHUB_STEP_SUMMARY}"
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Check out the PR head (the images label THIS sha)
+        id: co
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       # The one reusable call: cluster + PR-sha images + fixtures +
       # baseline + policy. Issue #291's tool jobs call this same action.
       - name: Bring up the harness (composite waf-harness-up)
         id: harness
         uses: ./.github/actions/waf-harness-up
+        env:
+          HEAD_SHA: ${{ steps.co.outputs.commit }}
 
       # Item 3+6: the smoke gate. The raw probe outputs land as artifacts;
       # the asserts read the wire: benign GET 200, benign query 200, the
@@ -181,22 +187,26 @@ jobs:
             fi
           done
 
-      # Item 1: destroy the cluster even on failure.
+      # Item 1: destroy the cluster even on failure. A failed delete FAILS
+      # the step — the destroyed state is part of the harness contract
+      # (issue #289 row 1); a green job never hides a teardown breach.
       - name: Teardown the kind cluster
         if: always()
         run: |
           if kind get clusters 2>/dev/null | grep -qx waf-harness; then
-            kind delete cluster --name waf-harness \
-              && printf '%s\n' "waf-harness stage teardown: cluster deleted" \
-                >> "${GITHUB_STEP_SUMMARY}" \
-              || printf '%s\n' "waf-harness stage teardown: delete failed — read the step log" \
+            if kind delete cluster --name waf-harness; then
+              printf '%s\n' "waf-harness stage teardown: cluster deleted" \
                 >> "${GITHUB_STEP_SUMMARY}"
+            else
+              printf '%s\n' "waf-harness stage teardown: delete failed — read the step log" \
+                >> "${GITHUB_STEP_SUMMARY}"
+              exit 1
+            fi
           else
             printf '%s\n' \
               "waf-harness stage teardown: no cluster present (nothing to delete)" \
               >> "${GITHUB_STEP_SUMMARY}"
           fi
-          exit 0
 
       - name: Upload the stage artifacts
         if: always()

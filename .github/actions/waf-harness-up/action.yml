@@ -90,14 +90,14 @@ runs:
         set -euo pipefail
         {
           FIX="${GITHUB_WORKSPACE}"
-          echo "PR SHA: ${GITHUB_SHA}"
+          echo "PR SHA: ${HEAD_SHA:-$GITHUB_SHA}"
           TMP="$(mktemp -d)"
           build_img() { # build_img <go-package> <image-tag> <binary-name>
             local pkg="$1" tag="$2" name="$3" bin
             bin="${TMP}/${name}"
             CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "${bin}" "${pkg}"
             docker build -q \
-              --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+              --label "org.opencontainers.image.revision=${HEAD_SHA:-$GITHUB_SHA}" \
               --build-arg "BIN=${name}" \
               -t "${tag}" \
               -f "${FIX}/fixtures/waf-harness/Dockerfile" "${TMP}"
