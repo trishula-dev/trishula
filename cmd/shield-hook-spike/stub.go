@@ -1,4 +1,4 @@
-//go:build !shield_hook_spike
+//go:build !linux || !shield_hook_spike
 
 // The stub keeps `go build ./...`, `go vet ./...` and `go test ./...`
 // green on every GOOS and every tag combination the other workflows use.

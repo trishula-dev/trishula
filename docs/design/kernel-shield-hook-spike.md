@@ -7,10 +7,10 @@
 > [enforcement tiers](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#134-enforcement-actions-by-tier) ·
 > [phasing](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#202-phasing)
 
-Status: scaffold. This note ships the spike mechanism and the results-table
-schema. The results are PENDING. The recorded-run receipt does not exist yet.
-The PR CI run of the spike workflow has not happened. The fill belongs to
-issue #292 after that run lands. The note prints no measured value.
+Status: the spike ran on the PR head (PR #297). The Results section (§6)
+carries the fill: the recorded per-hook table, the runner-pair record and
+the run receipt. The receipt re-reads at every future spike run; a fresh
+run posts a fresh table here.
 
 Wave row: TR-205, lane C. The deliverables: the spike workflow and this note.
 
@@ -146,10 +146,16 @@ re-reads at each future spike run; a future run posts a fresh table.
   `ubuntu26/20261101.186.1`, pod image `ubuntu:24.04`, BTF present
   (7267528 bytes). The pair floats with the hosted image; every spike run
   re-records it, and the fresh run receipt re-links here.
-- The result: 4 of 4 hook classes load on the hosted runner kernel. The
-  per-PR legs run on hosted runners; no separate kernel-node pool is
-  required for the CI tiers. The release-stage node requirement reduces to
-  the runner-default set: a kernel with BTF and privileged containers.
+- The result (scoped to the receipt): 4 of 4 hook classes load on one
+  hosted-runner kernel, the receipt's pair above. The spike proves LOAD
+  states only — no attach, no traffic. The attach-and-traffic proof for
+  the kernel legs stays with the recorded in-VM suite runs (the
+  ban-enforce and route-e2e lanes).
+  - the CI tiers run on hosted runners; the load receipt clears them.
+  - the release-node load floor reads from this receipt: BTF plus
+    privileged containers plus the TC/XDP support the four objects load
+    against. A release kernel outside the receipt's class re-runs the
+    spike; the note carries that run's table when it happens.
 
 | hook (program) | load state | error (truncated) | min kernel features |
 | --- | --- | --- | --- |

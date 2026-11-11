@@ -31,7 +31,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: trishula-shield-hook-spike
+  group: trishula-shield-hook-spike-${{ github.head_ref || github.ref }}
   cancel-in-progress: false
 
 jobs:
