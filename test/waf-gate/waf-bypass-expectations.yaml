@@ -1,0 +1,103 @@
+# test/waf-gate/waf-bypass-expectations.yaml (TR-205, issue #291 row 2)
+# — the battery expectations, recast by the lane-d fix pass to the
+# honestly-enforceable CEL surface. The layer runs every waf-bypass
+# payload dir at the pin except the excluded dirs and reads the tool
+# JSON buckets LEG-FIRST:
+#   BYPASSED — a bucket entry keys a payload path and names the legs
+#     that read the bypass (ARGS, ARGS:BASE64, COOKIE, BODY, ...);
+#   FALSED   — an FP-class payload the engine blocked;
+#   FAILED   — a request outside 2xx and the block codes.
+# The ENFORCED promise is the plain query leg (ARGS, no encode suffix):
+# the live engine's decision surface is a byte-contains match over the
+# query strings of the pack rules (the CEL view carries method/path/
+# query only — no headers, no body; no case-folding, no decode). The
+# verdict rules:
+#   - a BYPASSED entry on the plain ARGS leg of an expected_blocked_dirs
+#     row fails the layer (bypassed_max: 0 holds ONLY over these rows);
+#   - BYPASSED legs on the other channels (the URL path channel, the
+#     ARGS:BASE64/UTF-16/HTML-ENTITY encoding legs — the tool runs every
+#     payload's plain leg AND its encoded legs) and every BYPASSED leg of
+#     a not_enforced_dirs row are the RECORDED surface gap, never a
+#     bypass: the gap counts ride the run summary, the reasons below name
+#     the measured split each;
+#   - FALSED and FAILED fail the layer wherever they land;
+#   - every bucket dir (red and PASSED) must sit in one of the classes
+#     below — a tool battery dir without a manifest row fails the layer.
+# A new bypass is a corpus row: fix it in an engine PR, then this
+# manifest records the new expectation (issue #291, the corpus-row
+# change path). The measured numbers cite the lane-d calibration
+# receipt (the offline wire model read against the live cluster run).
+---
+expected_blocked_dirs:
+  - CM
+  - LFI
+  - Misc
+  - NoSQLi
+  - SQLi
+  - SSI
+expected_passed_dirs:
+  - FP
+not_enforced_dirs:
+  - dir: LDAP
+    reason: >-
+      No LDAP family rule rides the pack: 2 of 14 plain-ARGS legs read a
+      block in the calibration (the javascript: filter-escape payload and
+      one shell-marker leg); the filter-escape shapes ride an LDAP pack
+      row the operator's issue #291 contract can grow.
+  - dir: OR
+    reason: >-
+      No open-redirect/response-splitting family: 3 of 9 plain-ARGS legs
+      read a block via the WH-XSS-001 javascript: shapes; the redirect
+      scheme markers (url=@host, //host) ride their own family row.
+  - dir: MFD
+    reason: >-
+      The multipart family carries NO ARGS or URL legs: all 9 payloads
+      ride the BODY channel only, which the CEL view does not see. The
+      body channel lands with the view-fields row of the surface
+      contract (issue #291).
+  - dir: SSTI
+    reason: >-
+      Measured 18 of 19 plain-ARGS legs block via the WH-SSTI-001
+      shapes; the one bypass (queryString=aaaa' #{1*1} 'bbb) rides a raw
+      # request target: the fragment tail is cut before the decide
+      reaches the query, so no query token can reach the payload (the
+      live probe read 200 with the raw # and 403 with the %23 form).
+  - dir: RCE
+    reason: >-
+      Measured 25 of 26 plain-ARGS legs block via the WH-RCE-001 shapes;
+      the one bypass is the base64-authored leg (f=L2V0Yy9wYXNzd2Q=, the
+      blob base64-encodes /etc/passwd): a byte-contains surface carries
+      no base64 shape, so the encoded-payload family lands with an
+      engine-side decode view row (the operator's issue #291 contract).
+  - dir: RFI
+    reason: >-
+      No RFI family rule: 1 of 6 plain-ARGS legs blocks via the
+      WH-SHELL-001 wget%20 shape; the php://filter and data:// wrapper
+      shapes ride their own family row.
+  - dir: SSRF
+    reason: >-
+      No SSRF family rule: 8 of 18 plain-ARGS legs block via the
+      WH-LFI-001 etc/passwd shapes; the scheme/host markers
+      (url=gopher://, url=dict://, localhost) ride a scheme-family row.
+  - dir: UWA
+    reason: >-
+      The unwanted-access family carries NO ARGS legs: all 26 payloads
+      ride the URL path channel (/.git, /db.sql, /do.php splits), and the
+      pack is query-anchored. The path-channel shapes land with the
+      path-scoped rules row of the view contract.
+  - dir: XSS
+    reason: >-
+      Measured 292 of 352 plain-ARGS legs block via the WH-XSS-001 and
+      sister-rule shapes; the 60 bypasses are the battery's evasion craft
+      (case-mangle beyond the pinned forms, NUL and <x> splits, hex and
+      UTF-16 escapes, the al%5Cu0065rt family): a byte-contains surface
+      matches no unlisted literal. The CRS rows ride the compiled
+      fast-path lane; the operator's issue #291 contract rows rule the
+      literal-growth step.
+exclude_dirs:
+  - GraphQL
+  - API
+tolerances:
+  bypassed_max: 0
+  falsed_max: 0
+  failed_max: 0

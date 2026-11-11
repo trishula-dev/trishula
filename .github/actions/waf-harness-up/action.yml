@@ -138,41 +138,68 @@ runs:
       run: |
         set -euo pipefail
         {
+          # The baseline probes run INSIDE the cluster against the engine
+          # Service — no port-forward on the runner localhost. The
+          # port-forward pipe carried one good answer and died in the
+          # c4a60cd → dc398ea CI receipts (the empty probe files at ~1 s
+          # per attempt); the kubectl-exec pattern is the one the policy
+          # step already runs reliably. Every probe pod is --rm.
           cd "$(mktemp -d)"
-          kubectl -n waf-harness port-forward svc/waf-harness-engine 18080:8080 \
-            >/dev/null 2>&1 &
-          FORWARD_PID="${!}"
-          for _ in $(seq 1 60); do
-            curl -sS -o /dev/null --max-time 3 http://127.0.0.1:18080/healthz && break
-            sleep 0.5
-          done
-          curl -s -i --max-time 10 http://127.0.0.1:18080/ \
-            | tee "${ARTIFACT_DIR}/baseline-home.txt"
-          curl -s -i --max-time 10 'http://127.0.0.1:18080/search?q=steel' \
-            | tee "${ARTIFACT_DIR}/baseline-query.txt"
-          curl -s -i --max-time 10 'http://127.0.0.1:18080/search?q=UNION%20SELECT%20password' \
-            | tee "${ARTIFACT_DIR}/baseline-sqli.txt"
-          kill "${FORWARD_PID}" 2>/dev/null || true
-          wait "${FORWARD_PID}" 2>/dev/null || true
-          BASE_HOME="$(awk 'NR==1{print $2}' "${ARTIFACT_DIR}/baseline-home.txt")"
-          BASE_QUERY="$(awk 'NR==1{print $2}' "${ARTIFACT_DIR}/baseline-query.txt")"
-          BASE_SQLI="$(awk 'NR==1{print $2}' "${ARTIFACT_DIR}/baseline-sqli.txt")"
-          test "${BASE_HOME}" = "200"
-          test "${BASE_QUERY}" = "200"
-          test "${BASE_SQLI}" = "200"
-          # The pre-gate contract: NO decision headers before the policy.
-          for bf in baseline-home.txt baseline-sqli.txt; do
-            if grep -qi "^x-trishula-decision" "${ARTIFACT_DIR}/${bf}"; then
-              printf '%s\n' \
-                "waf-harness baseline FAIL: ${bf} carries a decision header pre-gate"
-              exit 1
+          IMG="curlimages/curl:8.13.0"
+          BASE_OK=0
+          for TRY in 1 2 3 4; do
+            READY=""
+            for _ in $(seq 1 30); do
+              READY=$(kubectl -n waf-harness run "wh-ready-${TRY}-${_}" \
+                --image="${IMG}" --rm -i --quiet --restart=Never \
+                -- -s -o /dev/null -w '%{http_code}' \
+                http://waf-harness-engine:8080/ 2>/dev/null || echo 000)
+              if [ "${READY}" = "200" ]; then break; fi
+              sleep 1
+            done
+            echo "baseline attempt ${TRY}: ready=${READY}"
+            if [ "${READY}" != "200" ]; then continue; fi
+            kubectl -n waf-harness run "wh-base-home-${TRY}" \
+              --image="${IMG}" --rm -i --quiet --restart=Never \
+              -- -s -i --max-time 10 http://waf-harness-engine:8080/ \
+              > "${ARTIFACT_DIR}/baseline-home.txt" 2>/dev/null || true
+            kubectl -n waf-harness run "wh-base-query-${TRY}" \
+              --image="${IMG}" --rm -i --quiet --restart=Never \
+              -- -s -i --max-time 10 'http://waf-harness-engine:8080/search?q=steel' \
+              > "${ARTIFACT_DIR}/baseline-query.txt" 2>/dev/null || true
+            kubectl -n waf-harness run "wh-base-sqli-${TRY}" \
+              --image="${IMG}" --rm -i --quiet --restart=Never \
+              -- -s -i --max-time 10 'http://waf-harness-engine:8080/search?q=UNION%20SELECT%20password' \
+              > "${ARTIFACT_DIR}/baseline-sqli.txt" 2>/dev/null || true
+            BASE_HOME="$(awk 'NR==1{print $2}' "${ARTIFACT_DIR}/baseline-home.txt")"
+            BASE_QUERY="$(awk 'NR==1{print $2}' "${ARTIFACT_DIR}/baseline-query.txt")"
+            BASE_SQLI="$(awk 'NR==1{print $2}' "${ARTIFACT_DIR}/baseline-sqli.txt")"
+            echo "baseline attempt ${TRY}: probes read ${BASE_HOME}/${BASE_QUERY}/${BASE_SQLI}"
+            if [ "${BASE_HOME}" = "200" ] && [ "${BASE_QUERY}" = "200" ] \
+                && [ "${BASE_SQLI}" = "200" ]; then
+              CLEAN=1
+              for bf in baseline-home.txt baseline-sqli.txt; do
+                if grep -qi "^x-trishula-decision" "${ARTIFACT_DIR}/${bf}"; then
+                  printf '%s\n' \
+                    "waf-harness baseline FAIL: ${bf} carries a decision header pre-gate"
+                  CLEAN=0
+                fi
+              done
+              if [ "${CLEAN}" = "1" ]; then
+                BASE_OK=1
+                break
+              fi
+              echo "baseline attempt ${TRY}: a decision header appeared pre-gate"
             fi
+            sleep 1
           done
-          echo "pinned baseline: all 3 probes 200 with no decision headers"
+          if [ "${BASE_OK}" != "1" ]; then
+            echo "baseline FAILED after 4 attempts: the probe record sits in this log"
+            exit 1
+          fi
         } 2>&1 | tee "${ARTIFACT_DIR}/stage-baseline.log"
         echo "waf-harness stage baseline: PINNED — 3 probes 200, no decision surface" \
           >> "${ARTIFACT_DIR}/summary-lines.md"
-
     - id: policy
       name: Compile the policy (CRD, operator, WAFPolicy) and activate the consult
       shell: bash

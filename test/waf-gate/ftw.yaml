@@ -1,0 +1,16 @@
+# test/waf-gate/ftw.yaml (TR-205, issue #291 row 1) — the go-ftw run
+# config for the CRS corpus layer. Cloud mode decides pass and fail from
+# the HTTP status only (no WAF log file). go-ftw v2.6.2 cloud semantics:
+# a test that expects rule ids passes on a 403; a test that expects NO
+# rule ids passes on 200, 404 or 405. The engine contract pins both
+# sides: the CRS-critical row blocks (403) and the no-rule row passes
+# (the upstream fixture answers 200 on every path).
+#
+# The include filter is NOT here: test/waf-gate/crs-subset.txt stays
+# the single case list; the workflow builds one regex from it per run.
+---
+mode: 'cloud'
+testoverride:
+  input:
+    dest_addr: "127.0.0.1"
+    port: 18080

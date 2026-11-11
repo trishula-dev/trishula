@@ -1,0 +1,447 @@
+# TR-205 (issue #291, RFC numbered) — the per-PR adversarial WAF gate.
+# Recast (lane-d fix pass, the operator ruling): the live engine's CRS
+# surface is SHADOW-FIRST by the spec (internal/crs = the projected-data
+# evaluator; CRS matches land in the verdict record as data;
+# enforcement = the pack rules with action:enforce evaluated by the CEL
+# stage over the request view the spec ships TODAY: method/path/query).
+# The gate therefore pins the honestly-enforceable surface:
+#   1. The go-ftw leg runs the CRS test corpus as a SHADOW RECORD ONLY:
+#      the run never gates its verdicts (the CRS enforcement rides the
+#      compiled fast-path lane); the run's log, the engine's detection
+#      counts the report shows and the detection counts derived from the
+#      committed override map ship as artifacts and one record line in
+#      the summary. The ENFORCEMENT pin inside the same step gates: the
+#      WH-SQLI-001 probe (403 + X-Trishula-Rule: WH-SQLI-001) must read
+#      block or the check fails.
+#   2. The gate runs the waf-bypass evasion battery at a pinned commit
+#      (test/waf-gate/pins.yaml). The verdict reads the battery's legs:
+#      a bypass on a plain query leg of an expected-blocked dir fails;
+#      the tool buckets on the not-enforced channels (non-view zones,
+#      encoding legs, the path channel) are the recorded surface gap,
+#      never a bypass (see waf-bypass-expectations.yaml). One false
+#      positive fails the layer.
+#   3/4. The goTestWAF subset + FP battery move to the RELEASE stage
+#      (#293): a full case scan exceeds a per-PR wall budget, and the
+#      0.5.8 scanner carries a worker-pool race (the Intn(0) panic, the
+#      c4a60cd run receipt). The bypass battery's FP dir covers the
+#      benign-traffic pass shape here; the pins for the release stage
+#      stay in test/waf-gate/pins.yaml (#291's corpus-row change path).
+#   5. A red layer fails its step, so the check turns red; the summary
+#      records the per-layer pass rate plus the wall time, plus the
+#      final aggregate. The go-ftw line carries only the record-only
+#      shape (never red) plus the enforcement pin's verdict.
+#   6. Every layer tees its raw report to the run artifacts (an
+#      always() leg).
+#   7. Determinism: test/waf-gate/pins.yaml carries every tool pin
+#      (digests and commits); the step scripts fetch only the objects
+#      at those digests, and every layer reads its committed manifest
+#      (test/waf-gate/).
+#
+# The gate calls the shared composite .github/actions/waf-harness-up
+# (issue #289): the one call brings up the kind cluster, the PR-sha
+# images, the fixtures and the policy; the layers dial the engine
+# endpoint from its outputs through the port-forward. This job owns the
+# teardown (issue #289, item 1): a failed kind delete fails the gate.
+name: waf-gate
+
+on:
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trishula-waf-gate-${{ github.head_ref || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  waf-gate:
+    name: "TR-205 (issue #291) waf gate: the enforced-CELSurface batteries + the CRS detection-record (shadow) + the WH-SQLI-001 pin"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Open the run record
+        run: |
+          HEAD_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
+          printf '%s\n' "waf-gate run (issue #291) — head sha ${HEAD_SHA}" \
+            >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Check out the PR head (the images label THIS sha)
+        id: co
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      # The shared call (issue #289): cluster + PR-sha images + fixtures
+      # + baseline + policy with consult active. The layers dial
+      # waf-harness-engine.waf-harness.svc.cluster.local:8080 through the
+      # port-forward this job opens below.
+      - name: Bring up the harness (composite waf-harness-up)
+        id: harness
+        uses: ./.github/actions/waf-harness-up
+        env:
+          HEAD_SHA: ${{ steps.co.outputs.commit }}
+
+      - name: Stage the manifest-reader venv (PyYAML, version-pinned)
+        run: |
+          set -euo pipefail
+          python3 -m venv "${GITHUB_WORKSPACE}/.waf-gate-venv"
+          "${GITHUB_WORKSPACE}/.waf-gate-venv/bin/pip" install --quiet \
+            pyyaml==6.0.2
+          "${GITHUB_WORKSPACE}/.waf-gate-venv/bin/python" -c \
+            'import yaml; print("pyyaml 6.0.2 ready")'
+
+      - name: Open the probe pipe (port-forward the engine + the benign fixture)
+        id: pipe
+        run: |
+          set -euo pipefail
+          ART="${ARTIFACT_DIR:-${GITHUB_WORKSPACE}/artifacts}"
+          {
+            cd "$(mktemp -d)"
+            kubectl -n waf-harness port-forward svc/waf-harness-engine 18080:8080 \
+              >/dev/null 2>&1 &
+            P_E="${!}"
+            kubectl -n waf-harness port-forward svc/benign-app 18081:8080 \
+              >/dev/null 2>&1 &
+            P_B="${!}"
+            printf '%s %s\n' "${P_E}" "${P_B}" > "${ART}/port-forward.pids"
+            for _ in $(seq 1 60); do
+              curl -sS -o /dev/null --max-time 3 http://127.0.0.1:18080/healthz \
+                && break
+              sleep 0.5
+            done
+            ST_E="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+              http://127.0.0.1:18080/)"
+            ST_B="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+              http://127.0.0.1:18081/)"
+            test "${ST_E}" = "200"
+            test "${ST_B}" = "200"
+            echo "probe pipe open: engine ${ST_E}, benign fixture ${ST_B}"
+          } 2>&1 | tee "${ART}/stage-probe-pipe.log"
+          echo "waf-gate stage probes: port-forward ready (engine 18080, benign 18081)" \
+            >> "${ART}/summary-lines.md"
+
+      # Requirement 1 (recast): the CRS regression suite as a SHADOW
+      # RECORD (go-ftw, cloud mode) over the committed case list +
+      # override map, never a verdict: the CRS enforcement rides the
+      # compiled fast-path lane. The step carries TWO lines: the
+      # record-only line (the engine's detection counts the report
+      # shows, derived from the failed-ids read against the override
+      # map) and the ENFORCEMENT PIN line — the WH-SQLI-001 probe, the
+      # 403 + X-Trishula-Rule: WH-SQLI-001 shape the pack's pin rule
+      # answers — and ONLY the pin verdict turns red. Requirement 7:
+      # the pins come from test/waf-gate/pins.yaml with sha256
+      # verification. Cloud mode is blind when a test carries no
+      # expected status (go-ftw v2.6.2 returns pass on expected status
+      # 0), so the committed crs-overrides.yaml gives every subset test
+      # its status; the generated map (test/waf-gate/
+      # gen-crs-overrides.py) pins the shadow record only.
+      - name: Layer 1 — CRS detection-record (go-ftw shadow, record-only) + the WH-SQLI-001 enforcement pin
+        id: goftw
+        run: |
+          set -euo pipefail
+          ART="${ARTIFACT_DIR:-${GITHUB_WORKSPACE}/artifacts}"
+          GW="${GITHUB_WORKSPACE}"
+          PY="${GW}/.waf-gate-venv/bin/python"
+          L_START="${SECONDS}"
+          {
+            WORK="$(mktemp -d)"
+            cd "${WORK}"
+            PINS="${GW}/test/waf-gate/pins.yaml"
+            CRS_TAG="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["coreruleset"]["release_tag"], end="")' "${PINS}")"
+            CRS_SHA="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["coreruleset"]["tarball_sha256"], end="")' "${PINS}")"
+            FTW_TAG="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["go_ftw"]["release_tag"], end="")' "${PINS}")"
+            FTW_AS="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["go_ftw"]["binary_asset"], end="")' "${PINS}")"
+            FTW_SHA="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["go_ftw"]["binary_sha256"], end="")' "${PINS}")"
+            echo "pins: go-ftw ${FTW_TAG} (${FTW_AS}), corpus ${CRS_TAG}"
+            curl -sSfL -o crs.tar.gz \
+              "https://github.com/coreruleset/coreruleset/archive/refs/tags/${CRS_TAG}.tar.gz"
+            echo "${CRS_SHA}  crs.tar.gz" | sha256sum -c -
+            tar xzf crs.tar.gz
+            curl -sSfL -o ftw.tar.gz \
+              "https://github.com/coreruleset/go-ftw/releases/download/${FTW_TAG}/${FTW_AS}"
+            echo "${FTW_SHA}  ftw.tar.gz" | sha256sum -c -
+            tar xzf ftw.tar.gz
+            chmod +x ftw
+            FTW_REGEX="$("${PY}" -c 'import sys; ids=[l.split()[0] for l in open(sys.argv[1]) if l.strip() and not l.startswith("#")]; print("^(" + "|".join(ids) + ")-", end="")' \
+              "${GW}/test/waf-gate/crs-subset.txt")"
+            echo "include regex: ${FTW_REGEX}"
+            FTW_RC=0
+            ./ftw run --config "${GW}/test/waf-gate/ftw.yaml" \
+              --overrides "${GW}/test/waf-gate/crs-overrides.yaml" \
+              -d "${WORK}/coreruleset-${CRS_TAG#v}/tests/regression/tests" \
+              -i "${FTW_REGEX}" -t \
+              > ftw-run.log 2>&1 || FTW_RC=$?
+            cat ftw-run.log
+            cp ftw-run.log "${ART}/stage-go-ftw-shadow-run.log"
+            FTW_TOTAL="$(grep -oE '[0-9]+ total tests' ftw-run.log \
+              | grep -oE '[0-9]+' | head -1 || true)"
+            FTW_FAIL="$(grep -oE '[0-9]+ test\(s\) failed' ftw-run.log \
+              | grep -oE '[0-9]+' | head -1 || true)"
+            FTW_SKIP="$(grep -oE 'skipped [0-9]+ tests' ftw-run.log \
+              | grep -oE '[0-9]+' | head -1 || true)"
+            case "${FTW_TOTAL}" in *[!0-9]*|"") FTW_TOTAL=0 ;; esac
+            case "${FTW_FAIL}" in *[!0-9]*|"") FTW_FAIL=0 ;; esac
+            case "${FTW_SKIP}" in *[!0-9]*|"") FTW_SKIP=0 ;; esac
+            # the pin probe: the enforcement surface the gate holds. The
+            # readiness wait covers the full chain (non-502/503) before the
+            # first asserted request (the endpoints-lag race, c4a60cd).
+            for _ in $(seq 1 80); do
+              CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
+                'http://127.0.0.1:18080/' || echo 000)
+              if [ "${CODE}" != "502" ] && [ "${CODE}" != "503" ] \
+                  && [ "${CODE}" != "000" ]; then
+                break
+              fi
+              sleep 0.5
+            done
+            curl -sS -i --max-time 15 'http://127.0.0.1:18080/search?q=1%27%20UNION%20SELECT%20password%20FROM%20users--' \
+              -o "${ART}/stage-enforcement-pin-probe.txt" || true
+            V=pass
+            grep -q '^HTTP/.* 403' "${ART}/stage-enforcement-pin-probe.txt" || V=fail
+            grep -qi '^x-trishula-rule:.*WH-SQLI-001' "${ART}/stage-enforcement-pin-probe.txt" || V=fail
+            WALL=$((SECONDS - L_START))
+            printf 'waf-gate stage go-ftw-shadow: record-only (the CRS enforcement rides the compiled fast-path lane)\n' \
+              >> "${ART}/summary-lines.md"
+            printf 'waf-gate stage enforcement-pin: WH-SQLI-001 probe 403 + X-Trishula-Rule wall %ss verdict=%s\n' \
+              "${WALL}" "${V}" >> "${ART}/summary-lines.md"
+            printf '%s\n' "verdict=${V}" > "${ART}/layer-go-ftw-shadow.verdict"
+            echo "go-ftw shadow rc=${FTW_RC} total=${FTW_TOTAL} failed=${FTW_FAIL} skipped=${FTW_SKIP} (record-only); pin verdict=${V}"
+          } 2>&1 | tee "${ART}/stage-go-ftw-shadow.log"
+          # the shadow record: the engine's detection counts the report
+          # shows — read from the run log against the committed override
+          # map; record-only (never a verdict)
+          ART="${ART}" GW="${GW}" "${PY}" \
+            <<'PY' > "${ART}/layer-go-ftw-shadow.stats"
+          import glob, os, re, yaml
+          art = os.environ["ART"]
+          gw = os.environ["GW"]
+          logs = sorted(glob.glob(art + "/stage-go-ftw-shadow-run.log"))
+          text = open(logs[0], errors="replace").read() if logs else ""
+          ids = set(re.findall(r'"(\d{6}-\d+)"', text))
+          rows = yaml.safe_load(
+              open(gw + "/test/waf-gate/crs-overrides.yaml"))["test_overrides"]
+          block_ids = set()
+          all_ids = set()
+          for r in rows:
+              for t in r["test_ids"]:
+                  tid = "%s-%s" % (r["rule_id"], t)
+                  all_ids.add(tid)
+                  if r["output"]["status"] == 403:
+                      block_ids.add(tid)
+          block_failed = sum(1 for i in ids if i in block_ids)
+          pass_failed = sum(1 for i in ids if i not in block_ids
+                            and i not in all_ids)
+          block_expected = len(block_ids)
+          print("%d %d %d %d %d %d" % (
+              block_expected, block_expected - block_failed, block_failed,
+              pass_failed, len(ids) - sum(1 for i in ids if i in all_ids),
+              len(ids)))
+          PY
+          STATS="$(cat "${ART}/layer-go-ftw-shadow.stats" 2>/dev/null || true)"
+          read -r S_BE S_BF S_PF S_UNK S_IDS <<< "${STATS}" || true
+          case "${S_BE}${S_BF}${S_UNK}" in \
+            *[!0-9]*|"") S_BE=0; S_BF=999; S_UNK=999; S_PF=0; S_IDS=0 ;; esac
+          printf 'waf-gate stage go-ftw-shadow detection-record: %s block rows detected of %s (block failed %s, pass fails %s, unknown ids %s, failed-id count %s)\n' \
+            "$((S_BE - S_BF))" "${S_BE}" "${S_BF}" "${S_PF}" "${S_UNK}" "${S_IDS}" \
+            >> "${ART}/summary-lines.md"
+          grep -qx 'verdict=pass' "${ART}/layer-go-ftw-shadow.verdict" || exit 1
+
+      # Requirement 2 + 4: the evasion battery at the pinned commit. The
+      # tool JSON buckets are read LEG-FIRST: a bucket entry keys a
+      # payload path and names the legs that landed in the bucket
+      # (ARGS, ARGS:BASE64, COOKIE, BODY, USER-AGENT, ...). The
+      # enforced promise = the plain query leg (ARGS, no encode suffix),
+      # dir by dir over the committed expectations manifest
+      # (test/waf-gate/waf-bypass-expectations.yaml): a bypass on that
+      # leg of an expected_blocked_dirs row fails the layer. The legs on
+      # the not-enforced channels (the non-view zones, the encoding
+      # legs, the URL path channel) of a manifest class = the recorded
+      # surface gap; the manifest's not_enforced_dirs rows carry the
+      # measured reason each. A bypass becomes a corpus row in a fix PR.
+      - name: Layer 2 — waf-bypass evasion battery (pinned commit)
+        id: bypass
+        run: |
+          set -euo pipefail
+          ART="${ARTIFACT_DIR:-${GITHUB_WORKSPACE}/artifacts}"
+          GW="${GITHUB_WORKSPACE}"
+          PY="${GW}/.waf-gate-venv/bin/python"
+          L_START="${SECONDS}"
+          {
+            WORK="$(mktemp -d)"
+            cd "${WORK}"
+            PINS="${GW}/test/waf-gate/pins.yaml"
+            WB_SHA="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["waf_bypass"]["pin_commit"], end="")' "${PINS}")"
+            WB_REPO="$("${PY}" -c 'import yaml,sys; print(yaml.safe_load(open(sys.argv[1]))["waf_bypass"]["repo"], end="")' "${PINS}")"
+            echo "pins: waf-bypass ${WB_SHA}"
+            git init -q waf-bypass
+            git -C waf-bypass remote add origin "${WB_REPO}"
+            git -C waf-bypass fetch -q --depth 1 origin "${WB_SHA}"
+            git -C waf-bypass checkout -q FETCH_HEAD
+            python3 -m venv venv
+            ./venv/bin/pip install --quiet -r waf-bypass/requirements.txt
+            WB_RC=0
+            ./venv/bin/python waf-bypass/main.py \
+              --host='http://127.0.0.1:18080' \
+              --threads=15 --timeout=15 \
+              --json-format --no-progress --exclude-dir='GraphQL,API' \
+              > result.json 2> "${ART}/stage-waf-bypass.err" || WB_RC=$?
+            cp result.json "${ART}/stage-waf-bypass-result.json" || true
+            tail -c 2000 "${ART}/stage-waf-bypass.err" || true
+            printf '%s\n' "${WB_RC}" > "${ART}/layer-waf-bypass.rc"
+            echo "waf-bypass rc=${WB_RC}"
+          } 2>&1 | tee "${ART}/stage-waf-bypass.log"
+          WALL=$((SECONDS - L_START))
+          ART="${ART}" GW="${GW}" "${PY}" \
+            <<'PY' > "${ART}/layer-waf-bypass.stats"
+          import json, os, yaml
+          art = os.environ["ART"]
+          gw = os.environ["GW"]
+          try:
+              d = json.load(open(art + "/stage-waf-bypass-result.json"))
+          except Exception:
+              d = {}
+          rc = str(open(art + "/layer-waf-bypass.rc").read().strip() or "1")
+          m = yaml.safe_load(open(gw + "/test/waf-gate/waf-bypass-expectations.yaml"))
+          exp = {str(x).upper() for x in m["expected_blocked_dirs"]}
+          notenf = {str(r["dir"]).upper() for r in m["not_enforced_dirs"]}
+          passed_dirs = {str(x).upper() for x in m["expected_passed_dirs"]}
+          tol = m["tolerances"]
+          def bucket(name):
+              b = d.get(name) or {}
+              if isinstance(b, dict):
+                  return list(b.items())
+              return []
+          def dircle(plp):
+              return str(plp).split("/")[0].upper()
+          broken = gap_args_enc = gap_other = 0
+          dirs = set()
+          for plp, legs in bucket("BYPASSED"):
+              dirs.add(dircle(plp))
+              for leg in (legs if isinstance(legs, dict) else [str(x[1]) for x in legs]):
+                  leg = str(leg)
+                  if leg == "ARGS" and dircle(plp) in exp:
+                      broken += 1
+                  elif ":" in leg:
+                      gap_args_enc += 1
+                  else:
+                      gap_other += 1
+          falsed = sum(1 for plp, legs in bucket("FALSED") for _ in legs)
+          failed = sum(1 for plp, legs in bucket("FAILED") for _ in legs)
+          passed = sum(len(v) for _, v in bucket("PASSED"))
+          for plp, _ in bucket("PASSED"):
+              dirs.add(dircle(plp))
+          cov = int(all(x in exp | notenf | passed_dirs for x in dirs))
+          total = broken + gap_args_enc + gap_other + falsed + failed + passed
+          print("%d %d %d %d %d %d %d %d %d %d %s" % (
+              broken, falsed, failed, gap_args_enc, gap_other, passed, total,
+              cov, int(tol["falsed_max"]), int(tol["failed_max"]), rc))
+          PY
+          STATS="$(cat "${ART}/layer-waf-bypass.stats" 2>/dev/null || true)"
+          read -r WBRK WFD WFL GWARGS_G GWOTH WPS WTOTAL GCOV TFAL TFLD WBRC \
+            <<< "${STATS}" || true
+          case "${WBRK}${WFD}${WFL}${GWARGS_G}${GWOTH}${WPS}${WTOTAL}${GCOV}${TFAL}${TFLD}" in \
+            *[!0-9]*|"") WBRK=999; WFD=999; WFL=999; GWARGS_G=0; GWOTH=0; WPS=0; WTOTAL=0; GCOV=0; TFAL=0; TFLD=0 ;; esac
+          case "${WBRC}" in *[!0-9]*|"") WBRC=1 ;; esac
+          V=pass
+          test "${WBRC}" -eq 0 || V=fail
+          test "${WTOTAL}" -ge 1 || V=fail
+          test "${WBRK}" -eq 0 || V=fail
+          test "${WFD}" -le "${TFAL}" || V=fail
+          test "${WFL}" -le "${TFLD}" || V=fail
+          test "${GCOV}" -eq 1 || V=fail
+          printf 'waf-gate stage waf-bypass surface-gap: args-encoding legs %s, non-view-zone + path-legs %s (the manifest not_enforced_dirs rows carry the reasons)\n' \
+            "${GWARGS_G}" "${GWOTH}" \
+            >> "${ART}/summary-lines.md"
+          printf 'waf-gate stage waf-bypass: plain-query legs broken %s, falsed %s, failed %s, passed %s/%s wall %sss verdict=%s\n' \
+            "${WBRK}" "${WFD}" "${WFL}" "${WPS}" "${WTOTAL}" "${WALL}" "${V}" \
+            >> "${ART}/summary-lines.md"
+          printf '%s\n' "verdict=${V}" > "${ART}/layer-waf-bypass.verdict"
+          echo "waf-bypass broken-promised=${WBRK} falsed=${WFD} failed=${WFL} args-enc-gap=${GWARGS_G} other-gap=${GWOTH} passed=${WPS} total=${WTOTAL} covered=${GCOV}"
+          grep -qx 'verdict=pass' "${ART}/layer-waf-bypass.verdict" || exit 1
+
+            # Layers 3/4 (the goTestWAF subset + the false-positive battery)
+      # move to the release stage (#293): a full case scan exceeds a PR
+      # budget wall (the sql-injection case alone scans minutes), and the
+      # v0.5.8 scanner carries a worker-pool race (the Intn(0) panic caught
+      # on the c4a60cd run receipt). The bypass battery's FP dir carries
+      # the benign-traffic pass coverage here.
+      # Pins for the release stage stay in test/waf-gate/pins.yaml.
+
+      - name: Assemble the stage summary
+        if: always()
+        run: |
+          set -euo pipefail
+          ART="${ARTIFACT_DIR:-${GITHUB_WORKSPACE}/artifacts}"
+          if test -f "${ART}/summary-lines.md"; then
+            cat "${ART}/summary-lines.md" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+          PASS=0
+          FAIL=0
+          for l in go-ftw-shadow waf-bypass; do
+            if test -f "${ART}/layer-${l}.verdict"; then
+              if grep -qx 'verdict=pass' "${ART}/layer-${l}.verdict"; then
+                PASS=$((PASS + 1))
+              else
+                FAIL=$((FAIL + 1))
+              fi
+            else
+              printf '%s\n' \
+                "waf-gate stage ${l}: FAILED OR NOT REACHED — the stage log sits in the artifacts" \
+                >> "${GITHUB_STEP_SUMMARY}"
+            fi
+          done
+          if test $((PASS + FAIL)) -eq 4 && test "${FAIL}" -eq 0; then
+            printf '%s\n' "waf-gate verdict: pass — layers passed ${PASS}/4" \
+              >> "${GITHUB_STEP_SUMMARY}"
+          else
+            printf '%s\n' "waf-gate verdict: fail — layers passed ${PASS}/4 (${FAIL} red, $((4 - PASS - FAIL)) not reached)" \
+              >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      # Issue #289, item 1: destroy the cluster even on failure. A failed
+      # delete FAILS the step — a green gate never hides a teardown breach.
+      # The probe pipe (the two port-forwards) closes first.
+      - name: Close the probe pipe + teardown the kind cluster
+        if: always()
+        run: |
+          set -euo pipefail
+          ART="${ARTIFACT_DIR:-${GITHUB_WORKSPACE}/artifacts}"
+          # the PID file stores BOTH port-forward PIDs on one line — read
+          # two fields per line and kill each (the PR review row)
+          if test -f "${ART}/port-forward.pids"; then
+            while read -r PID_A PID_B _rest; do
+              for pid in "${PID_A}" "${PID_B}"; do
+                case "${pid}" in ''|*[!0-9]*) continue ;; esac
+                kill "${pid}" 2>/dev/null || true
+              done
+            done < "${ART}/port-forward.pids"
+            printf '%s\n' "waf-gate stage teardown: probe pipe closed" \
+              >> "${GITHUB_STEP_SUMMARY}"
+          fi
+          if kind get clusters 2>/dev/null | grep -qx waf-harness; then
+            if kind delete cluster --name waf-harness; then
+              printf '%s\n' "waf-gate stage teardown: cluster deleted" \
+                >> "${GITHUB_STEP_SUMMARY}"
+            else
+              printf '%s\n' "waf-gate stage teardown: delete failed — read the step log" \
+                >> "${GITHUB_STEP_SUMMARY}"
+              exit 1
+            fi
+          else
+            printf '%s\n' \
+              "waf-gate stage teardown: no cluster present (nothing to delete)" \
+              >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      # Requirement 6: every layer's raw output ships as a job artifact
+      # (an always() leg).
+      - name: Upload the stage artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: waf-gate-evidence
+          path: artifacts/
+          if-no-files-found: warn
