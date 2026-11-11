@@ -191,8 +191,10 @@ jobs:
             for _ in $(seq 1 80); do
               CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
                 'http://127.0.0.1:18080/' || echo 000)
-              test "${CODE}" != "502" && test "${CODE}" != "503" && \
-                test "${CODE}" != "000" && break
+              if [ "${CODE}" != "502" ] && [ "${CODE}" != "503" ] \
+                  && [ "${CODE}" != "000" ]; then
+                break
+              fi
               sleep 0.5
             done
             curl -sS -i --max-time 15 'http://127.0.0.1:18080/search?q=1%27%20UNION%20SELECT%20password%20FROM%20users--' \
