@@ -59,8 +59,8 @@ surface:
 | go-ftw-shadow | go-ftw 2.6.2 binary (`pins.yaml`) | `ftw.yaml` + `crs-subset.txt` + `crs-overrides.yaml` | record-only: the detection counts from the run log against the override map; NEVER a verdict |
 | enforcement-pin | curl | the WH-SQLI-001 shape | 403 + `X-Trishula-Rule: WH-SQLI-001` (layer 1's red path) |
 | waf-bypass | waf-bypass commit `887f2f9d` (`pins.yaml`) | `waf-bypass-expectations.yaml` | the tool JSON buckets, leg-first: zero bypassed-on-promised-legs, zero falsed, zero failed, full class coverage |
-| gotestwaf-subset | GoTestWAF image 0.5.8 (`pins.yaml`) | case list `gotestwaf-subset.yaml` | the strict per-case JSON reads: the bypassed ceiling + the blocked floor per case, zero rejected reports |
-| gotestwaf-fp | GoTestWAF image 0.5.8 (`pins.yaml`) | `gotestwaf-fp.yaml` | the FP report: zero blocks, zero rejected reports |
+| gotestwaf-subset (**release stage, #293**) | GoTestWAF image 0.5.8 (`pins.yaml`) | case list `gotestwaf-subset.yaml` | the strict per-case JSON reads: the bypassed ceiling + the blocked floor per case, zero rejected reports |
+| gotestwaf-fp (**release stage, #293**) | GoTestWAF image 0.5.8 (`pins.yaml`) | `gotestwaf-fp.yaml` | the FP report: zero blocks, zero rejected reports |
 
 `pins.yaml` holds every pin in one table: the workflow reads it and
 fetches only the objects at these digests and commits. The gotestwaf
@@ -128,8 +128,7 @@ only. Never edit by hand.
 | harness up (composite) | 6-8 min |
 | go-ftw shadow leg + pin | 2-3 min |
 | waf-bypass layer (15 worker threads) | 4-6 min |
-| goTestWAF subset (6 docker runs) | 6-8 min |
-| goTestWAF false positives (1 docker run) | 1-2 min |
+| ~~goTestWAF subset~~ (moved to the release stage #293: a full case scan exceeds a per-PR wall — the sql-injection case alone scans minutes — plus the 0.5.8 worker race, the Intn(0) panic on the c4a60cd receipt) | — |
 | summary + teardown | under 1 min |
 
 A green run completes at about 22-25 minutes, inside the

@@ -142,8 +142,15 @@ runs:
           kubectl -n waf-harness port-forward svc/waf-harness-engine 18080:8080 \
             >/dev/null 2>&1 &
           FORWARD_PID="${!}"
-          for _ in $(seq 1 60); do
-            curl -sS -o /dev/null --max-time 3 http://127.0.0.1:18080/healthz && break
+          # The readiness loop waits for the FULL chain (engine -> fixture
+          # upstream), not just the port-forward: /healthz answers
+          # server-side while the app Endpoints still lag, and a 502 on the
+          # first probes races the rollout (the c4a60cd harness run).
+          for _ in $(seq 1 80); do
+            CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
+              http://127.0.0.1:18080/ || echo 000)
+            test "${CODE}" != "502" && test "${CODE}" != "503" && \
+              test "${CODE}" != "000" && break
             sleep 0.5
           done
           curl -s -i --max-time 10 http://127.0.0.1:18080/ \

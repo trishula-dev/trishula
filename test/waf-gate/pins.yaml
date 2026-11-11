@@ -27,7 +27,7 @@ coreruleset:
 waf_bypass:
   repo: https://github.com/nemesida-waf/waf-bypass.git
   pin_commit: 887f2f9d4667bc72c89a1384e1445925a10413c4
-gotestwaf:
+gotestwaf:  # the RELEASE-stage pin (#293): the 0.5.8 worker pool carries the Intn(0) race (the c4a60cd receipt). The pinned digest ran on the amd64 runner; the hub tag index labels it unknown-arch (the attestation-entry quirk) — re-verify the digest at the release pin.
   image_repo: wallarm/gotestwaf
   image_tag: "0.5.8"
   image_digest: sha256:ff7184da90029a98c87bfdbadcee544c979b999593175d17b2d38f642ee29977
