@@ -1500,10 +1500,16 @@ jobs:
                   for fn in files:
                       if fn == "log":
                           text = open(os.path.join(root2, fn), errors="replace").read()
-                          if cal_token in root2:
-                              cal_tree += text
-                          elif eng_token in root2:
+                          # The long token first: the engine session
+                          # path carries the calibration token as a
+                          # substring (waf-harness-engine-sqlfix.
+                          # contains sqlfix.), so a cal-branch test
+                          # would swallow the engine rows (the review
+                          # row on the tree classification, 4540898564).
+                          if eng_token in root2:
                               eng_tree += text
+                          elif cal_token in root2:
+                              cal_tree += text
           cal_text = cal_stdout + "\n" + cal_tree
           eng_text = eng_stdout + "\n" + eng_tree
           def count(pat_list, text):
