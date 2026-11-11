@@ -1,0 +1,125 @@
+# TR-205 lane C (issue #292) — the kernel shield hook spike.
+#
+# The spike loads the repo's four shield hook classes on the hosted runner
+# kernel inside a privileged pod and records one load state per hook:
+#
+#   hook class   program          SEC   committed x86 object
+#   XDP shield   shield_xdp       xdp   internal/shield/bpf_shield_x86_bpfel.o
+#   XDP ban      ban_xdp          xdp   test/banenforce/ban_enforce_x86_bpfel.o
+#   TC flow      tc_ingress_waf   tc    internal/engine/ingest/ingest_flow_x86_bpfel.o
+#   TC route     route_mark       tc    internal/fastpath/routetemplate/route_mark_x86_bpfel.o
+#
+# The probe (cmd/shield-hook-spike, build tag shield_hook_spike) loads the
+# committed release objects with cilium/ebpf — the load library the
+# production loaders use — and records the kernel version, the runner
+# image tag, the object fingerprints and every load error verbatim. The
+# design note docs/design/kernel-shield-hook-spike.md carries the schema
+# and the how-to-read rules; issue #292 owns the post-run fill and cites
+# this workflow's PR run as the recorded-run receipt.
+#
+# Exit-code contract (red runs): 2 = the kernel environment lacks root or
+# BTF (no evidence exists); 3 = zero hook classes loaded (a kernel
+# environment anomaly). A single per-hook FAIL row stays green — it is a
+# recorded result for issue #292, never a CI failure.
+name: shield-hook-spike
+
+on:
+  pull_request:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trishula-shield-hook-spike
+  cancel-in-progress: false
+
+jobs:
+  spike:
+    name: "TR-205 lane C (issue #292) shield hook spike — per-hook load state"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # The environment record runs first: a later-step failure still
+      # leaves the kernel version and the runner image tag on the record
+      # (issue #292 rows 2 and 3).
+      - name: Record the runner environment (kernel version + runner image tag)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/spike/out"
+          {
+            echo "recorded: kernel uname -a      : $(uname -a)"
+            echo "recorded: runner image os     : ${ImageOS:-unknown}"
+            echo "recorded: runner image tag    : ${ImageVersion:-unknown}"
+            echo "recorded: runner os-release   : $(grep '^PRETTY_NAME=' /etc/os-release)"
+            echo "recorded: docker version      : $(docker --version)"
+          } | tee "$RUNNER_TEMP/spike/out/spike-env.txt"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build the spike probe (build tag shield_hook_spike)
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/spike"
+          go build -tags shield_hook_spike -trimpath -o "$RUNNER_TEMP/spike/spike" ./cmd/shield-hook-spike/
+
+      - name: Load each hook class inside a privileged pod on the runner kernel
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/spike/out"
+          docker image pull ubuntu:24.04
+          docker image inspect --format '{{index .RepoDigests 0}}' ubuntu:24.04 > "$OUT/docker-digest.txt"
+          docker run --privileged --rm \
+            -v "$GITHUB_WORKSPACE":/repo:ro \
+            -v "$RUNNER_TEMP/spike/spike":/spike/spike:ro \
+            -v "$OUT":/out \
+            -e SPIKE_RUNNER_IMAGE="${ImageOS:-unknown}/${ImageVersion:-unknown}" \
+            ubuntu:24.04 \
+            /bin/sh -c 'uname -a > /out/spike-pod-uname-a.txt; ls -l /sys/kernel/btf/vmlinux > /out/spike-btf.txt; /spike/spike /repo /out'
+
+      - name: Job summary (the per-hook table + the pinned-recommendation fields)
+        if: always()
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/spike/out"
+          {
+            echo '## Shield hook spike (TR-205 lane C, issue #292)'
+            echo
+            if [ -f "$OUT/spike-env.txt" ]; then cat "$OUT/spike-env.txt"; fi
+            if [ -f "$OUT/spike-pod-uname-a.txt" ]; then echo "pod uname -a: $(cat "$OUT/spike-pod-uname-a.txt")"; fi
+            if [ -f "$OUT/spike-loads.md" ]; then
+              cat "$OUT/spike-loads.md"
+            else
+              echo '(the spike pod did not reach its per-hook load table — read the run log and the artifact)'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Assemble the artifact record (the verbatim contract)
+        if: always()
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/spike/out"
+          ART="$RUNNER_TEMP/spike/artifacts"
+          mkdir -p "$ART"
+          {
+            if [ -f "$OUT/spike-env.txt" ]; then cat "$OUT/spike-env.txt"; fi
+            if [ -f "$OUT/spike-pod-uname-a.txt" ]; then echo "pod uname -a      : $(cat "$OUT/spike-pod-uname-a.txt")"; fi
+            if [ -f "$OUT/spike-btf.txt" ]; then echo "pod BTF check     : $(cat "$OUT/spike-btf.txt")"; fi
+            if [ -f "$OUT/docker-digest.txt" ]; then echo "pod image digest  : $(cat "$OUT/docker-digest.txt")"; fi
+            if [ -f "$OUT/spike-loads.txt" ]; then echo; cat "$OUT/spike-loads.txt"; fi
+          } > "$ART/shield-hook-spike.txt"
+          wc -c "$ART/shield-hook-spike.txt"
+
+      - name: Upload the spike artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: shield-hook-spike
+          path: ${{ runner.temp }}/spike/artifacts/shield-hook-spike.txt
+          if-no-files-found: error
