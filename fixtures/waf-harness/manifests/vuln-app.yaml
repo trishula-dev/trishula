@@ -1,0 +1,59 @@
+# TR-205 (issue #289) — the SQLi-vulnerable fixture app: one stdlib Go
+# server (fixtures/waf-harness/vuln-app), image built in-job from the PR
+# checkout (item 2). The /search route concatenates the query into its
+# statement record; this is the deliberate vulnerability the engine guards.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vuln-app
+  namespace: waf-harness
+  labels:
+    app.kubernetes.io/name: vuln-app
+    app.kubernetes.io/part-of: trishula-waf-harness
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vuln-app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vuln-app
+        app.kubernetes.io/part-of: trishula-waf-harness
+    spec:
+      containers:
+        - name: vuln-app
+          image: trishula-wh-vuln-app:pr
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vuln-app
+  namespace: waf-harness
+  labels:
+    app.kubernetes.io/name: vuln-app
+    app.kubernetes.io/part-of: trishula-waf-harness
+spec:
+  selector:
+    app.kubernetes.io/name: vuln-app
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
