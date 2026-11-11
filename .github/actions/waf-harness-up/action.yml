@@ -138,66 +138,63 @@ runs:
       run: |
         set -euo pipefail
         {
-          # The baseline stage survived two failure modes on the c4a60cd
-          # + 3679118 receipts: the Service-endpoints lag (the probes read
-          # 502 through the engine) and a port-forward pipe that dies
-          # between probes (the 24 ms no-output step death). The cure:
-          # the pipe respawns per attempt and every probe retries; every
-          # curl runs || true-safe inside the pipe's left side.
+          # The baseline probes run INSIDE the cluster against the engine
+          # Service — no port-forward on the runner localhost. The
+          # port-forward pipe carried one good answer and died in the
+          # c4a60cd → dc398ea CI receipts (the empty probe files at ~1 s
+          # per attempt); the kubectl-exec pattern is the one the policy
+          # step already runs reliably. Every probe pod is --rm.
           cd "$(mktemp -d)"
+          IMG="curlimages/curl:8.13.0"
           BASE_OK=0
           for TRY in 1 2 3 4; do
-            kubectl -n waf-harness port-forward svc/waf-harness-engine 18080:8080 \
-              > "pf-${TRY}.log" 2>&1 &
-            FORWARD_PID="${!}"
-            READY=0
-            for _ in $(seq 1 60); do
-              CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
-                http://127.0.0.1:18080/ || echo 000)
-              if [ "${CODE}" != "502" ] && [ "${CODE}" != "503" ] \
-                  && [ "${CODE}" != "000" ]; then
-                READY=1
+            READY=""
+            for _ in $(seq 1 30); do
+              READY=$(kubectl -n waf-harness run "wh-ready-${TRY}-${_}" \
+                --image="${IMG}" --rm -i --quiet --restart=Never \
+                -- -s -o /dev/null -w '%{http_code}' \
+                http://waf-harness-engine:8080/ 2>/dev/null || echo 000)
+              if [ "${READY}" = "200" ]; then break; fi
+              sleep 1
+            done
+            echo "baseline attempt ${TRY}: ready=${READY}"
+            if [ "${READY}" != "200" ]; then continue; fi
+            kubectl -n waf-harness run "wh-base-home-${TRY}" \
+              --image="${IMG}" --rm -i --quiet --restart=Never \
+              -- -s -i --max-time 10 http://waf-harness-engine:8080/ \
+              > "${ARTIFACT_DIR}/baseline-home.txt" 2>/dev/null || true
+            kubectl -n waf-harness run "wh-base-query-${TRY}" \
+              --image="${IMG}" --rm -i --quiet --restart=Never \
+              -- -s -i --max-time 10 'http://waf-harness-engine:8080/search?q=steel' \
+              > "${ARTIFACT_DIR}/baseline-query.txt" 2>/dev/null || true
+            kubectl -n waf-harness run "wh-base-sqli-${TRY}" \
+              --image="${IMG}" --rm -i --quiet --restart=Never \
+              -- -s -i --max-time 10 'http://waf-harness-engine:8080/search?q=UNION%20SELECT%20password' \
+              > "${ARTIFACT_DIR}/baseline-sqli.txt" 2>/dev/null || true
+            BASE_HOME="$(awk 'NR==1{print $2}' "${ARTIFACT_DIR}/baseline-home.txt")"
+            BASE_QUERY="$(awk 'NR==1{print $2}' "${ARTIFACT_DIR}/baseline-query.txt")"
+            BASE_SQLI="$(awk 'NR==1{print $2}' "${ARTIFACT_DIR}/baseline-sqli.txt")"
+            echo "baseline attempt ${TRY}: probes read ${BASE_HOME}/${BASE_QUERY}/${BASE_SQLI}"
+            if [ "${BASE_HOME}" = "200" ] && [ "${BASE_QUERY}" = "200" ] \
+                && [ "${BASE_SQLI}" = "200" ]; then
+              CLEAN=1
+              for bf in baseline-home.txt baseline-sqli.txt; do
+                if grep -qi "^x-trishula-decision" "${ARTIFACT_DIR}/${bf}"; then
+                  printf '%s\n' \
+                    "waf-harness baseline FAIL: ${bf} carries a decision header pre-gate"
+                  CLEAN=0
+                fi
+              done
+              if [ "${CLEAN}" = "1" ]; then
+                BASE_OK=1
                 break
               fi
-              sleep 0.5
-            done
-            if [ "${READY}" = "1" ]; then
-              curl -s -i --max-time 10 http://127.0.0.1:18080/ \
-                | tee "${ARTIFACT_DIR}/baseline-home.txt" || true
-              curl -s -i --max-time 10 'http://127.0.0.1:18080/search?q=steel' \
-                | tee "${ARTIFACT_DIR}/baseline-query.txt" || true
-              curl -s -i --max-time 10 'http://127.0.0.1:18080/search?q=UNION%20SELECT%20password' \
-                | tee "${ARTIFACT_DIR}/baseline-sqli.txt" || true
-              BASE_HOME="$(awk 'NR==1{print $2}' "${ARTIFACT_DIR}/baseline-home.txt")"
-              BASE_QUERY="$(awk 'NR==1{print $2}' "${ARTIFACT_DIR}/baseline-query.txt")"
-              BASE_SQLI="$(awk 'NR==1{print $2}' "${ARTIFACT_DIR}/baseline-sqli.txt")"
-              if [ "${BASE_HOME}" = "200" ] && [ "${BASE_QUERY}" = "200" ] \
-                  && [ "${BASE_SQLI}" = "200" ]; then
-                CLEAN=1
-                for bf in baseline-home.txt baseline-sqli.txt; do
-                  if grep -qi "^x-trishula-decision" "${ARTIFACT_DIR}/${bf}"; then
-                    printf '%s\n' \
-                      "waf-harness baseline FAIL: ${bf} carries a decision header pre-gate"
-                    CLEAN=0
-                  fi
-                done
-                if [ "${CLEAN}" = "1" ]; then
-                  BASE_OK=1
-                  echo "pinned baseline: all 3 probes 200 with no decision headers (attempt ${TRY})"
-                  kill "${FORWARD_PID}" 2>/dev/null || true
-                  break
-                fi
-              else
-                echo "baseline attempt ${TRY}: probes read ${BASE_HOME}/${BASE_QUERY}/${BASE_SQLI} — respawn and retry"
-              fi
-            else
-              echo "baseline attempt ${TRY}: the port-forward never carried a chained answer (pf-${TRY}.log carries the kubectl record)"
+              echo "baseline attempt ${TRY}: a decision header appeared pre-gate"
             fi
-            kill "${FORWARD_PID}" 2>/dev/null || true
             sleep 1
           done
           if [ "${BASE_OK}" != "1" ]; then
-            echo "baseline FAILED after 3 respawns: the pf-*.log files carry the kubectl records"
+            echo "baseline FAILED after 4 attempts: the probe record sits in this log"
             exit 1
           fi
         } 2>&1 | tee "${ARTIFACT_DIR}/stage-baseline.log"
