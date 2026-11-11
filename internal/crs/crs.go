@@ -54,15 +54,17 @@ type Fingerprint struct {
 	FP     string // the libinjection SQLi fingerprint; empty for xss
 }
 
-// fingerprintCarriers (issue #290) are the vendored CRS 4.0.0-rc2 rules
+// FingerprintCarriers (issue #290) are the vendored CRS 4.0.0-rc2 rules
 // whose operator is the libinjection classifier — the @detectSQLi/
 // @detectXSS activation the 941/942 request-phase files define. The
+// exported map serves the differential mirror's reverse check: a fired
+// carrier requires fingerprint evidence of its class (mirror.go).
 // projection recomputes the classification over each carrier's matched
 // values (the operators call the same libinjection entries, so the
 // projected class is exact per carrier): the Coraza operator capture
 // (TX:0) is write-last-wins across matches, so it cannot attribute one
 // fingerprint per carrier rule.
-var fingerprintCarriers = map[int]string{
+var FingerprintCarriers = map[int]string{
 	942100: FingerprintClassSQLi, // REQUEST_COOKIES/UA/Referer/ARGS_NAMES/ARGS/XML
 	942101: FingerprintClassSQLi, // REQUEST_BASENAME/REQUEST_FILENAME
 	941100: FingerprintClassXSS,  // REQUEST_COOKIES/UA/ARGS_NAMES/ARGS/XML
@@ -290,7 +292,7 @@ func (e *fileEvaluator) Evaluate(o Options) (Verdict, error) {
 		// the Coraza operators call, so each row is the carrier's exact
 		// classification (the SQLi class carries the returned fingerprint;
 		// the XSS class returns none).
-		if class, ok := fingerprintCarriers[m.RuleID]; ok {
+		if class, ok := FingerprintCarriers[m.RuleID]; ok {
 			for _, md := range mr.MatchedDatas() {
 				var (
 					hit bool

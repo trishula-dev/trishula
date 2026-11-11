@@ -52,8 +52,8 @@
 //	  verdict.phase  = string   (as above)
 //	  verdict.route  = string   (as above)
 //
-//	Log record `trishula.verdict`:
-//	  body           = "verdict <action> request=<request id>" (string)
+//	log record `trishula.verdict`:
+//	  body           = "verdict <action> request=<request id> schema=<record schema>" (string)
 //	  severity       = INFO (log.SeverityInfo)
 //	  event_name     = "trishula.verdict"
 //	  attrs          = the same set as the span (request.id, verdict.*)
@@ -607,9 +607,12 @@ func metricAttrs(attrs []attribute.KeyValue) []attribute.KeyValue {
 	return out
 }
 
-// logBody renders the log body string (the documented body shape).
+// logBody renders the log body string (the documented body shape). The
+// schema suffix (issue #290, Greptile review 4532586194) makes the
+// emitted record identify its own §15.2 schema version: every emitted
+// record reads v2 without a backend guessing the migration state.
 func logBody(a ladder.Action, rid string) string {
-	return fmt.Sprintf("verdict %s request=%s", string(a), rid)
+	return fmt.Sprintf("verdict %s request=%s schema=%s", string(a), rid, RecordSchema)
 }
 
 // newRequestID returns a fresh 128-bit request id (32 hex chars, W3C

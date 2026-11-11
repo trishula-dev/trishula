@@ -85,28 +85,74 @@ func DiffMirror(c Case, me MirrorExpectation, ref crs.Verdict) string {
 		return fmt.Sprintf("phase-2 attack set: mirror %v vs reference %v (mirror-only %v, reference-only %v)",
 			me.AttackP2, refAttack, onlyRef, onlyLive)
 	}
-	if d := diffFingerprints(me.SqliFP, me.XssFP, ref.Fingerprints); d != "" {
+	if d := diffFingerprints(me.SqliFP, me.XssFP, firedCarrierClasses(ref), ref.Fingerprints); d != "" {
 		return d
 	}
 	return ""
 }
 
+// carrierIDs (issue #290) lists the libinjection carrier rule ids of one
+// class, sorted ascending — the fired-carrier message names them exactly.
+func carrierIDs(class string) []int {
+	ids := []int{}
+	for id, c := range crs.FingerprintCarriers {
+		if c == class {
+			ids = append(ids, id)
+		}
+	}
+	sort.Ints(ids)
+	return ids
+}
+
+// firedCarrierClasses (issue #290) collects the libinjection carrier
+// classes that fired on the reference verdict across both phases. The
+// map names the classes (crs.FingerprintCarriers is the rule→class map).
+func firedCarrierClasses(ref crs.Verdict) map[string]bool {
+	fired := map[string]bool{}
+	for _, m := range ref.Phase1Matches {
+		if c, ok := crs.FingerprintCarriers[m.RuleID]; ok {
+			fired[c] = true
+		}
+	}
+	for _, m := range ref.Phase2Matches {
+		if c, ok := crs.FingerprintCarriers[m.RuleID]; ok {
+			fired[c] = true
+		}
+	}
+	return fired
+}
+
 // diffFingerprints (issue #290) diffs the corpus fingerprint-class pins
-// against the reference's libinjection evidence: a row pinning the SQLi
-// fingerprint requires EXACTLY that fingerprint (one distinct value over
-// the case's SQLi-class carriers); a row pinning the XSS class requires at
-// least one XSS-class evidence row; a row pinning a class absent (the
-// benign-clean shape: empty sqli_fp + false xss_fp) requires ZERO evidence.
-func diffFingerprints(wantSQLi string, wantXSS bool, ev []crs.Fingerprint) string {
+// against the reference's libinjection evidence, both directions: a row
+// pinning the SQLi fingerprint requires EXACTLY that fingerprint (one
+// distinct value over the case's SQLi-class carriers); a row pinning the
+// XSS class requires at least one XSS-class evidence row; a row pinning a
+// class absent (the benign-clean shape: empty sqli_fp + false xss_fp)
+// requires ZERO evidence. The reverse check (Greptile review 4532586207):
+// a FIRED carrier requires evidence of its class — a case with no pin
+// where a carrier fired and no evidence row exists fails with the fired
+// carrier ids named.
+func diffFingerprints(wantSQLi string, wantXSS bool, fired map[string]bool, ev []crs.Fingerprint) string {
 	var sqli []string
+	sqliRows, xssRows := 0, 0
 	xss := 0
 	for _, f := range ev {
 		switch f.Class {
 		case crs.FingerprintClassSQLi:
 			sqli = append(sqli, f.FP)
+			sqliRows++
 		case crs.FingerprintClassXSS:
 			xss++
+			xssRows++
 		}
+	}
+	if fired[crs.FingerprintClassSQLi] && sqliRows == 0 {
+		return fmt.Sprintf("SQLi carrier rules fired without fingerprint evidence: %v fired, want >= 1 sqli-class row, got 0",
+			carrierIDs(crs.FingerprintClassSQLi))
+	}
+	if fired[crs.FingerprintClassXSS] && xssRows == 0 {
+		return fmt.Sprintf("XSS carrier rules fired without fingerprint evidence: %v fired, want >= 1 xss-class row, got 0",
+			carrierIDs(crs.FingerprintClassXSS))
 	}
 	sqli = uniqueSortedStrings(sqli)
 	if wantSQLi == "" {

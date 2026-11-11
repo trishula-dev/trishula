@@ -243,3 +243,42 @@ func referenceOptions(c Case) crs.Options {
 	}
 	return o
 }
+
+
+// mkNoPinCase (issue #290 tests): a corpus case with no fingerprint pins —
+// the reverse check's shape (the carrier fires, the row pins nothing).
+func mkNoPinCase() Case {
+	return Case{Name: "reverse-check-probe"}
+}
+
+// TestDiffMirrorCarrierEvidence (issue #290, Greptile review 4532586207):
+// the reverse fingerprint check. A FIRED carrier requires evidence of its
+// class: a no-pin case where a carrier fired and no evidence row exists
+// reads a delta naming the fired carriers.
+func TestDiffMirrorCarrierEvidence(t *testing.T) {
+	me := MirrorExpectation{}
+	t.Run("sqli carrier fired with no evidence fails", func(t *testing.T) {
+		ref := crs.Verdict{Phase2Matches: []crs.Match{{RuleID: 942100}}}
+		if d := DiffMirror(mkNoPinCase(), MirrorExpectation{AttackP2: []int{942100}}, ref); d == "" {
+			t.Fatal("a fired 942100 with zero sqli evidence read parity — the reverse check did not fire")
+		} else if !strings.Contains(d, "SQLI") && !strings.Contains(d, "sqli") {
+			t.Fatalf("delta names the wrong class: %q", d)
+		}
+	})
+	t.Run("fired carrier with evidence holds parity", func(t *testing.T) {
+		ref := crs.Verdict{
+			Phase2Matches: []crs.Match{{RuleID: 942100}},
+			Fingerprints:  []crs.Fingerprint{{RuleID: 942100, Class: crs.FingerprintClassSQLi, FP: "1UEnk"}},
+		}
+		me2 := MirrorExpectation{AttackP2: []int{942100}, SqliFP: "1UEnk"}
+		if d := DiffMirror(mkNoPinCase(), me2, ref); d != "" {
+			t.Fatalf("the pin + evidence case read a delta: %q", d)
+		}
+	})
+	t.Run("benign shape: no carriers, zero evidence, holds parity", func(t *testing.T) {
+		ref := crs.Verdict{}
+		if d := DiffMirror(mkNoPinCase(), me, ref); d != "" {
+			t.Fatalf("empty verdict read a delta: %q", d)
+		}
+	})
+}

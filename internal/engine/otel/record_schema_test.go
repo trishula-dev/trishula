@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/trishula-dev/trishula/internal/crs"
@@ -302,6 +303,10 @@ func TestVerdictRecordCarriesFingerprints(t *testing.T) {
 		}
 		if rec == nil {
 			t.Fatalf("no %q log record in the snapshot", SpanName)
+		}
+		if !strings.Contains(rec.Body, RecordSchema) {
+			t.Fatalf("record body %q misses the schema version (%s): the emitted record identifies its own §15.2 schema",
+				rec.Body, RecordSchema)
 		}
 		if got := kvGet(rec.Attributes, AttrFingerprint); got != string(wantRaw) {
 			t.Fatalf("record %s = %q, want %q (the verdict log line carries the fingerprints)",
