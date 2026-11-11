@@ -1,11 +1,12 @@
 # test/waf-gate/crs-overrides.yaml (TR-205, issue #291 row 1) — the CRS
-# corpus status expectations for the go-ftw cloud verdict. Generated
-# from the pinned corpus (coreruleset v4.30.0) at authoring time; the
-# generation log sits in the .lane receipts. Rows: a test whose stages
-# expect CRS rule ids maps to status 403 (the engine block contract);
-# a test with no-expect stages or no log expectation maps to status
-# 200 (the engine forwards and the fixture answers 200). Regenerate
-# on a corpus-row PR; never edit by hand.
+# corpus status expectations for the go-ftw SHADOW leg (record-only).
+# Generated from the pinned corpus (coreruleset v4.30.0) by
+# test/waf-gate/gen-crs-overrides.py; the committed file reproduces
+# from a clean checkout with the README command. Rows: a test whose
+# stages expect CRS rule ids maps to status 403 (the shadow
+# detection-record shape); a test with no-expect stages or no log
+# expectation maps to status 200 (the engine forwards; the fixture
+# answers 200). Regenerate on a corpus-row PR; never edit by hand.
 ---
 version: "v0.0.0"
 meta:
@@ -13,107 +14,107 @@ meta:
   platform: "cloud"
 test_overrides:
   - rule_id: 941100
-    test_ids: [1, 2, 3, 6, 7, 8, 9]
-    reason: 'the engine contract: the CRS-critical row blocks (403)'
-    output:
-      status: 403
-  - rule_id: 941100
-    test_ids: [4, 5]
-    reason: 'the engine contract: the no-rule traffic passes (200)'
+    test_ids: [4,5]
+    reason: 'the shadow detection record: the no-rule row reads pass (200)'
     output:
       status: 200
-  - rule_id: 941101
-    test_ids: [1, 2, 3]
-    reason: 'the engine contract: the CRS-critical row blocks (403)'
+  - rule_id: 941100
+    test_ids: [1,2,3,6,7,8,9]
+    reason: 'the shadow detection record: the CRS-critical row reads block (403)'
     output:
       status: 403
-  - rule_id: 941110
-    test_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13]
-    reason: 'the engine contract: the CRS-critical row blocks (403)'
+  - rule_id: 941101
+    test_ids: [1,2,3]
+    reason: 'the shadow detection record: the CRS-critical row reads block (403)'
     output:
       status: 403
   - rule_id: 941110
     test_ids: [10]
-    reason: 'the engine contract: the no-rule traffic passes (200)'
+    reason: 'the shadow detection record: the no-rule row reads pass (200)'
     output:
       status: 200
-  - rule_id: 941140
-    test_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15]
-    reason: 'the engine contract: the CRS-critical row blocks (403)'
+  - rule_id: 941110
+    test_ids: [1,2,3,4,5,6,7,8,9,11,12,13]
+    reason: 'the shadow detection record: the CRS-critical row reads block (403)'
     output:
       status: 403
   - rule_id: 941140
-    test_ids: [11, 12, 13, 14]
-    reason: 'the engine contract: the no-rule traffic passes (200)'
+    test_ids: [11,12,13,14]
+    reason: 'the shadow detection record: the no-rule row reads pass (200)'
     output:
       status: 200
+  - rule_id: 941140
+    test_ids: [1,2,3,4,5,6,7,8,9,10,15]
+    reason: 'the shadow detection record: the CRS-critical row reads block (403)'
+    output:
+      status: 403
   - rule_id: 941160
-    test_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
-    reason: 'the engine contract: the CRS-critical row blocks (403)'
+    test_ids: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]
+    reason: 'the shadow detection record: the CRS-critical row reads block (403)'
     output:
       status: 403
   - rule_id: 942100
-    test_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
-    reason: 'the engine contract: the CRS-critical row blocks (403)'
+    test_ids: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17]
+    reason: 'the shadow detection record: the CRS-critical row reads block (403)'
     output:
       status: 403
   - rule_id: 942101
-    test_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9]
-    reason: 'the engine contract: the CRS-critical row blocks (403)'
-    output:
-      status: 403
-  - rule_id: 942101
-    test_ids: [10, 11]
-    reason: 'the engine contract: the no-rule traffic passes (200)'
+    test_ids: [10,11]
+    reason: 'the shadow detection record: the no-rule row reads pass (200)'
     output:
       status: 200
-  - rule_id: 942140
-    test_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
-    reason: 'the engine contract: the CRS-critical row blocks (403)'
+  - rule_id: 942101
+    test_ids: [1,2,3,4,5,6,7,8,9]
+    reason: 'the shadow detection record: the CRS-critical row reads block (403)'
     output:
       status: 403
-  - rule_id: 942160
-    test_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
-    reason: 'the engine contract: the CRS-critical row blocks (403)'
+  - rule_id: 942140
+    test_ids: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]
+    reason: 'the shadow detection record: the CRS-critical row reads block (403)'
     output:
       status: 403
   - rule_id: 942160
     test_ids: [12]
-    reason: 'the engine contract: the no-rule traffic passes (200)'
+    reason: 'the shadow detection record: the no-rule row reads pass (200)'
     output:
       status: 200
-  - rule_id: 942170
-    test_ids: [1, 2, 4, 5]
-    reason: 'the engine contract: the CRS-critical row blocks (403)'
+  - rule_id: 942160
+    test_ids: [1,2,3,4,5,6,7,8,9,10,11,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27]
+    reason: 'the shadow detection record: the CRS-critical row reads block (403)'
     output:
       status: 403
   - rule_id: 942170
     test_ids: [3]
-    reason: 'the engine contract: the no-rule traffic passes (200)'
+    reason: 'the shadow detection record: the no-rule row reads pass (200)'
     output:
       status: 200
-  - rule_id: 942190
-    test_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 35, 36, 37, 38, 39, 40, 41, 42, 44, 47, 49]
-    reason: 'the engine contract: the CRS-critical row blocks (403)'
+  - rule_id: 942170
+    test_ids: [1,2,4,5]
+    reason: 'the shadow detection record: the CRS-critical row reads block (403)'
     output:
       status: 403
   - rule_id: 942190
-    test_ids: [21, 34, 43, 45, 46, 48]
-    reason: 'the engine contract: the no-rule traffic passes (200)'
+    test_ids: [21,34,43,45,46,48]
+    reason: 'the shadow detection record: the no-rule row reads pass (200)'
     output:
       status: 200
-  - rule_id: 942230
-    test_ids: [1, 2, 4, 6, 7, 10, 12, 13]
-    reason: 'the engine contract: the CRS-critical row blocks (403)'
+  - rule_id: 942190
+    test_ids: [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,22,23,24,25,26,27,28,29,30,31,32,33,35,36,37,38,39,40,41,42,44,47,49]
+    reason: 'the shadow detection record: the CRS-critical row reads block (403)'
     output:
       status: 403
   - rule_id: 942230
-    test_ids: [3, 5, 8, 9, 11]
-    reason: 'the engine contract: the no-rule traffic passes (200)'
+    test_ids: [3,5,8,9,11]
+    reason: 'the shadow detection record: the no-rule row reads pass (200)'
     output:
       status: 200
+  - rule_id: 942230
+    test_ids: [1,2,4,6,7,10,12,13]
+    reason: 'the shadow detection record: the CRS-critical row reads block (403)'
+    output:
+      status: 403
   - rule_id: 942500
-    test_ids: [1, 2, 3, 4, 5, 6]
-    reason: 'the engine contract: the CRS-critical row blocks (403)'
+    test_ids: [1,2,3,4,5,6]
+    reason: 'the shadow detection record: the CRS-critical row reads block (403)'
     output:
       status: 403

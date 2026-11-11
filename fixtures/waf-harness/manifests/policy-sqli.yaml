@@ -1,17 +1,34 @@
-# TR-205 (issue #289) — the harness engine policy. The rule pack (the
-# ConfigMap the policy's ruleSets[0].name resolves to, cmd/operator's
-# v0 source, data key pack.yaml) carries the enforced SQLi gate: a UNION
-# probe in the query string on the /search route. The policy follows the
-# compiled lab shape (deployment/dx1/manifests/dx1-wafpolicy.yaml):
-# defaultAction pass keeps the undecided traffic transparent, and
-# modeFlags pins the shield OFF — the kernel leg is issue #292, and a
-# shield-load refusal here reports in the summary (never hides).
-#
-# Effects the smoke probe verifies (verified against the dx1 lab shapes):
-#   - GET /search?q=<UNION probe> → 403, X-Trishula-Decision: block, the
-#     rule id WH-SQLI-001 in X-Trishula-Rule;
-#   - no-rule traffic (the benign GET and the benign query) takes
-#     defaultAction pass → the transparent forward is preserved.
+# TR-205 (issue #289 + the #291 gate recast) — the harness engine policy.
+# The rule pack (the ConfigMap the policy's ruleSets[0].name resolves to,
+# cmd/operator's v0 source, data key pack.yaml) carries the enforced pin
+# rule plus the multi-family query gate the adversarial batteries read:
+#   - WH-SQLI-001: the #289 smoke-probe rule (/search + UNION; the gate's
+#     enforcement pin: 403 + X-Trishula-Rule: WH-SQLI-001);
+#   - WH-SQLI-002/WH-XSS-001/WH-LFI-001/WH-RCE-001/WH-SSTI-001/
+#     WH-NOSQLI-001/WH-SHELL-001/WH-SSI-001: the measured query families
+#     (the calibration receipts record which battery dirs the families
+#     block leg-by-leg; see test/waf-gate/waf-bypass-expectations.yaml).
+#     One structural gap the receipts carry: a raw-# request target has
+#     its fragment cut before the decide reads the query, so the SSTI
+#     #{1*1} leg stays unreachable by ANY query token (live probe: 200
+#     with the raw #, 403 with the %23 form).
+# Surface contract (spec §11.3 discipline: the view grows field-by-field):
+# the CEL Request view carries Method/Path/Query/RateWindows/Auth ONLY —
+# no headers, no body. The pack therefore pins the query surface:
+#   - matching is literal byte-contains, case-sensitive: the CEL env
+#     carries NO lower()/case-folding (verified against the cel.Rule
+#     compile path before the pack was pinned — the tokens list every
+#     shape explicitly);
+#   - the rules are query-anchored (request.query only); path-channel
+#     shapes (the batteries' URL-zone legs) ride the later path-scoped
+#     rules row, not this pack;
+#   - costBudget: the OR chains are long; the budgets below carry wide
+#     headroom over the measured per-rule cost max (the largest calibrated
+#     payload reads ~20k against the 250k ceiling; receipt: .lane/calib,
+#     the cel sanity probe).
+# modeFlags pins the shield OFF — the kernel leg is issue #292 — and
+# defaults to pass (defaultAction keeps the undecided traffic
+# transparent; a rule match is the only block).
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -31,6 +48,440 @@ data:
         action: enforce
         expression: |
           path.matches("/search") && request.query.contains("UNION")
+      - id: WH-SQLI-002
+        name: sqli-query-shapes
+        description: >-
+          The measured SQLi query shapes over every route: encoded and raw
+          adjacency pairs, comment-marker obfuscations, the double-encode
+          union family (u%256eion), the zero-width family, time-based
+          markers. Case-sensitive literal shapes; FP-clean against the
+          gotestwaf false-pos set and the battery FP dir (measured).
+        action: enforce
+        costBudget: 200000
+        expression: |
+          request.query.contains("union select")
+          || request.query.contains("UNION SELECT")
+          || request.query.contains("Union Select")
+          || request.query.contains("Union+Select")
+          || request.query.contains("union%20select")
+          || request.query.contains("UNION%20SELECT")
+          || request.query.contains("union+select")
+          || request.query.contains("Union%2BSelect")
+          || request.query.contains("union all select")
+          || request.query.contains("UNION ALL SELECT")
+          || request.query.contains("union%2b")
+          || request.query.contains("union%2B")
+          || request.query.contains("union%28select")
+          || request.query.contains("UNION%28SELECT")
+          || request.query.contains("union(select")
+          || request.query.contains("UNION(SELECT")
+          || request.query.contains("(select(")
+          || request.query.contains("%28select%28")
+          || request.query.contains("(SELECT(")
+          || request.query.contains("%28SELECT%28")
+          || request.query.contains("select%20from")
+          || request.query.contains("SELECT%20FROM")
+          || request.query.contains("+select+")
+          || request.query.contains("%20union")
+          || request.query.contains("%2f%2a")
+          || request.query.contains("%2F%2A")
+          || request.query.contains("/*")
+          || request.query.contains("SELECT PG_SLEEP")
+          || request.query.contains("PG_SLEEP")
+          || request.query.contains("pg_sleep")
+          || request.query.contains("extractvalue")
+          || request.query.contains("EXTRACTVALUE")
+          || request.query.contains("sysdate")
+          || request.query.contains("SYSDATE")
+          || request.query.contains("sleep(")
+          || request.query.contains("SLEEP(")
+          || request.query.contains("sleep%28")
+          || request.query.contains("SLEEP%28")
+          || request.query.contains("Sleep(")
+          || request.query.contains("'1'='1")
+          || request.query.contains("'1'=")
+          || request.query.contains("1=1--")
+          || request.query.contains("%3D1--")
+          || request.query.contains("--%20")
+          || request.query.contains("%2D%2D")
+          || request.query.contains("';")
+          || request.query.contains("%27union")
+          || request.query.contains("%27Union")
+          || request.query.contains("'union")
+          || request.query.contains("'Union")
+          || request.query.contains("'UNION")
+          || request.query.contains("DECLARE @")
+          || request.query.contains("xp_cmdshell")
+          || request.query.contains("JSON_")
+          || request.query.contains("dbms_")
+          || request.query.contains("AND 1=")
+          || request.query.contains("u%256eion")
+          || request.query.contains("se%256cect")
+          || request.query.contains("%e2%80%8b")
+          || request.query.contains("%E2%80%8B")
+          || request.query.contains("%5C%22%2C%5C%22")
+          || request.query.contains("%5c%22%2c%5c%22")
+      - id: WH-XSS-001
+        name: xss-query-shapes
+        description: >-
+          The measured XSS query shapes: script-tag forms, on-event handler
+          names, alert/confirm/prompt/eval call shapes, javascript: scheme
+          forms, svg element forms, entity-encode forms, NUL/split craft
+          markers. Case-sensitive literal shapes (no case-fold on the
+          surface: the CEL env carries no lower()).
+        action: enforce
+        costBudget: 250000
+        expression: |
+          request.query.contains("script>")
+          || request.query.contains("SCRIPT>")
+          || request.query.contains("script/")
+          || request.query.contains("script%2f")
+          || request.query.contains("script%2F")
+          || request.query.contains("script%")
+          || request.query.contains("</script")
+          || request.query.contains("</SCRIPT")
+          || request.query.contains("<script")
+          || request.query.contains("<SCRIPT")
+          || request.query.contains("%3Cscript")
+          || request.query.contains("%3CScript")
+          || request.query.contains("%3cscript")
+          || request.query.contains("onerror")
+          || request.query.contains("onerror=")
+          || request.query.contains("onload")
+          || request.query.contains("ONLOAD")
+          || request.query.contains("Onload")
+          || request.query.contains("javascript:")
+          || request.query.contains("javascript%3a")
+          || request.query.contains("JAVASCRIPT%3A")
+          || request.query.contains("JavaScript%3a")
+          || request.query.contains("%3aalert")
+          || request.query.contains(":alert")
+          || request.query.contains("alert=")
+          || request.query.contains("(alert")
+          || request.query.contains("alert%28")
+          || request.query.contains("alert%20")
+          || request.query.contains("confirm(")
+          || request.query.contains("confirm%28")
+          || request.query.contains("prompt(")
+          || request.query.contains("prompt%28")
+          || request.query.contains("%26%23")
+          || request.query.contains("%28alert%29")
+          || request.query.contains("alert.call%28")
+          || request.query.contains("confirm.call%28")
+          || request.query.contains("prompt.call%28")
+          || request.query.contains("svg/")
+          || request.query.contains("svg%2f")
+          || request.query.contains("svg%2F")
+          || request.query.contains("SVG/")
+          || request.query.contains("%3Csvg")
+          || request.query.contains("%3Csvg%2F")
+          || request.query.contains("%3csvg")
+          || request.query.contains("srcdoc")
+          || request.query.contains("eval(")
+          || request.query.contains("eval%28")
+          || request.query.contains("%22%3e")
+          || request.query.contains("%22%3E")
+          || request.query.contains("%22on")
+          || request.query.contains("location.")
+          || request.query.contains("document.")
+          || request.query.contains("innerHTML")
+          || request.query.contains("getScript")
+          || request.query.contains("lt;svg")
+          || request.query.contains("&lt;")
+          || request.query.contains("&gt;")
+          || request.query.contains("&equals")
+          || request.query.contains("&lpar")
+          || request.query.contains("%253csvg")
+          || request.query.contains("%2526")
+          || request.query.contains("onabort")
+          || request.query.contains("onblur")
+          || request.query.contains("onbounce")
+          || request.query.contains("onchange")
+          || request.query.contains("onclick")
+          || request.query.contains("oncontextmenu")
+          || request.query.contains("oncopy")
+          || request.query.contains("oncut")
+          || request.query.contains("ondblclick")
+          || request.query.contains("ondrag")
+          || request.query.contains("ondragend")
+          || request.query.contains("ondragenter")
+          || request.query.contains("ondragleave")
+          || request.query.contains("ondragover")
+          || request.query.contains("ondragstart")
+          || request.query.contains("ondrop")
+          || request.query.contains("onfinish")
+          || request.query.contains("onfocus")
+          || request.query.contains("onhashchange")
+          || request.query.contains("onhelp")
+          || request.query.contains("oninput")
+          || request.query.contains("oninvalid")
+          || request.query.contains("onkeydown")
+          || request.query.contains("onkeypress")
+          || request.query.contains("onkeyup")
+          || request.query.contains("onloadend")
+          || request.query.contains("onloadstart")
+          || request.query.contains("onmousedown")
+          || request.query.contains("onmouseenter")
+          || request.query.contains("onmouseleave")
+          || request.query.contains("onmousemove")
+          || request.query.contains("onmouseout")
+          || request.query.contains("onmouseover")
+          || request.query.contains("onmouseup")
+          || request.query.contains("onpagehide")
+          || request.query.contains("onpageshow")
+          || request.query.contains("onpaste")
+          || request.query.contains("onplay")
+          || request.query.contains("onplaying")
+          || request.query.contains("onpointercancel")
+          || request.query.contains("onpointerdown")
+          || request.query.contains("onrepeat")
+          || request.query.contains("onreset")
+          || request.query.contains("onresize")
+          || request.query.contains("onscroll")
+          || request.query.contains("onseeked")
+          || request.query.contains("onseeking")
+          || request.query.contains("onselect")
+          || request.query.contains("onshow")
+          || request.query.contains("onstart")
+          || request.query.contains("onsuspend")
+          || request.query.contains("ontimeupdate")
+          || request.query.contains("ontoggle")
+          || request.query.contains("ontouchend")
+          || request.query.contains("ontouchmove")
+          || request.query.contains("ontouchstart")
+          || request.query.contains("ontransitionend")
+          || request.query.contains("onvolumechange")
+          || request.query.contains("onwaiting")
+          || request.query.contains("onwheel")
+          || request.query.contains("onanimationstart")
+          || request.query.contains("onanimationiteration")
+          || request.query.contains("onended")
+          || request.query.contains("onbeforeunload")
+          || request.query.contains("onorientationchange")
+          || request.query.contains("oncanplay")
+      - id: WH-LFI-001
+        name: lfi-query-shapes
+        description: >-
+          The measured path-traversal query shapes: ../ forms (raw + the
+          %2f, %5c, backslash, double-encode families), passwd/ini file
+          probes, the windows fixture paths.
+        action: enforce
+        costBudget: 150000
+        expression: |
+          request.query.contains("../")
+          || request.query.contains("..%2f")
+          || request.query.contains("..%2F")
+          || request.query.contains("..%5c")
+          || request.query.contains("..%5C")
+          || request.query.contains("..\\")
+          || request.query.contains("etc/passwd")
+          || request.query.contains("etc%2fpasswd")
+          || request.query.contains("etc%2Fpasswd")
+          || request.query.contains("etc%252fpasswd")
+          || request.query.contains("etc%252Fpasswd")
+          || request.query.contains("etc%2fetc")
+          || request.query.contains("%252e%252e")
+          || request.query.contains("%2e%2e/")
+          || request.query.contains("..%00")
+          || request.query.contains("win.ini")
+          || request.query.contains("boot.ini")
+          || request.query.contains("php.ini")
+          || request.query.contains("c:/windows")
+          || request.query.contains("c:/winnt")
+          || request.query.contains("C:/WINDOWS")
+          || request.query.contains("C:/WINNT")
+      - id: WH-RCE-001
+        name: rce-query-shapes
+        description: >-
+          The measured command-injection query shapes: ;cat/cat+ forms,
+          $( and backtick forms, the ${ brace form, c0%af overlong-encode
+          family, \x hex-escape family, the double-encode braces, the
+          script-timeout and python-object payloads.
+        action: enforce
+        costBudget: 200000
+        expression: |
+          request.query.contains(";cat")
+          || request.query.contains("cat%20")
+          || request.query.contains("cat+")
+          || request.query.contains("cat%2b")
+          || request.query.contains("cat%2B")
+          || request.query.contains("cat ")
+          || request.query.contains("cat%24")
+          || request.query.contains("%3bcat")
+          || request.query.contains("%3Bcat")
+          || request.query.contains("%3B%20cat")
+          || request.query.contains(";{")
+          || request.query.contains("$(")
+          || request.query.contains("%24(")
+          || request.query.contains("%60")
+          || request.query.contains("`")
+          || request.query.contains("${")
+          || request.query.contains("%24%7b")
+          || request.query.contains("%24%7B")
+          || request.query.contains("c0%af")
+          || request.query.contains("c0%a0")
+          || request.query.contains("%25c0%25af")
+          || request.query.contains("%25c0%25a0")
+          || request.query.contains("%e2%80%8b")
+          || request.query.contains("%E2%80%8B")
+          || request.query.contains("\\x")
+          || request.query.contains("%5cx")
+          || request.query.contains("%5Cx")
+          || request.query.contains("%255c")
+          || request.query.contains("%5c%5c")
+          || request.query.contains("%5C%5C")
+          || request.query.contains("%257b")
+          || request.query.contains("%257B")
+          || request.query.contains("%2520cat")
+          || request.query.contains("%2526")
+          || request.query.contains(";ls")
+          || request.query.contains("%3bls")
+          || request.query.contains("%3Bls")
+          || request.query.contains(";id")
+          || request.query.contains("%3bid")
+          || request.query.contains("ScriptTimeout")
+          || request.query.contains("python%2Fobject")
+          || request.query.contains("%2Fbin%2Fbash")
+          || request.query.contains("%2Fbin%2Fsh")
+      - id: WH-SSTI-001
+        name: ssti-query-shapes
+        description: >-
+          The measured SSTI query shapes: {{ / }} and ${ forms (raw +
+          %7b/%24 forms), the <% and {% tags, the #/*/@ brace prefix
+          family, the double-encode brace family, the freemarker and
+          class-loader payload markers.
+        action: enforce
+        costBudget: 200000
+        expression: |
+          request.query.contains("{{")
+          || request.query.contains("%7b%7b")
+          || request.query.contains("%7B%7B")
+          || request.query.contains("${")
+          || request.query.contains("%24%7b")
+          || request.query.contains("%24%7B")
+          || request.query.contains("$%7b")
+          || request.query.contains("$%7B")
+          || request.query.contains("*%7b")
+          || request.query.contains("*%7B")
+          || request.query.contains("%2a%7b")
+          || request.query.contains("%2A%7B")
+          || request.query.contains("{%")
+          || request.query.contains("%7b%25")
+          || request.query.contains("<%")
+          || request.query.contains("%3c%25")
+          || request.query.contains("%3C%25")
+          || request.query.contains("%7bphp")
+          || request.query.contains("{php}")
+          || request.query.contains("%23%7b")
+          || request.query.contains("%23%7B")
+          || request.query.contains("#{")
+          || request.query.contains("*{1*1}")
+          || request.query.contains("%2a%7b")
+          || request.query.contains("@(")
+          || request.query.contains("%40(")
+          || request.query.contains("%7B%24")
+          || request.query.contains("%7b%24")
+          || request.query.contains("%2524%257B")
+          || request.query.contains("%2524%257b")
+          || request.query.contains("%257b%2524")
+          || request.query.contains("getenv(")
+          || request.query.contains("getClassLoader")
+          || request.query.contains("freemarker")
+          || request.query.contains("%7B%7B7")
+          || request.query.contains("%7Bself")
+          || request.query.contains("%24%7B1")
+          || request.query.contains("%24%7B7")
+          || request.query.contains("%24%7Bclass")
+          || request.query.contains("%7B%7B7%2A7")
+      - id: WH-NOSQLI-001
+        name: nosqli-query-shapes
+        description: >-
+          The measured NoSQLi operator shapes: the $where/$ne/$gt/$lt/
+          $nin/$regex operator family (raw + %24 forms), the bracket [
+          $op] forms (raw + double-encode), the '&& this.password match
+          form.
+        action: enforce
+        costBudget: 150000
+        expression: |
+          request.query.contains("$where")
+          || request.query.contains("%24where")
+          || request.query.contains("$ne")
+          || request.query.contains("%24ne")
+          || request.query.contains("$gt")
+          || request.query.contains("%24gt")
+          || request.query.contains("$lt")
+          || request.query.contains("%24lt")
+          || request.query.contains("$nin")
+          || request.query.contains("%24nin")
+          || request.query.contains("$regex")
+          || request.query.contains("%24regex")
+          || request.query.contains("%255b%2524")
+          || request.query.contains("%5b%24")
+          || request.query.contains("%2524")
+          || request.query.contains("%27%3b")
+          || request.query.contains("%27%3B")
+          || request.query.contains("&&")
+          || request.query.contains("%26%26")
+          || request.query.contains("%5B%24")
+      - id: WH-SHELL-001
+        name: shell-injection-query-shapes
+        description: >-
+          The measured shell-injection query shapes: the ;cmd / &&cmd
+          chains (id, rm, pwd, whoami, uname, ls, cat, wget, getent),
+          the encoded %3b/%26%26 forms, the $IFS variable-insertion
+          family, the set /a form.
+        action: enforce
+        costBudget: 150000
+        expression: |
+          request.query.contains(";id")
+          || request.query.contains(";rm")
+          || request.query.contains(";pwd")
+          || request.query.contains(";whoami")
+          || request.query.contains(";uname")
+          || request.query.contains(";ls")
+          || request.query.contains(";cat")
+          || request.query.contains(";wget")
+          || request.query.contains("%3bid")
+          || request.query.contains("%3Brm")
+          || request.query.contains("%3Bpwd")
+          || request.query.contains("%3Bwhoami")
+          || request.query.contains("%3Bcat")
+          || request.query.contains("%3Bwget")
+          || request.query.contains("&&rm")
+          || request.query.contains("&&id")
+          || request.query.contains("&&ls")
+          || request.query.contains("%26%26rm")
+          || request.query.contains("%26%26ls")
+          || request.query.contains("whoami")
+          || request.query.contains("uname%20")
+          || request.query.contains("rm%20")
+          || request.query.contains("id;")
+          || request.query.contains("%3b%20id")
+          || request.query.contains("getent")
+          || request.query.contains("%3Bgetent")
+          || request.query.contains("wget%20")
+          || request.query.contains("%3Bwget")
+          || request.query.contains("set%20%2Fa")
+          || request.query.contains("$IFS")
+          || request.query.contains("%24IFS")
+      - id: WH-SSI-001
+        name: ssi-query-shapes
+        description: >-
+          The measured SSI query shapes: the <!--#exec/--><!--#echo
+          comment-directive forms (raw + %3C%21--/%23 forms), the
+          #include/#config/#flastmod directives.
+        action: enforce
+        costBudget: 100000
+        expression: |
+          request.query.contains("--%23exec")
+          || request.query.contains("--%23echo")
+          || request.query.contains("%23exec")
+          || request.query.contains("%23echo")
+          || request.query.contains("%23include")
+          || request.query.contains("%3C%21--")
+          || request.query.contains("<!--#")
+          || request.query.contains("%23config")
+          || request.query.contains("%23flastmod")
 ---
 apiVersion: trishula.security/v1alpha1
 kind: WAFPolicy

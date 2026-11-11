@@ -3,8 +3,14 @@
 # only these rules' regression tests. Every row sits in a CRS family
 # the engine ships (941 XSS, 942 SQLi), carries severity critical in
 # the pinned rulepack, and has regression test files in the pinned
-# corpus (coreruleset v4.30.0): 204 tests across the 13 rows; the
-# workflow floor check holds the sample real.
+# corpus (coreruleset v4.30.0): 204 tests across the 13 rows.
+#
+# RECAST (the lane-d fix pass, the operator ruling): the go-ftw layer is
+# the SHADOW RECORD leg — the run's detection counts ship in the summary
+# and the artifacts and never gate (the CRS enforcement rides the
+# compiled fast-path lane). The override map the list feeds is the
+# generator's product (test/waf-gate/gen-crs-overrides.py); the gate's
+# verdict reads the WH-SQLI-001 enforcement pin, never this list.
 #
 # A corpus-row PR remains the only change path: a rule id row means one line
 # here (add or remove) and a README table note. A red row (the engine
