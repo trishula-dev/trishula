@@ -1,0 +1,15 @@
+# test/waf-release/corpus-fp.yaml — TR-205 leaf (issue #293). The FP
+# battery contract moved here from test/waf-gate/gotestwaf-fp.yaml with
+# the #293 release stage.
+#
+# The false-pos set runs through the ENGINE (the WAF surface). The
+# benign fixture app answers the pass-through traffic. Benign traffic
+# the engine blocks is a false positive. The block count MUST read zero
+# over the whole false-pos set in the full-corpus run. Default status
+# semantics hold here: only a real block-status answer counts blocked.
+# An upstream error status reads unresolved, never a block (the
+# corpus-wide rule in corpus-full.yaml carries the failed-tests gate).
+---
+set: false-pos
+verdict:
+  blocked_tests_max: 0

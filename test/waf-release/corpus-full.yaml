@@ -1,0 +1,56 @@
+# test/waf-release/corpus-full.yaml — TR-205 leaf (issue #293, contract 2).
+# The FULL goTestWAF corpus leg sits here. The release suite runs every
+# test set the pinned scanner ships (no --testSet filter), against the
+# trishula engine. The verdict reads this manifest.
+#
+# Set coverage. The pinned image carries the embedded testcases tree.
+# The run executes community, owasp and owasp-api (the true-positive
+# sets) and false-pos (the true-negative set) as shipped. The verdict
+# report records the executed set list from the report JSON itself.
+# The recorded-run form governs: the report names what ran, and the
+# manifest never predicts the contents.
+#
+# The scanner runs in-cluster as a Kubernetes Job. No port-forward pipe
+# lives across the hours-long scan (the #289 receipts carry the
+# pipe-death record). The runner-side driver applies the Job, waits a
+# bounded wall, and copies the report files out.
+#
+# The 0.5.8 scanner carries the worker-pool race (the Intn(0) panic,
+# the c4a60cd receipt). backoff_limit gives the Job one retry. A second
+# panic fails the leg, and the pins PR path takes the version bump.
+---
+test_set: null      # null = all embedded sets (the full corpus; the report records the executed list)
+image:
+  from: test/waf-gate/pins.yaml   # the gotestwaf key (repo, tag, digest)
+flags:
+  workers: 10
+  send_delay_ms: 50
+  random_delay_ms: 0
+  non_blocked_as_passed: true
+  block_status_codes: [403]
+  pass_status_codes: [200, 404]
+  report_formats: [json, html]
+  report_name: wafrs-corpus          # the driver renames the files; the report keeps its name
+  waf_name: trishula-release-suite
+  no_email_report: true
+bounds:
+  job_active_deadline_seconds: 16200   # 4.5 h: the hard wall for the scan job
+  runner_wait_slack_seconds: 300       # the driver wait adds to the deadline
+  backoff_limit: 1                     # the one retry for the 0.5.8 worker race
+resources:
+  requests: {cpu: "1", memory: 1Gi}
+  limits: {cpu: "2", memory: 2Gi}
+target:
+  engine_service: waf-harness-engine.waf-harness.svc.cluster.local
+  engine_port: 8080
+verdict:
+  # Contract 2 gates (the corpus verdict step reads the report JSON).
+  #   1. The baseline compare (baseline.yaml rules). Pending-first-run
+  #      records; after the record lands, a regression fails.
+  #   2. The six corpus rows (corpus-rows.yaml). Each row MUST appear in
+  #      the report and MUST NOT show bypassed over the row ceiling.
+  #   3. The false-pos battery (corpus-fp.yaml). blocked MUST read 0.
+  #   4. failed_tests MUST read 0 over both aggregates (a transport
+  #      failure is a report defect, not a WAF answer).
+  failed_tests_max: 0
+  bypass_findings: bypass-findings.md   # one row per offender: set, case, encoder, placeholder (issue #293 contract 8)

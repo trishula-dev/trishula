@@ -1,0 +1,61 @@
+# test/waf-release/sqlmap.yaml — TR-205 leaf (issue #293, contract 3).
+# The sqlmap stage runs against the deliberately SQLi-vulnerable
+# fixture. The flags stay pinned and the runtime stays bounded. The
+# gate records 0 successful injections.
+#
+# Target. sqlmap attacks the ENGINE, not the fixture directly. The
+# engine fronts the vuln-app fixture
+# (fixtures/waf-harness/vuln-app, the /search route that concatenates
+# the query into its statement record). The engine enforces the
+# waf-harness-gate pack. An injection the engine misses reaches the
+# fixture, and sqlmap reads its answer. The leg re-runs the WH-SQLI-001
+# pin probe (403 plus the X-Trishula-Rule header) before the scan. A
+# not-enforced engine reads as a legible failure, never as a scan
+# against a naked target.
+#
+# Bounded runtime. Three layers bound the wall. The Job
+# activeDeadlineSeconds forms the hard kill inside the cluster. The runner
+# step timeout caps the driver wait. The wall budget sits in
+# wall-budget.yaml. The verdict MUST read completed: true. A deadline
+# kill or a step timeout fails the leg — an unbounded scan is a
+# breach, not a pass.
+#
+# Verdict. The parse reads the sqlmap session log (the /out tree
+# copied off the pod) and the pod stdout log. The injection markers
+# below MUST count 0, and the clean marker MUST appear. Absent both,
+# the run died and the leg fails. The markers list pins what the
+# parser reads, and the parse MUST NOT run a loose pattern.
+---
+target:
+  scheme: http
+  engine_service: waf-harness-engine.waf-harness.svc.cluster.local
+  engine_port: 8080
+  route: "/search?q=1"
+image:           # from pins.yaml: the runner_job_images.python entry
+  python_key: python
+  digest_pinned: true
+install:
+  pin_file: test/waf-release/pins.yaml    # the sqlmap key feeds --require-hashes
+  requirements_line: "sqlmap==1.10.11 --hash=sha256:223a0dda06eadb8eb8a06d2e9ef90281919fdc2203d9cf5979da3311d6af440a"
+flags:
+  batch: true
+  level: 3
+  risk: 2
+  timeout: 10        # sqlmap's per-request timeout, seconds
+  threads: 4
+  flush_session: true
+  disable_coloring: true
+  output_dir: /out
+bounds:
+  job_active_deadline_seconds: 1800
+  runner_step_timeout_minutes: 35
+  wall_budget_minutes: 20
+verdict:
+  completed_required: true
+  successful_injections_max: 0
+  injection_markers:
+    - "is '.*' injectable"
+    - "might be injectable"
+    - "identified the following injection point"
+  clean_marker: "all tested parameters do not appear to be injectable"
+  pre_scan_probe: WH-SQLI-001       # 403 plus X-Trishula-Rule: WH-SQLI-001, re-run at leg start
