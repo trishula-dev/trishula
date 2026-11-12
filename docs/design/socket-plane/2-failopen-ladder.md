@@ -4,7 +4,7 @@
 > [TR-39 #51](https://github.com/trishula-dev/trishula/issues/51). Mechanism record: part 1
 > (parse, match, action, shared maps). Census record: part 3.
 >
-> **Spec refs:** [§9.9 socket-plane fast path](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-tracked-evaluation-not-a-v1-commitment) ·
+> **Spec refs:** [§9.9 socket-plane fast path](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-a-tracked-evaluation-no-runtime-commitment) ·
 > [§9.3 maps](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#93-maps-and-state)
 >
 > Degradation targets: TR-06 (engine-as-backend), TR-22 (ext_proc no-hop).

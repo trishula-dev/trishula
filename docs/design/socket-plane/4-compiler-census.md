@@ -9,7 +9,7 @@
 > record extends the part-3 census: it reads the `WAFPolicy` CRD surface instead of the rule
 > corpora, and it adds the compiler contract.
 >
-> **Spec refs:** [§9.9 socket-plane fast path](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-tracked-evaluation-not-a-v1-commitment) ·
+> **Spec refs:** [§9.9 socket-plane fast path](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-a-tracked-evaluation-no-runtime-commitment) ·
 > [§8.1 design principles (P2: one policy artifact, many enforcement altitudes)](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#81-design-principles) ·
 > [§17 performance targets & benchmark plan](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#17-performance-targets--benchmark-plan)
 
@@ -18,7 +18,7 @@ claim. The [§9.9] contract holds across the record: tracked evaluation, not a v
 No template, no load and no enforcement exist at this record. Section 9 carries the TR-40b
 route-class update: the first kernel-path rows, the template and the load gate.
 
-[§9.9]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-tracked-evaluation-not-a-v1-commitment
+[§9.9]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-a-tracked-evaluation-no-runtime-commitment
 
 ## 1. Question and method
 
@@ -434,7 +434,7 @@ The anti-claim rows hold on top of the table:
 3. The list grows when a new slow-path class lands on the census. A limitation row is a
    boundary statement, never an open capability gap.
 
-[§9.9]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-tracked-evaluation-not-a-v1-commitment
+[§9.9]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-a-tracked-evaluation-no-runtime-commitment
 
 [§17]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#17-performance-targets--benchmark-plan
 

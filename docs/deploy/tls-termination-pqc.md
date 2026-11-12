@@ -8,7 +8,7 @@
 > mode](https://github.com/trishula-dev/trishula/issues/34) (the engine's
 > secondary mode, `cmd/engine/tls.go`).
 >
-> **Spec refs:** [§10.2 the contract](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#102-the-contract-trishula-as-a-gateway-api-citizen) · [§6.3 non-goals (v1)](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#63-non-goals-v1)
+> **Spec refs:** [§10.2 the contract](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#102-the-contract-trishula-as-a-gateway-api-citizen) · [§6.3 non-goals (v1)](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#63-non-goals-the-standing-boundary)
 
 > More: [§9.7 visibility contracts per mode](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#97-visibility-contracts-per-mode) · [§20.1 risk register](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#201-risk-register) · [§20.2 phasing](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#202-phasing) · [Appendix A: roadmap notes](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#appendix-a-roadmap-notes)
 

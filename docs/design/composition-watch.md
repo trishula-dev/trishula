@@ -74,7 +74,7 @@ for every cousin.
 | # | The component proves | Reads against |
 | --- | --- | --- |
 | 1 | One declarative policy source compiles the component: `WAFPolicy`, or a Gateway-API extension. | [§8.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#81-design-principles) |
-| 2 | The component runs shadow-first: evaluative evidence before any enforcement flip. | [D5](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#25-d5--honesty-as-a-mechanism-shadow-first-and-differential-parity), [§9.9](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-tracked-evaluation-not-a-v1-commitment) |
+| 2 | The component runs shadow-first: evaluative evidence before any enforcement flip. | [D5](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#25-d5--honesty-as-a-mechanism-shadow-first-and-differential-parity), [§9.9](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-a-tracked-evaluation-no-runtime-commitment) |
 | 3 | Verdict work passes the CRS differential: 100% applicable rules. | [§11.8](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#118-crs-differential-parity-gate), [M1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#21-success-metrics--adoption-gates) |
 | 4 | The decision path stays self-hosted: no keyed third-party service inside it. | [§18.3](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#183-abuse-of-trishula-as-vantage) |
 | 5 | The component holds the inline budget: 1.5 ms p99 or better at the 8 KB full-CRS shape. | [M2](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#21-success-metrics--adoption-gates), [TR-39d section 4](socket-plane-fast-path.md) |

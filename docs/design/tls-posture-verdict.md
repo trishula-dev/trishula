@@ -16,7 +16,7 @@
 > [§12.3 honest limits] · [§13.4 enforcement actions by tier] · [§17 performance targets] ·
 > [§18.2 threats and treatments] · [§20.1 risk register] · [Appendix A: roadmap notes]
 
-[§6.3 non-goals (v1)]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#63-non-goals-v1
+[§6.3 non-goals (v1)]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#63-non-goals-the-standing-boundary
 [§9.2 hook inventory]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#92-hook-inventory
 [§9.1 the two-plane principle]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#91-the-two-plane-principle
 [§9.3 maps and state]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#93-maps-and-state
@@ -24,7 +24,7 @@
 [§9.5 kernel-side rate accounting]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#95-kernel-side-rate-accounting-feed-13
 [§9.6 plaintext fast path]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#96-plaintext-fast-path-in-kernel-bounded-honest
 [§9.7 visibility contracts per mode]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#97-visibility-contracts-per-mode
-[§9.9 socket-plane fast path]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-tracked-evaluation-not-a-v1-commitment
+[§9.9 socket-plane fast path]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-a-tracked-evaluation-no-runtime-commitment
 [§11.5 positive security]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#115-positive-security-schema-and-api-discovery
 [§12.1 detector families]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#121-detector-families
 [§12.3 honest limits]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#123-honest-limits

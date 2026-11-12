@@ -18,7 +18,7 @@
 [cel]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#113-cel-as-the-developer-facing-dsl
 [ban]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#133-the-ban-algorithm-scoredwindowban-v1-specified
 [vr]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#152-the-verdict-record-log-body-schema-versioned
-[nongoals]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#63-non-goals-v1
+[nongoals]: https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#63-non-goals-the-standing-boundary
 
 Status: research verdict. The record owns no code and lands no enforcement. The
 engine's CEL view at the tracked state of this repo carries 4 fields: `method`,
