@@ -4,7 +4,7 @@
 
 <p class="authorline"><strong>Shaineel Singh</strong> (shain.singh@owasp.org)</p>
 <p class="affilline">trishula-dev project · github.com/trishula-dev · trishula.dev · Melbourne, Australia</p>
-<p class="revsline">Revision 1.0 — 2 October 2026 · Work in progress. Full product specification companion: "Trishula — Product Requirements Document &amp; Project Charter" (v4).</p>
+<p class="revsline">Revision 1.2 — 13 November 2026 · Work in progress. Full product specification companion: the spec at docs/spec.md.</p>
 
 </div>
 
