@@ -58,7 +58,7 @@ concurrency:
 jobs:
   waf-gate:
     name: "TR-205 (issue #291) waf gate: the enforced-CELSurface batteries + the CRS detection-record (shadow) + the WH-SQLI-001 pin"
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - name: Open the run record
