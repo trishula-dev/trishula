@@ -61,6 +61,31 @@ The numbers re-read at each release. Each row's wall carries the [receipt commen
 | ladder-form-dense-1k | 600 µs | [15395.2 µs](https://github.com/trishula-dev/trishula/issues/147#issuecomment-6391719348) | pinned open — the [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage) |
 | ladder-form-dense-8k | 600 µs | [135633.1 µs](https://github.com/trishula-dev/trishula/issues/147#issuecomment-6391719348) | pinned open — the [§17.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage) |
 | steady-json-8k (the [M2](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#171-budgets-by-stage) e2e cell) | 1500 µs | [433.7 µs](https://github.com/trishula-dev/trishula/issues/147#issuecomment-6391719348) | holds (0.29x) |
+## Adversarial test coverage (TR-205)
+
+The adversarial program runs the CRS corpus, the evasion batteries and
+the engine-differential at two stages: every merge (the per-PR gate)
+and the release cut (the release suite, [#293](https://github.com/trishula-dev/trishula/issues/293)).
+Each row's number cites its recorded run; the verbatim receipts sit on
+the [TR-205 record](https://github.com/trishula-dev/trishula/issues/288#issuecomment-6788016467).
+The numbers re-read at each release; a fresh read posts a fresh receipt
+and re-links the row.
+
+| Layer | Coverage | Last recorded run | Verdict |
+|---|---|---|---|
+| CRS parity (the differential gate) | 20/20 rows, 2 runs | [run 43065485676](https://github.com/trishula-dev/trishula/actions/runs/43065485676) | pass |
+| Enforcement pin (WH-SQLI-001) | 403 + the rule id on the wire | [run 43065485366](https://github.com/trishula-dev/trishula/actions/runs/43065485366) | pass |
+| waf-bypass battery (plain query legs) | 756 passed of 6789 legs, 0 broken, 0 falsed | [run 43065485366](https://github.com/trishula-dev/trishula/actions/runs/43065485366) | pass |
+| CRS detection record (the shadow stage) | 160/182 block rows detected | [run 43065485366](https://github.com/trishula-dev/trishula/actions/runs/43065485366) | record |
+| Shield hook loads (the spike) | 4/4 hook classes loaded | [run 42932662527](https://github.com/trishula-dev/trishula/actions/runs/42932662527) | pass |
+| The waf-bypass non-enforced families | 9 families recorded with measured splits | the [expectations manifest](https://github.com/trishula-dev/trishula/blob/main/test/waf-gate/waf-bypass-expectations.yaml) | record |
+| goTestWAF full corpus | pending-first-run — [#293](https://github.com/trishula-dev/trishula/issues/293) | — | pending |
+| sqlmap (the calibration + the gate) | pending-first-run — [#293](https://github.com/trishula-dev/trishula/issues/293) | — | pending |
+| open-appsec differential | pending-first-run — [#293](https://github.com/trishula-dev/trishula/issues/293) | — | pending |
+
+The CRS shadow record reads detection, never enforcement: CRS blocking
+binds at the compiled fast-path lane ([§11.4](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#114-the-compiled-fast-path-vectorscan-matcher)).
+
 ## Upcoming features
 
 The list pairs each not-shipped feature with its tracker.
