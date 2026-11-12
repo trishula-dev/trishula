@@ -6,7 +6,7 @@
 > links the parts and carries the assembly additions: the transport constraints and the
 > pre/post performance protocol.
 >
-> **Spec refs:** [§9.9 socket-plane fast path](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-tracked-evaluation-not-a-v1-commitment) ·
+> **Spec refs:** [§9.9 socket-plane fast path](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-a-tracked-evaluation-no-runtime-commitment) ·
 > [§17 performance targets & benchmark plan](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#17-performance-targets--benchmark-plan) ·
 > [§21 M2 guard row](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#21-success-metrics--adoption-gates)
 

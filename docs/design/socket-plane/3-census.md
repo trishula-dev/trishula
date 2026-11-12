@@ -6,7 +6,7 @@
 > spec [§20.3 Q7](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#203-open-questions)
 > (TR-36).
 >
-> **Spec ref:** [§9.9 socket-plane fast path](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-tracked-evaluation-not-a-v1-commitment)
+> **Spec ref:** [§9.9 socket-plane fast path](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-a-tracked-evaluation-no-runtime-commitment)
 
 ## 1. Question and status
 

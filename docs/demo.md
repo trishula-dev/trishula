@@ -30,7 +30,7 @@ policy question only the API's own data answers
 In Trishula the question is one CEL expression over the request view
 (`resource.owner == request.auth.subject`), evaluated cost-budgeted.
 The decision is emitted as a
-[`trishula.verdict.v1`](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#15-opentelemetry-observability)
+[`trishula.verdict.v2`](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#15-opentelemetry-observability)
 record.
 
 **C. Enforcement (what the attacker experiences next).** Repeat offenders

@@ -59,7 +59,7 @@ PQ key exchange arrives client-side, independently of Trishula
 Termination altitude holds unchanged: the gateway owns the handshake,
 and the engine sees post-termination plaintext, whatever group
 negotiated (Appendix A, note 2;
-[§6.3](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#63-non-goals-v1)).
+[§6.3](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#63-non-goals-the-standing-boundary)).
 The shield and the engine change no shape. v1 carries no PQ data-plane
 claims.
 

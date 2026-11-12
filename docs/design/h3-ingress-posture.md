@@ -16,7 +16,7 @@
 > [§9.1 the two-plane principle](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#91-the-two-plane-principle) ·
 > [§9.6 plaintext fast path](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#96-plaintext-fast-path-in-kernel-bounded-honest) ·
 > [§9.7 visibility contracts per mode](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#97-visibility-contracts-per-mode) ·
-> [§9.9 socket-plane fast path](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-tracked-evaluation-not-a-v1-commitment) ·
+> [§9.9 socket-plane fast path](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-a-tracked-evaluation-no-runtime-commitment) ·
 > [§13.3 the ban algorithm](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#133-the-ban-algorithm-scoredwindowban-v1-specified) ·
 > [§12 bot defense & anti-automation](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#12-bot-defense--anti-automation)
 
@@ -51,7 +51,7 @@ The posture rests on 7 wire facts. Each fact comes from the repo, not from an as
 | F3 | XDP flood defense holds its L3/L4 altitude. The hook inventory carries SYN/UDP flood tarpits and LPM ACL. QUIC traffic meets these classes as UDP, never as requests. | [§9.2](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#92-hook-inventory), the XDP row |
 | F4 | The kernel stays decision-free ([§9.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#91-the-two-plane-principle)). The §9.6 advisory window serves plaintext TCP legs. h3 reaches the kernel as UDP datagrams, never as requests. | [§9.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#91-the-two-plane-principle); [§9.7](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#97-visibility-contracts-per-mode); [TR-44](protocol-conformance-verdict.md) fact F3 |
 | F5 | The TC flow classifier parses TCP only at v0. A non-TCP IP protocol value returns before any event. QUIC flows carry no flow view at v0. | `bpf/flow_tc.c`, the bounded-walk guard |
-| F6 | The socket plane hooks TCP sockets only (`SK_SKB`, `SK_MSG`). kTLS and `strparser` are TCP material. HTTP/3 stays a non-goal at that plane. | [TR-39d](socket-plane-fast-path.md), section 3.2; [§9.9](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-tracked-evaluation-not-a-v1-commitment) |
+| F6 | The socket plane hooks TCP sockets only (`SK_SKB`, `SK_MSG`). kTLS and `strparser` are TCP material. HTTP/3 stays a non-goal at that plane. | [TR-39d](socket-plane-fast-path.md), section 3.2; [§9.9](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-a-tracked-evaluation-no-runtime-commitment) |
 | F7 | The bot plane carries the QUIC transport code in its JA4 grammar. The golden-vector tests derive the `q` variant. The derivation reads a summary, not a live packet. | `internal/engine/botdef/ja4.go`; the module-2 lab |
 
 ### 2.1 The terminator leg
@@ -96,7 +96,7 @@ carries both decisions forward. It states each boundary once, with its anchors.
 | --- | --- | --- |
 | N1 | No engine parse surface for h3 or QPACK exists. No engine claim rides [RFC 9114](https://www.rfc-editor.org/rfc/rfc9114) or [RFC 9204](https://www.rfc-editor.org/rfc/rfc9204). | TR-44 verdict row 7 |
 | N2 | No kernel parse of QUIC exists at any plane. The kernel stays decision-free. | F4; [§9.1](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#91-the-two-plane-principle) |
-| N3 | No socket-plane reassembly surface for QUIC exists. The plane hooks TCP sockets only. | F6; [§9.9](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-tracked-evaluation-not-a-v1-commitment) |
+| N3 | No socket-plane reassembly surface for QUIC exists. The plane hooks TCP sockets only. | F6; [§9.9](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#99-socket-plane-l7-fast-path-a-tracked-evaluation-no-runtime-commitment) |
 | N4 | No per-request or per-stream protection over QUIC is claimed. The XDP classes hold L3/L4 scope only. | F3; [§9.2](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#92-hook-inventory) |
 | N5 | No h3spec run enters CI. Socket-opening probes stay advisory lab material. Tool output joins no verdict. | TR-44, section 5.1 |
 | N6 | No live QUIC fingerprint read is claimed. The `q` derivation runs over a summary struct. No packet reader exists in the tree. | F7 |

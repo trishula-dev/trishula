@@ -51,7 +51,7 @@ The listener carries `tls.mode: Terminate`. The engine sees plaintext
 after the gateway hop. The DX1 topology runs the same shape.
 
 Two boundaries follow from
-[§6.3](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#63-non-goals-v1):
+[§6.3](https://github.com/trishula-dev/trishula/blob/main/docs/spec.md#63-non-goals-the-standing-boundary):
 
 - The product is not a TLS-terminating edge proxy for the whole estate.
   The gateway owns the handshake in the reference deployment.
