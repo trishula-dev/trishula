@@ -4,7 +4,7 @@
 
 <p class="authorline"><strong>Shaineel Singh</strong> (shain.singh@owasp.org)</p>
 <p class="affilline">trishula-dev project · github.com/trishula-dev · trishula.dev · Melbourne, Australia</p>
-<p class="revsline">Revision 1.0 — 2 October 2026 · Work in progress. Full product specification companion: "Trishula — Product Requirements Document &amp; Project Charter" (v4).</p>
+<p class="revsline">Revision 1.2 — 13 November 2026 · Work in progress. Full product specification companion: the spec at docs/spec.md.</p>
 
 </div>
 
@@ -158,6 +158,8 @@ Every family emits verdicts in the same shape (matched-rule IDs, score contribut
 
 "CRS-compatible" claims die quietly in every engine in this field. Trishula makes them CI failures instead of marketing language. The **differential parity gate** runs the upstream CRS regression corpus plus curated adversarial corpora plus recorded production samples (go-ftw format [177], [165]) through both the Trishula path and the Coraza reference evaluator; the parity assertion is verdict-level (block/log/pass + matched rule IDs + score ladder), it blocks release at 100% applicable rules (M1 in the spec's metric table), and in production it runs shadow-parallel against the incumbent WAF during a migration, with any FP delta or missed match generating an exclusion/tuning workflow item rather than a shrug. A fast-path pattern the reference evaluator disagrees on is demoted automatically — self-healing parity, not a snapshot test.
 
+The parity assertion carries the detection evidence into the record. The CRS carrier rules (the 941/942 families) return libinjection's classification inside the embedded Coraza, and the verdict record ships it as the fingerprint array — one row per fired carrier value, SQLi rows with the returned fingerprint characters and XSS rows with the class alone. The benign corpus row pins the absence, so the differential gate guards the false-positive surface of classification as well as the detection surface.
+
 ## 4.3 Bot detection as evidence accumulation
 
 Bots are the workload most HTTP security products still treat as a signature problem. Trishula treats them as **evidence accumulation** across three independent detector families: **TLS fingerprints** (JA4/JA4S at the termination hop [197], [F-ja4]), **header-plane fingerprints** (header order, casing, value entropy, HTTP-version quirks — ordered-hash comparison against browser/tooling profiles), and **behavioural windows** (kernel-observed pacing, path-traversal graphs, session continuity, auth-failure ratios — the harder-to-forge altitude precisely because it is kernel-observed rather than client-controlled). Each detector emits `(detector_id, confidence, evidence_ref)` — never a bare boolean — and the merge policy is per-`WAFPolicy` configurable consensus (≥ 2 families agree to act; single-detector matches log and score). Known-good bots (documented crawlers, health checkers) are an allowlist CR with reverse-DNS validation on termination-hop identity — misclassified-good bots are a tuning case, not a detection failure.
@@ -219,7 +221,7 @@ Trishula deliberately ships no rule DSL. The rule language is **CEL** (Common Ex
 
 ## 5.3 Every verdict narrated: OTel as first-class product surface
 
-Observability is a design commitment rather than a retrofit, and it is the delivery mechanism for the developer-first thesis: **OTLP traces, metrics, and logs as equal first-class signals** [F-otel]. One server span per request across all stages (parse → ladder → verdict → forward); shield events attach as span links; per-rule match counters, per-phase latency histograms, ring depth, cache hit rates, ban gauges and score trajectories, ML tier latencies, schema-drift counters, exclusion hit counts — exemplars carry `trace_id` so a dashboard anomaly jumps straight to the trace; and every verdict emits a structured **OTLP log record** in a versioned schema (`trishula.verdict.v2`): the full ladder walk (per-stage matches and microseconds), the plain-language reason, the doc-reference link, and for bans the complete evidence block (the score trajectory). Redaction is structural, not optional: authorisation/cookie/token-shaped header values are dropped at emission; body samples never leave the pod without a per-policy flag plus purpose binding. The developer debugging a block reads it in the telemetry stack they already run.
+Observability is a design commitment rather than a retrofit, and it is the delivery mechanism for the developer-first thesis: **OTLP traces, metrics, and logs as equal first-class signals** [F-otel]. One server span per request across all stages (parse → ladder → verdict → forward); shield events attach as span links; per-rule match counters, per-phase latency histograms, ring depth, cache hit rates, ban gauges and score trajectories, ML tier latencies, schema-drift counters, exclusion hit counts — exemplars carry `trace_id` so a dashboard anomaly jumps straight to the trace; and every verdict emits a structured **OTLP log record** in a versioned schema (`trishula.verdict.v2`): the full ladder walk (per-stage matches and microseconds), the plain-language reason, the doc-reference link, the libinjection fingerprint rows from the CRS carrier rules, and for bans the complete evidence block (the score trajectory). Redaction is structural, not optional: authorisation/cookie/token-shaped header values are dropped at emission; body samples never leave the pod without a per-policy flag plus purpose binding. The developer debugging a block reads it in the telemetry stack they already run.
 
 ## 5.4 Teach the web (the curriculum as a product deliverable)
 
@@ -379,4 +381,4 @@ The work ahead is the PoC and the honest checklist that follows it. The design's
 
 [49] Young, Juho. "AI platform ML model monitoring/drift detection (Evidently, MLflow)." youngju.dev, 2026. (Drift tooling posture.)
 
-[50] Trishula — Product Requirements Document & Project Charter (v4). trishula-dev project internal document, October 2026. §1–§21, Appendices A–E. (The full specification; this paper's companion.)
+[50] Trishula: the product specification (the RFC-format record). trishula-dev, github.com/trishula-dev/trishula/blob/main/docs/spec.md. (The full specification; this paper's companion.)
