@@ -41,7 +41,7 @@ concurrency:
 jobs:
   waf-harness:
     name: "TR-205 (issue #289) waf harness: kind + PR-sha engine + fixtures + smoke"
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - name: Open the run record

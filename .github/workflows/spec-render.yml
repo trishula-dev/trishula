@@ -21,7 +21,7 @@ jobs:
     # ubuntu-24.04 pinned: the ubuntu-latest float moved to the 26.04
     # image where enscript/ghostscript are no longer installable (the
     # dc398ea render receipt). The PDF fallback leg needs them.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Check out the spec
         uses: actions/checkout@v4

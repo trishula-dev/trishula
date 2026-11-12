@@ -74,7 +74,7 @@ concurrency:
 jobs:
   provision:
     name: "TR-205 (issue #293) provision: the temporary managed cluster + the engine from the suite checkout"
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     permissions:
       contents: read
@@ -481,7 +481,7 @@ jobs:
   corpus:
     name: "TR-205 (issue #293) corpus: the FULL goTestWAF corpus vs the pinned baseline"
     needs: provision
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 330
     outputs:
       cluster_id: ${{ needs.provision.outputs.cluster_id }}
@@ -845,7 +845,7 @@ jobs:
   differential:
     name: "TR-205 (issue #293) differential: the same corpus vs the open-appsec engine"
     needs: provision
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 330
     env:
       SUITE_REF: ${{ inputs.tag || github.ref }}
@@ -1221,7 +1221,7 @@ jobs:
   sqlmap:
     name: "TR-205 (issue #293) sqlmap: the SQLi gate at 0 successful injections"
     needs: corpus
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     env:
       SUITE_REF: ${{ inputs.tag || github.ref }}
@@ -1584,7 +1584,7 @@ jobs:
   diff:
     name: "TR-205 (issue #293) diff: the per-corpus engine diff table"
     needs: [corpus, differential]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     env:
       ARTIFACT_DIR: ${{ github.workspace }}/diff-out
@@ -1668,7 +1668,7 @@ jobs:
   assets:
     name: "TR-205 (issue #293) assets: the report set + the checksum sheet + the release attach"
     needs: [corpus, sqlmap, differential, diff]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       contents: write
@@ -1795,7 +1795,7 @@ jobs:
     name: "TR-205 (issue #293) teardown: destroy the cluster on every path (fail on a breach)"
     needs: [provision, corpus, sqlmap, differential, diff, assets]
     if: always()
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     env:
       ARTIFACT_DIR: ${{ github.workspace }}/artifacts
