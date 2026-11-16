@@ -37,7 +37,7 @@ Other documents worth knowing:
 - [`SECURITY.md`](SECURITY.md): vulnerability reporting policy. See [Security](#security).
 - [`docs/spec.md`](docs/spec.md): the design (v4) — **the** design source for every issue.
 - [`docs/academy/`](docs/academy/): teach-the-web curriculum artifacts.
-- [`docs/paper.md`](docs/paper.md): research paper source.
+- [`docs/trishula-paper.md`](docs/trishula-paper.md): research paper source.
 
 ## Repository structure
 
